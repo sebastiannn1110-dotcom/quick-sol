@@ -17,8 +17,10 @@ Create `.env.local` from `.env.example`.
 Required:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` is still supported as a legacy alias.
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser. It is used only in server routes for admin invite/audit/security writes.
 

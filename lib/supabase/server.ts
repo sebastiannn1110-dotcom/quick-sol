@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
-import { isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/security/env";
+import { getSupabasePublishableKey, isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/security/env";
 
 export async function createSupabaseServerClient() {
   if (!isSupabaseConfigured()) return null;
@@ -10,7 +10,7 @@ export async function createSupabaseServerClient() {
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    getSupabasePublishableKey(),
     {
       cookies: {
         getAll() {
