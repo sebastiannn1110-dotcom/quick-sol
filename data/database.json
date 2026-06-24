@@ -1,0 +1,440 @@
+{
+  "employees": [
+    {
+      "id": "EMP-1001",
+      "name": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "role": "Account Manager",
+      "email": "maya.chen@quiksol.example",
+      "createdAt": "2026-06-01T12:00:00.000Z"
+    },
+    {
+      "id": "EMP-1002",
+      "name": "Daniel Ruiz",
+      "department": "Operations",
+      "region": "LATAM",
+      "role": "Logistics Lead",
+      "email": "daniel.ruiz@quiksol.example",
+      "createdAt": "2026-06-01T12:05:00.000Z"
+    },
+    {
+      "id": "EMP-1003",
+      "name": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "role": "Margin Analyst",
+      "email": "priya.shah@quiksol.example",
+      "createdAt": "2026-06-01T12:10:00.000Z"
+    }
+  ],
+  "uploads": [
+    {
+      "id": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "originalFileName": "inventory-demo.xlsx",
+      "detectedCategory": "Inventory",
+      "selectedCategory": "Inventory",
+      "totalRows": 2,
+      "validRows": 2,
+      "invalidRows": 0,
+      "uploadedAt": "2026-06-10T14:30:00.000Z",
+      "notes": "Demo inventory upload"
+    },
+    {
+      "id": "upl-demo-ops",
+      "employeeId": "EMP-1002",
+      "employeeName": "Daniel Ruiz",
+      "department": "Operations",
+      "region": "LATAM",
+      "originalFileName": "operations-demo.csv",
+      "detectedCategory": "Logistics",
+      "selectedCategory": "Auto Detect",
+      "totalRows": 4,
+      "validRows": 4,
+      "invalidRows": 0,
+      "uploadedAt": "2026-06-12T09:15:00.000Z",
+      "notes": "Demo logistics and quality records"
+    },
+    {
+      "id": "upl-demo-finance",
+      "employeeId": "EMP-1003",
+      "employeeName": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "originalFileName": "finance-demo.xlsx",
+      "detectedCategory": "Finance",
+      "selectedCategory": "Finance",
+      "totalRows": 4,
+      "validRows": 4,
+      "invalidRows": 0,
+      "uploadedAt": "2026-06-15T17:45:00.000Z",
+      "notes": "Demo finance records"
+    }
+  ],
+  "records": [
+    {
+      "id": "rec-demo-inv-1",
+      "uploadId": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "category": "Inventory",
+      "sourceSheet": "Inventory",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "partNumber": "STM32F407VGT6",
+        "manufacturer": "STMicroelectronics",
+        "componentCategory": "MCU",
+        "description": "32-bit ARM Cortex-M4 microcontroller",
+        "quantityAvailable": 1200,
+        "warehouseLocation": "HK-01",
+        "dateCode": "2025-36",
+        "condition": "New",
+        "moq": 100,
+        "leadTime": "2 weeks",
+        "unitCost": 5.15,
+        "sellingPrice": 6.9,
+        "supplier": "Global Semi Partners",
+        "status": "Available"
+      },
+      "rawData": {
+        "Part Number": "STM32F407VGT6",
+        "Manufacturer": "STMicroelectronics",
+        "Qty": "1200",
+        "Status": "Available"
+      },
+      "createdAt": "2026-06-10T14:30:00.000Z",
+      "searchableText": "EMP-1001 Maya Chen Sales APAC Inventory STM32F407VGT6 STMicroelectronics MCU Available Global Semi Partners"
+    },
+    {
+      "id": "rec-demo-inv-2",
+      "uploadId": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "category": "Inventory",
+      "sourceSheet": "Inventory",
+      "originalRowIndex": 3,
+      "normalizedData": {
+        "partNumber": "TPS7A4700RGWR",
+        "manufacturer": "Texas Instruments",
+        "componentCategory": "Power",
+        "description": "Low-noise LDO regulator",
+        "quantityAvailable": 640,
+        "warehouseLocation": "SG-04",
+        "dateCode": "2024-48",
+        "condition": "New",
+        "moq": 50,
+        "leadTime": "3 weeks",
+        "unitCost": 2.7,
+        "sellingPrice": 3.4,
+        "supplier": "Asia Components Hub",
+        "status": "Reserved"
+      },
+      "rawData": {
+        "MPN": "TPS7A4700RGWR",
+        "Brand": "Texas Instruments",
+        "Stock": "640",
+        "Status": "Reserved"
+      },
+      "createdAt": "2026-06-10T14:30:00.000Z",
+      "searchableText": "EMP-1001 Maya Chen Sales APAC Inventory TPS7A4700RGWR Texas Instruments Power Reserved Asia Components Hub"
+    },
+    {
+      "id": "rec-demo-cust-1",
+      "uploadId": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "category": "Customers",
+      "sourceSheet": "Customers",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "companyName": "NexWave Robotics",
+        "customerType": "OEM",
+        "country": "Japan",
+        "contactName": "Aiko Tanaka",
+        "email": "aiko.tanaka@nexwave.example",
+        "phone": "+81 3 5550 1200",
+        "industry": "Robotics",
+        "assignedSalesperson": "Maya Chen",
+        "lastPurchaseDate": "2026-05-12T00:00:00.000Z",
+        "creditTerms": "Net 30",
+        "customerPriority": "High",
+        "notes": "Strategic account"
+      },
+      "rawData": {
+        "Company": "NexWave Robotics",
+        "Type": "OEM",
+        "Country": "Japan",
+        "Credit Terms": "Net 30"
+      },
+      "createdAt": "2026-06-10T14:35:00.000Z",
+      "searchableText": "EMP-1001 Maya Chen Customers NexWave Robotics Japan OEM High Net 30"
+    },
+    {
+      "id": "rec-demo-sup-1",
+      "uploadId": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "category": "Suppliers",
+      "sourceSheet": "Suppliers",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "supplierName": "Global Semi Partners",
+        "country": "Singapore",
+        "contactPerson": "Leon Wong",
+        "email": "leon@globalsemi.example",
+        "productCategories": "MCU, Analog",
+        "reliabilityScore": 92,
+        "deliveryTime": "10 days",
+        "paymentTerms": "Net 45",
+        "certifications": "ISO 9001",
+        "lastTransaction": "2026-05-28T00:00:00.000Z",
+        "riskLevel": "Low"
+      },
+      "rawData": {
+        "Supplier": "Global Semi Partners",
+        "Reliability": "92",
+        "Payment Terms": "Net 45",
+        "Risk": "Low"
+      },
+      "createdAt": "2026-06-10T14:40:00.000Z",
+      "searchableText": "EMP-1001 Maya Chen Suppliers Global Semi Partners Singapore Low ISO 9001"
+    },
+    {
+      "id": "rec-demo-rfq-1",
+      "uploadId": "upl-demo-inventory",
+      "employeeId": "EMP-1001",
+      "employeeName": "Maya Chen",
+      "department": "Sales",
+      "region": "APAC",
+      "category": "RFQ",
+      "sourceSheet": "RFQ",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "rfqId": "RFQ-88921",
+        "customer": "NexWave Robotics",
+        "partNumber": "STM32F407VGT6",
+        "manufacturer": "STMicroelectronics",
+        "quantityRequested": 500,
+        "targetPrice": 6.2,
+        "quotedPrice": 6.9,
+        "supplierSource": "Global Semi Partners",
+        "margin": 0.25,
+        "salesperson": "Maya Chen",
+        "status": "Pending",
+        "dateRequested": "2026-06-09T00:00:00.000Z",
+        "deadline": "2026-06-25T00:00:00.000Z"
+      },
+      "rawData": {
+        "RFQ ID": "RFQ-88921",
+        "Customer": "NexWave Robotics",
+        "Part Number": "STM32F407VGT6",
+        "Status": "Pending"
+      },
+      "createdAt": "2026-06-10T14:42:00.000Z",
+      "searchableText": "EMP-1001 Maya Chen RFQ RFQ-88921 NexWave Robotics STM32F407VGT6 Pending"
+    },
+    {
+      "id": "rec-demo-order-1",
+      "uploadId": "upl-demo-finance",
+      "employeeId": "EMP-1003",
+      "employeeName": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "category": "Orders",
+      "sourceSheet": "Orders",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "orderId": "SO-44019",
+        "customer": "AeroGrid Systems",
+        "partNumber": "ADUM1401ARWZ",
+        "quantitySold": 300,
+        "salePrice": 4.25,
+        "totalSale": 1275,
+        "supplierCost": 930,
+        "grossMargin": 0.2705,
+        "paymentStatus": "Paid",
+        "shippingStatus": "Delivered",
+        "invoiceNumber": "INV-2026-711",
+        "salesperson": "Elena Rossi"
+      },
+      "rawData": {
+        "Order ID": "SO-44019",
+        "Customer": "AeroGrid Systems",
+        "Payment Status": "Paid",
+        "Shipping Status": "Delivered"
+      },
+      "createdAt": "2026-06-15T17:45:00.000Z",
+      "searchableText": "EMP-1003 Priya Shah Orders SO-44019 AeroGrid Systems ADUM1401ARWZ Paid Delivered INV-2026-711"
+    },
+    {
+      "id": "rec-demo-log-1",
+      "uploadId": "upl-demo-ops",
+      "employeeId": "EMP-1002",
+      "employeeName": "Daniel Ruiz",
+      "department": "Operations",
+      "region": "LATAM",
+      "category": "Logistics",
+      "sourceSheet": "Logistics",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "shipmentId": "SHP-7782",
+        "orderId": "SO-44019",
+        "origin": "Shenzhen",
+        "destination": "Medellin",
+        "carrier": "DHL",
+        "trackingNumber": "DHL998877221",
+        "shippingCost": 145.5,
+        "estimatedArrival": "2026-06-24T00:00:00.000Z",
+        "currentStatus": "In Transit",
+        "customsStatus": "Pending",
+        "deliveryConfirmation": "No"
+      },
+      "rawData": {
+        "Shipment ID": "SHP-7782",
+        "Carrier": "DHL",
+        "Tracking": "DHL998877221",
+        "Current Status": "In Transit"
+      },
+      "createdAt": "2026-06-12T09:15:00.000Z",
+      "searchableText": "EMP-1002 Daniel Ruiz Logistics SHP-7782 SO-44019 DHL DHL998877221 In Transit Pending"
+    },
+    {
+      "id": "rec-demo-qa-1",
+      "uploadId": "upl-demo-ops",
+      "employeeId": "EMP-1002",
+      "employeeName": "Daniel Ruiz",
+      "department": "Operations",
+      "region": "LATAM",
+      "category": "Quality Inspection",
+      "sourceSheet": "Quality",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "inspectionId": "QI-2210",
+        "partNumber": "STM32F407VGT6",
+        "manufacturer": "STMicroelectronics",
+        "supplier": "Global Semi Partners",
+        "batchLotNumber": "LOT-HK-5521",
+        "dateCode": "2025-36",
+        "visualInspection": "Pass",
+        "electricalTest": "Pass",
+        "authenticityResult": "Authentic",
+        "inspector": "Daniel Ruiz",
+        "photos": "cloud-folder/qi-2210",
+        "reportPdf": "qi-2210.pdf",
+        "finalStatus": "Passed"
+      },
+      "rawData": {
+        "Inspection ID": "QI-2210",
+        "Part Number": "STM32F407VGT6",
+        "Authenticity": "Authentic",
+        "Final Status": "Passed"
+      },
+      "createdAt": "2026-06-12T09:20:00.000Z",
+      "searchableText": "EMP-1002 Daniel Ruiz Quality Inspection QI-2210 STM32F407VGT6 Authentic Passed"
+    },
+    {
+      "id": "rec-demo-market-1",
+      "uploadId": "upl-demo-finance",
+      "employeeId": "EMP-1003",
+      "employeeName": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "category": "Market Insights",
+      "sourceSheet": "Market",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "componentCategory": "Memory",
+        "partNumber": "MT40A512M16LY-062E",
+        "marketTrend": "Rising",
+        "averagePrice": 7.8,
+        "region": "EMEA",
+        "demandLevel": "High",
+        "shortageRisk": "Medium",
+        "forecast": "Demand likely to rise for industrial programs",
+        "source": "Distributor survey",
+        "updatedDate": "2026-06-14T00:00:00.000Z"
+      },
+      "rawData": {
+        "Category": "Memory",
+        "Market Trend": "Rising",
+        "Shortage Risk": "Medium",
+        "Demand": "High"
+      },
+      "createdAt": "2026-06-15T17:50:00.000Z",
+      "searchableText": "EMP-1003 Priya Shah Market Insights Memory Rising Medium High MT40A512M16LY-062E"
+    },
+    {
+      "id": "rec-demo-fin-1",
+      "uploadId": "upl-demo-finance",
+      "employeeId": "EMP-1003",
+      "employeeName": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "category": "Finance",
+      "sourceSheet": "Finance",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "productCost": 930,
+        "sellingPrice": 1275,
+        "grossMargin": 0.2705,
+        "shippingCost": 145.5,
+        "taxesDuties": 38.2,
+        "netProfit": 161.3,
+        "currency": "USD",
+        "exchangeRate": 1,
+        "paymentTerms": "Net 30",
+        "commission": 22.5
+      },
+      "rawData": {
+        "Product Cost": "930",
+        "Selling Price": "1275",
+        "Gross Margin": "27.05%",
+        "Currency": "USD"
+      },
+      "createdAt": "2026-06-15T17:52:00.000Z",
+      "searchableText": "EMP-1003 Priya Shah Finance USD Net 30 27.05 161.3"
+    },
+    {
+      "id": "rec-demo-emp-1",
+      "uploadId": "upl-demo-finance",
+      "employeeId": "EMP-1003",
+      "employeeName": "Priya Shah",
+      "department": "Finance",
+      "region": "EMEA",
+      "category": "Employees",
+      "sourceSheet": "Employees",
+      "originalRowIndex": 2,
+      "normalizedData": {
+        "employeeName": "Elena Rossi",
+        "department": "Sales",
+        "region": "EMEA",
+        "role": "Sales Director",
+        "assignedCustomers": "AeroGrid Systems, Voltify",
+        "assignedSuppliers": "EuroChip Source",
+        "monthlySales": 182000,
+        "tasksPending": 7,
+        "performanceScore": 94
+      },
+      "rawData": {
+        "Employee": "Elena Rossi",
+        "Department": "Sales",
+        "Region": "EMEA",
+        "Role": "Sales Director"
+      },
+      "createdAt": "2026-06-15T17:55:00.000Z",
+      "searchableText": "EMP-1003 Priya Shah Employees Elena Rossi Sales EMEA Sales Director"
+    }
+  ]
+}

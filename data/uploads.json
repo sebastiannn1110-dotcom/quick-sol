@@ -1,0 +1,47 @@
+[
+  {
+    "id": "upl-demo-inventory",
+    "employeeId": "EMP-1001",
+    "employeeName": "Maya Chen",
+    "department": "Sales",
+    "region": "APAC",
+    "originalFileName": "inventory-demo.xlsx",
+    "detectedCategory": "Inventory",
+    "selectedCategory": "Inventory",
+    "totalRows": 2,
+    "validRows": 2,
+    "invalidRows": 0,
+    "uploadedAt": "2026-06-10T14:30:00.000Z",
+    "notes": "Demo inventory upload"
+  },
+  {
+    "id": "upl-demo-ops",
+    "employeeId": "EMP-1002",
+    "employeeName": "Daniel Ruiz",
+    "department": "Operations",
+    "region": "LATAM",
+    "originalFileName": "operations-demo.csv",
+    "detectedCategory": "Logistics",
+    "selectedCategory": "Auto Detect",
+    "totalRows": 4,
+    "validRows": 4,
+    "invalidRows": 0,
+    "uploadedAt": "2026-06-12T09:15:00.000Z",
+    "notes": "Demo logistics and quality records"
+  },
+  {
+    "id": "upl-demo-finance",
+    "employeeId": "EMP-1003",
+    "employeeName": "Priya Shah",
+    "department": "Finance",
+    "region": "EMEA",
+    "originalFileName": "finance-demo.xlsx",
+    "detectedCategory": "Finance",
+    "selectedCategory": "Finance",
+    "totalRows": 4,
+    "validRows": 4,
+    "invalidRows": 0,
+    "uploadedAt": "2026-06-15T17:45:00.000Z",
+    "notes": "Demo finance records"
+  }
+]
