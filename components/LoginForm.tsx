@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -10,7 +10,8 @@ export default function LoginForm() {
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect") ?? "/dashboard";
   const setupError = searchParams.get("error");
-  const supabase = createSupabaseBrowserClient();
+  const [supabase, setSupabase] = useState(() => createSupabaseBrowserClient());
+  const [configLoading, setConfigLoading] = useState(!supabase);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,8 +24,40 @@ export default function LoginForm() {
         : null
   );
 
+  useEffect(() => {
+    if (supabase) return;
+
+    async function loadRuntimeConfig() {
+      try {
+        const response = await fetch("/api/auth/public-config", { cache: "no-store" });
+        if (!response.ok) return;
+        const config = (await response.json()) as {
+          configured: boolean;
+          supabaseUrl?: string;
+          supabasePublishableKey?: string;
+        };
+        if (config.configured && config.supabaseUrl && config.supabasePublishableKey) {
+          setSupabase(
+            createSupabaseBrowserClient({
+              url: config.supabaseUrl,
+              publishableKey: config.supabasePublishableKey
+            })
+          );
+        }
+      } finally {
+        setConfigLoading(false);
+      }
+    }
+
+    loadRuntimeConfig();
+  }, [supabase]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (configLoading) {
+      setError("Login configuration is still loading. Try again in a moment.");
+      return;
+    }
     if (!supabase) {
       setError("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.");
       return;
@@ -114,11 +147,11 @@ export default function LoginForm() {
         {error ? <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
         <button
-          disabled={loading || !supabase}
+          disabled={loading || configLoading || !supabase}
           className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           type="submit"
         >
-          {loading ? "Signing in..." : "Sign in"}
+          {configLoading ? "Preparing login..." : loading ? "Signing in..." : "Sign in"}
         </button>
         <button
           type="button"
