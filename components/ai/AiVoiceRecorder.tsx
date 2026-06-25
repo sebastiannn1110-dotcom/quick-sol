@@ -410,11 +410,6 @@ export default function AiVoiceRecorder({
   function stopRecording() {
     if (!recorderRef.current || recorderRef.current.state === "inactive") return;
     setRecorderState("stopping");
-    try {
-      recorderRef.current.requestData();
-    } catch {
-      // Some browsers throw if requestData is called too close to stop().
-    }
     recorderRef.current.stop();
   }
 

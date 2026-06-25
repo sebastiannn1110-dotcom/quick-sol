@@ -83,6 +83,23 @@ function getOpenAIKey() {
   return process.env.OPEN_IA || process.env.OPENAI_API_KEY || "";
 }
 
+function getErrorStatus(error: unknown) {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" ? status : null;
+  }
+  return null;
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "";
+}
+
+function isUnreadableAudioError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+  return getErrorStatus(error) === 400 && /audio file|unsupported|corrupt|could not be decoded/.test(message);
+}
+
 function fileWithTranscriptionName(file: File) {
   const normalizedType = normalizeAudioMimeType(file.type) || "audio/webm";
   const hasExtension = Boolean(file.name && /\.[a-z0-9]+$/i.test(file.name));
@@ -105,6 +122,11 @@ export async function transcribeAudio(file: File) {
     file: fileWithTranscriptionName(file),
     model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
     response_format: "json"
+  }).catch((error: unknown) => {
+    if (isUnreadableAudioError(error)) {
+      throw new VoiceInputError("OpenAI could not read this recording. Please record again or upload an mp3, wav, m4a, ogg, or webm file.");
+    }
+    throw error;
   });
 
   const payload = result as { text?: string; language?: string; duration?: number };
