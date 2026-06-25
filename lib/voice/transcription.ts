@@ -1,0 +1,108 @@
+import OpenAI from "openai";
+import type { AssistantLanguage } from "@/lib/ai/assistantCore";
+
+const ALLOWED_AUDIO_TYPES = new Set([
+  "audio/webm",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/m4a",
+  "audio/ogg",
+  "video/webm"
+]);
+
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  "audio/webm": "webm",
+  "video/webm": "webm",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/mp4": "m4a",
+  "audio/m4a": "m4a",
+  "audio/ogg": "ogg"
+};
+
+export class VoiceInputError extends Error {
+  status = 400;
+}
+
+export class VoiceConfigError extends Error {
+  status = 503;
+}
+
+export function getVoiceMaxAudioBytes() {
+  const mb = Number(process.env.VOICE_MAX_AUDIO_MB ?? 15);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 15) * 1024 * 1024;
+}
+
+export function normalizeLanguage(language: unknown): AssistantLanguage {
+  if (language === "zh" || language === "zh-CN" || language === "chinese") return "zh";
+  if (language === "en" || language === "en-US" || language === "english") return "en";
+  if (language === "es" || language === "es-ES" || language === "spanish") return "es";
+  return "es";
+}
+
+export function detectLanguageFromTranscript(text: string): AssistantLanguage {
+  if (/[\u4e00-\u9fff]/.test(text)) return "zh";
+
+  const normalized = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  const spanishHints = /\b(el|la|los|las|que|como|ultimo|subido|archivo|proveedor|cliente|errores|filas|muestrame|busca)\b/;
+  const englishHints = /\b(the|last|file|upload|show|find|supplier|customer|errors|rows|how|what)\b/;
+  if (spanishHints.test(normalized)) return "es";
+  if (englishHints.test(normalized)) return "en";
+  return "es";
+}
+
+export function validateAudioFile(file: File) {
+  if (!file.size) throw new VoiceInputError("Audio file is empty.");
+  if (file.size > getVoiceMaxAudioBytes()) {
+    throw new VoiceInputError(`Audio file exceeds the ${Math.round(getVoiceMaxAudioBytes() / 1024 / 1024)} MB limit.`);
+  }
+  if (file.type && !ALLOWED_AUDIO_TYPES.has(file.type)) {
+    throw new VoiceInputError("Unsupported audio format. Use webm, mp3, wav, m4a or ogg.");
+  }
+}
+
+function getOpenAIKey() {
+  return process.env.OPEN_IA || process.env.OPENAI_API_KEY || "";
+}
+
+function fileWithTranscriptionName(file: File) {
+  if (file.name && /\.[a-z0-9]+$/i.test(file.name)) return file;
+  const extension = EXTENSION_BY_TYPE[file.type] ?? "webm";
+  return new File([file], `voice-message.${extension}`, { type: file.type || "audio/webm" });
+}
+
+export async function transcribeAudio(file: File) {
+  const apiKey = getOpenAIKey();
+  if (!apiKey) {
+    throw new VoiceConfigError("Voice assistant transcription is not configured. Please add OPEN_IA.");
+  }
+
+  validateAudioFile(file);
+
+  const client = new OpenAI({ apiKey });
+  const result = await client.audio.transcriptions.create({
+    file: fileWithTranscriptionName(file),
+    model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
+    response_format: "json"
+  });
+
+  const payload = result as { text?: string; language?: string; duration?: number };
+  const transcript = payload.text?.trim() ?? "";
+  if (!transcript) throw new VoiceInputError("OpenAI transcription returned an empty transcript.");
+
+  return {
+    transcript,
+    detectedLanguage: payload.language ? normalizeLanguage(payload.language) : detectLanguageFromTranscript(transcript),
+    confidence: null as number | null,
+    duration: payload.duration ?? null
+  };
+}

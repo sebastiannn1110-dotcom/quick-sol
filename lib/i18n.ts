@@ -279,7 +279,15 @@ const ui = {
     "assistant.open": "Abrir asistente IA",
     "assistant.noAnswer": "No pude generar una respuesta.",
     "assistant.unavailable": "El asistente no está disponible ahora.",
-    "assistant.connection": "No pude conectarme con el asistente. Intenta de nuevo."
+    "assistant.connection": "No pude conectarme con el asistente. Intenta de nuevo.",
+    "assistant.record": "Grabar audio",
+    "assistant.stopRecording": "Detener grabacion",
+    "assistant.recording": "Grabando...",
+    "assistant.processingAudio": "Procesando audio...",
+    "assistant.generatingVoice": "Generando voz...",
+    "assistant.playResponse": "Reproducir respuesta",
+    "assistant.voiceUnavailable": "Tu navegador no permite grabar audio.",
+    "assistant.transcript": "Transcripcion"
   },
   en: {
     "app.title": "Quiksol Excel Intelligence System",
@@ -553,7 +561,15 @@ const ui = {
     "assistant.open": "Open AI assistant",
     "assistant.noAnswer": "I could not generate an answer.",
     "assistant.unavailable": "The assistant is not available right now.",
-    "assistant.connection": "I could not connect to the assistant. Try again."
+    "assistant.connection": "I could not connect to the assistant. Try again.",
+    "assistant.record": "Record audio",
+    "assistant.stopRecording": "Stop recording",
+    "assistant.recording": "Recording...",
+    "assistant.processingAudio": "Processing audio...",
+    "assistant.generatingVoice": "Generating voice...",
+    "assistant.playResponse": "Play response",
+    "assistant.voiceUnavailable": "Your browser cannot record audio.",
+    "assistant.transcript": "Transcript"
   },
   zh: {
     "app.title": "Quiksol Excel 智能系统",
@@ -827,7 +843,15 @@ const ui = {
     "assistant.open": "打开 AI 助手",
     "assistant.noAnswer": "无法生成回答。",
     "assistant.unavailable": "助手当前不可用。",
-    "assistant.connection": "无法连接到助手。请重试。"
+    "assistant.connection": "无法连接到助手。请重试。",
+    "assistant.record": "录音",
+    "assistant.stopRecording": "停止录音",
+    "assistant.recording": "录音中...",
+    "assistant.processingAudio": "正在处理音频...",
+    "assistant.generatingVoice": "正在生成语音...",
+    "assistant.playResponse": "播放回答",
+    "assistant.voiceUnavailable": "你的浏览器无法录音。",
+    "assistant.transcript": "转录"
   }
 } as const;
 

@@ -13,7 +13,8 @@ export type LogModule =
   | "supabase"
   | "api"
   | "frontend"
-  | "security";
+  | "security"
+  | "voice";
 
 export interface LogError {
   name?: string;

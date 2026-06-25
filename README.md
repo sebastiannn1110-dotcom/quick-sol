@@ -9,3 +9,24 @@ Deployment/debugging notes are documented in [README_DEPLOYMENT_REPORT.md](READM
 Technical vocabulary is documented in [README_TECHNICAL_GLOSSARY.md](README_TECHNICAL_GLOSSARY.md).
 
 Latest correction report is documented in [CHANGELOG_QUIKSOL_CORRECTIONS.md](CHANGELOG_QUIKSOL_CORRECTIONS.md).
+
+## Voice Assistant Environment
+
+Server-side voice features use OpenAI transcription and ElevenLabs TTS. Add these in Render as secret/server environment variables, never as `NEXT_PUBLIC_*`:
+
+```env
+OPEN_IA=
+OPENAI_MODEL=gpt-5.5
+OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+ELEVENLABS_API_KEY=
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+ELEVENLABS_VOICE_ES=tomkxGQGz4b1kE0EM722
+ELEVENLABS_VOICE_EN=c6SfcYrb2t09NHXiT80T
+ELEVENLABS_VOICE_ZH=bhJUNIXWQQ94l8eI2VUf
+VOICE_MAX_AUDIO_MB=15
+VOICE_MAX_SECONDS=120
+VOICE_DEFAULT_LANGUAGE=auto
+ENABLE_VOICE_ASSISTANT=true
+```
+
+If ElevenLabs fails or is not configured, the assistant still returns the text answer.
