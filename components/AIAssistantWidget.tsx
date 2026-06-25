@@ -99,8 +99,8 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
                 key={`${item.role}-${index}`}
                 className={`max-w-[90%] rounded-md px-3 py-2 text-sm ${
                   item.role === "assistant"
-                    ? "bg-white text-slate-700 shadow-sm"
-                    : "ml-auto bg-brand-600 text-white"
+                    ? "whitespace-pre-wrap bg-white text-slate-700 shadow-sm"
+                    : "ml-auto whitespace-pre-wrap bg-brand-600 text-white"
                 }`}
               >
                 {item.content}

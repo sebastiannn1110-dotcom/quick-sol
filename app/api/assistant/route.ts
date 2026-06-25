@@ -27,6 +27,14 @@ function compact(value: unknown, max = 9000) {
   return JSON.stringify(value, null, 2).slice(0, max);
 }
 
+function isLatestUploadQuestion(message: string) {
+  return /ultimo|ultima|last|recent|reciente|último|última/i.test(message) && /excel|upload|carga|archivo/i.test(message);
+}
+
+function asksForRanking(message: string) {
+  return /top|ranking|mas repetid|más repetid|repeated|frequent|frecuencia|conteo|count|rank/i.test(message);
+}
+
 function cleanSearchText(message: string) {
   return message
     .replace(/[^\p{L}\p{N}\s._@-]/gu, " ")
@@ -68,6 +76,19 @@ function groupSum<T extends Record<string, unknown>>(rows: T[], labelKeys: strin
     .slice(0, 10);
 }
 
+function groupCount<T extends Record<string, unknown>>(rows: T[], labelKeys: string[]) {
+  const totals = new Map<string, number>();
+  for (const row of rows) {
+    const label = labelKeys.map((key) => row[key]).find((value) => typeof value === "string" && value.trim()) as string | undefined;
+    if (!label) continue;
+    totals.set(label, (totals.get(label) ?? 0) + 1);
+  }
+  return Array.from(totals.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label))
+    .slice(0, 20);
+}
+
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
@@ -102,6 +123,7 @@ export async function POST(request: Request) {
   let errors: unknown[] = [];
   let employees: unknown[] = [];
   let aggregates: unknown[] = [];
+  let latestUploadSummary: unknown = null;
 
   if (supabase) {
     const employeeName = isAdmin ? likelyName(message) : "";
@@ -124,6 +146,8 @@ export async function POST(request: Request) {
     if (isAdmin && employeeIds.length === 1) uploadsQuery = uploadsQuery.eq("uploaded_by", employeeIds[0]);
     const uploadsResult = await uploadsQuery;
     uploads = uploadsResult.data ?? [];
+    const latestUpload = uploads[0] as { id?: string; total_rows?: number; valid_rows?: number; invalid_rows?: number; error_count?: number; data_quality_score?: number; original_file_name?: string; detected_category?: string; status?: string; created_at?: string } | undefined;
+    const latestUploadId = latestUpload?.id;
 
     let recordsQuery = supabase
       .from("business_records")
@@ -133,7 +157,9 @@ export async function POST(request: Request) {
       .limit(20);
     if (!isAdmin) recordsQuery = recordsQuery.eq("uploaded_by", context.profile.id);
     if (isAdmin && employeeIds.length === 1) recordsQuery = recordsQuery.eq("uploaded_by", employeeIds[0]);
-    if (searchText.length >= 3 && !["summarize_dashboard", "help_usage"].includes(intent)) {
+    if (latestUploadId && isLatestUploadQuestion(message)) {
+      recordsQuery = recordsQuery.eq("upload_batch_id", latestUploadId);
+    } else if (searchText.length >= 3 && !["summarize_dashboard", "help_usage"].includes(intent) && !asksForRanking(message)) {
       const pattern = `%${searchText}%`;
       recordsQuery = recordsQuery.or(`searchable_text.ilike.${pattern},mpn.ilike.${pattern},mpn_quoted.ilike.${pattern},supplier.ilike.${pattern},supplier_name.ilike.${pattern},customer.ilike.${pattern},po.ilike.${pattern}`);
     }
@@ -141,7 +167,6 @@ export async function POST(request: Request) {
     records = recordsResult.data ?? [];
 
     if (intent === "explain_import_errors") {
-      const latestUploadId = (uploads[0] as { id?: string } | undefined)?.id;
       let errorsQuery = supabase
         .from("import_errors")
         .select("id, trace_id, upload_batch_id, row_index, column_name, error_type, message, raw_value, severity, created_at")
@@ -150,6 +175,38 @@ export async function POST(request: Request) {
       if (latestUploadId) errorsQuery = errorsQuery.eq("upload_batch_id", latestUploadId);
       const errorsResult = await errorsQuery;
       errors = errorsResult.data ?? [];
+    }
+
+    if (latestUploadId && (isLatestUploadQuestion(message) || asksForRanking(message))) {
+      let latestRecordsQuery = supabase
+        .from("business_records")
+        .select("mpn, mpn_quoted, supplier, supplier_name, customer, client, qty, total_price, gp, commission")
+        .eq("upload_batch_id", latestUploadId)
+        .is("archived_at", null)
+        .limit(5000);
+      if (!isAdmin) latestRecordsQuery = latestRecordsQuery.eq("uploaded_by", context.profile.id);
+      const latestRecordsResult = await latestRecordsQuery;
+      const latestRecords = (latestRecordsResult.data ?? []) as Array<Record<string, unknown>>;
+      latestUploadSummary = {
+        file: latestUpload?.original_file_name,
+        category: latestUpload?.detected_category,
+        status: latestUpload?.status,
+        uploadedAt: latestUpload?.created_at,
+        totalRows: latestUpload?.total_rows,
+        validRows: latestUpload?.valid_rows,
+        invalidRows: latestUpload?.invalid_rows,
+        errorCount: latestUpload?.error_count,
+        dataQualityScore: latestUpload?.data_quality_score,
+        topMpns: groupCount(latestRecords, ["mpn", "mpn_quoted"]),
+        topSuppliers: groupCount(latestRecords, ["supplier_name", "supplier"]),
+        topCustomers: groupCount(latestRecords, ["customer", "client"]),
+        totals: {
+          qty: latestRecords.reduce((sum, row) => sum + (Number(row.qty ?? 0) || 0), 0),
+          totalPrice: Number(latestRecords.reduce((sum, row) => sum + (Number(row.total_price ?? 0) || 0), 0).toFixed(2)),
+          gp: Number(latestRecords.reduce((sum, row) => sum + (Number(row.gp ?? 0) || 0), 0).toFixed(2)),
+          commission: Number(latestRecords.reduce((sum, row) => sum + (Number(row.commission ?? 0) || 0), 0).toFixed(2))
+        }
+      };
     }
 
     if (isAdmin && /supplier|proveedor|gp|profit|ganancia/i.test(message)) {
@@ -173,9 +230,14 @@ export async function POST(request: Request) {
       instructions: [
         "You are the internal assistant for Quiksol Excel Intelligence System.",
         `Respond in ${language}.`,
+        "Sound natural and helpful, like a concise operations teammate, not like a database export.",
+        "Avoid showing UUIDs, raw field names, implementation advice or query instructions unless the user explicitly asks for technical details.",
+        "For clean uploads, give the conclusion first, then the key numbers.",
+        "When ranking data such as MPNs, suppliers or customers, use the server-side aggregates if available and answer directly.",
+        "Use short paragraphs or a small bullet list. Do not over-format.",
         "Use only the provided Supabase context. Do not invent records.",
         "Never reveal secrets, tokens, cookies, service role keys or OpenAI keys.",
-        "If context is not enough, say what filter, upload or search the user should try next.",
+        "If context is not enough, say it plainly in one sentence without telling the user to run database operations.",
         roleScope
       ].join(" "),
       input: [
@@ -184,6 +246,7 @@ export async function POST(request: Request) {
         `Question: ${message}`,
         `Matching employees: ${compact(employees, 2500)}`,
         `Recent or filtered uploads: ${compact(uploads, 5000)}`,
+        `Latest upload computed summary: ${compact(latestUploadSummary, 6000)}`,
         `Relevant records, max 20: ${compact(records, 7000)}`,
         `Relevant import errors, max 10: ${compact(errors, 3500)}`,
         `Server-side aggregates: ${compact(aggregates, 2500)}`
