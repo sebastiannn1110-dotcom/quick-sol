@@ -12,6 +12,7 @@ const ADMIN_LINKS = [
   { href: "/admin/users", label: "admin.links.users", detail: "admin.links.usersDetail" },
   { href: "/admin/uploads", label: "admin.links.uploads", detail: "admin.links.uploadsDetail" },
   { href: "/admin/records", label: "admin.links.records", detail: "admin.links.recordsDetail" },
+  { href: "/admin/search", label: "admin.links.search", detail: "admin.links.searchDetail" },
   { href: "/admin/analytics", label: "admin.links.analytics", detail: "admin.links.analyticsDetail" },
   { href: "/admin/import-errors", label: "admin.links.importErrors", detail: "admin.links.importErrorsDetail" },
   { href: "/admin/logs", label: "admin.links.logs", detail: "admin.links.logsDetail" },

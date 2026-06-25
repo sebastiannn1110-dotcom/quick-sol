@@ -1,7 +1,12 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
-import { getSupabasePublishableKey, isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/security/env";
+import {
+  getSupabasePublishableKey,
+  getSupabaseServiceRoleKey,
+  isServiceRoleConfigured,
+  isSupabaseConfigured
+} from "@/lib/security/env";
 
 export async function createSupabaseServerClient() {
   if (!isSupabaseConfigured()) return null;
@@ -35,7 +40,7 @@ export function createSupabaseServiceRoleClient() {
 
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    getSupabaseServiceRoleKey(),
     {
       auth: {
         autoRefreshToken: false,
@@ -43,4 +48,18 @@ export function createSupabaseServiceRoleClient() {
       }
     }
   );
+}
+
+export function createSupabaseAdminClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = getSupabaseServiceRoleKey();
+
+  if (!supabaseUrl || !serviceRoleKey) return null;
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
 }

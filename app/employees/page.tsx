@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import DataTable from "@/components/DataTable";
 import { useLanguage } from "@/components/LanguageProvider";
 import UploadHistory from "@/components/UploadHistory";
@@ -24,10 +25,12 @@ interface EmployeeDetailPayload {
   };
 }
 
-export default function EmployeesPage() {
+function EmployeesContent() {
   const { t, locale } = useLanguage();
+  const searchParams = useSearchParams();
+  const initialEmployee = searchParams.get("employee") ?? "";
   const [employees, setEmployees] = useState<EmployeeWithCounts[]>([]);
-  const [employeeId, setEmployeeId] = useState("");
+  const [employeeId, setEmployeeId] = useState(initialEmployee);
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -54,6 +57,12 @@ export default function EmployeesPage() {
   useEffect(() => {
     loadEmployees();
   }, [loadEmployees]);
+
+  useEffect(() => {
+    if (!initialEmployee) return;
+    setEmployeeId(initialEmployee);
+    loadEmployeeDetail(initialEmployee);
+  }, [initialEmployee, loadEmployeeDetail]);
 
   const roleLabel = (role: Profile["role"]) => {
     if (role === "admin") return t("role.admin");
@@ -160,5 +169,13 @@ export default function EmployeesPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function EmployeesPage() {
+  return (
+    <Suspense fallback={<div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading employees...</div>}>
+      <EmployeesContent />
+    </Suspense>
   );
 }

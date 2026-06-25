@@ -12,7 +12,7 @@ interface ChatMessage {
 }
 
 export default function AIAssistantWidget({ profile }: { profile: Profile | null }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -46,10 +46,10 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
     setLoading(true);
 
     try {
-      const response = await fetch("/api/assistant", {
+      const response = await fetch("/api/ai/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: trimmed })
+        body: JSON.stringify({ message: trimmed, language })
       });
       const payload = (await response.json()) as { answer?: string; error?: string };
       setMessages([

@@ -31,4 +31,11 @@ describe("normalizeRow", () => {
 
     expect(result.issues.some((issue) => issue.errorType === "formula_error")).toBe(true);
   });
+
+  it("maps MPN variants and falls back to MPN Quoted", () => {
+    expect(normalizeRow({ "P/N": "PN-100" }).columns.mpn).toBe("PN-100");
+    expect(normalizeRow({ "Mfr Part Number": "MFR-200" }).columns.mpn).toBe("MFR-200");
+    expect(normalizeRow({ Component: "CMP-300" }).columns.mpn).toBe("CMP-300");
+    expect(normalizeRow({ "MPN Quoted": "QT-400" }).columns.mpn).toBe("QT-400");
+  });
 });

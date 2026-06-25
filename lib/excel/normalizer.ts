@@ -13,7 +13,20 @@ const FIELD_ALIASES: Record<keyof PlatformRecordColumns, string[]> = {
   customer: ["customer", "cliente", "client", "sanm unico"],
   supplier: ["supplier", "vendor"],
   supplier_name: ["supplier name", "supplier", "vendor name"],
-  mpn: ["mpn", "part number", "manufacturer part number", "pn"],
+  mpn: [
+    "mpn",
+    "part number",
+    "part no",
+    "part no.",
+    "pn",
+    "p/n",
+    "manufacturer part number",
+    "mfr part number",
+    "mfg part number",
+    "item number",
+    "component",
+    "clean mpn"
+  ],
   mpn_quoted: ["mpn quoted", "quoted mpn"],
   manufacturer: ["manufacturer", "manufacturer quoted", "mfg", "brand"],
   clean_mfg: ["clean mfg", "clean manufacturer", "mfg clean"],
@@ -120,6 +133,22 @@ function aliasesForHeader(header: string) {
     }
   }
 
+  return null;
+}
+
+function findRawValueByAliases(rawData: JsonRecord, aliases: string[]) {
+  for (const [header, value] of Object.entries(rawData)) {
+    const normalizedHeader = normalizeHeader(header);
+    if (
+      aliases.some((alias) => {
+        const normalizedAlias = normalizeHeader(alias);
+        return normalizedHeader === normalizedAlias || normalizedHeader.includes(normalizedAlias);
+      })
+    ) {
+      const safeValue = sanitizeScalar(value);
+      if (safeValue !== null && safeValue !== "") return safeValue;
+    }
+  }
   return null;
 }
 
@@ -249,6 +278,33 @@ export function normalizeRow(rawData: JsonRecord, context?: LogContext) {
       rawValue: unmappedHeaders.slice(0, 10).join(", "),
       severity: "low"
     });
+  }
+
+  if (!columns.mpn) {
+    const fallbackMpn =
+      columns.mpn_quoted ??
+      findRawValueByAliases(rawData, [
+        "MPN",
+        "Part Number",
+        "PN",
+        "P/N",
+        "Manufacturer Part Number",
+        "Mfr Part Number",
+        "MFG Part Number",
+        "Part No",
+        "Item Number",
+        "Component",
+        "Clean MPN",
+        "MPN Quoted"
+      ]);
+
+    if (fallbackMpn !== null) {
+      columns.mpn = String(fallbackMpn);
+      normalizedData.mpn = String(fallbackMpn);
+    } else {
+      columns.mpn = null;
+      normalizedData.mpn = null;
+    }
   }
 
   if (context) {

@@ -11,6 +11,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const employeeId = searchParams.get("employeeId")?.trim();
+  const isAdmin = context.profile.role === "admin";
 
   if (context.isDemoMode) {
     const data = await getDemoPlatformData();
@@ -42,6 +43,9 @@ export async function GET(request: Request) {
   }
 
   if (employeeId) {
+    if (!isAdmin && employeeId !== context.profile.id) {
+      return NextResponse.json({ error: "You can only view your own employee data." }, { status: 403 });
+    }
     const [{ data: employee }, { data: uploads }, { data: records }] = await Promise.all([
       context.supabase!.from("profiles").select("*").eq("id", employeeId).single(),
       context.supabase!
@@ -67,6 +71,19 @@ export async function GET(request: Request) {
         categories: Array.from(new Set((records ?? []).map((record) => record.category ?? "Generic"))),
         lastUpload: uploads?.[0]?.created_at ?? null
       }
+    });
+  }
+
+  if (!isAdmin) {
+    return NextResponse.json({
+      employees: [
+        {
+          ...context.profile,
+          uploadCount: 0,
+          recordCount: 0,
+          lastUpload: null
+        }
+      ]
     });
   }
 

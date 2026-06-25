@@ -301,6 +301,7 @@ export interface PlatformAnalyticsSummary {
     commissionTotal: number;
     recordsWithErrors: number;
     incompleteRecords: number;
+    recordsMissingMpn: number;
   };
   recordsByCategory: MetricItem[];
   uploadsByEmployee: MetricItem[];
@@ -308,6 +309,9 @@ export interface PlatformAnalyticsSummary {
   recordsBySupplier: MetricItem[];
   topMpns: MetricItem[];
   recordsByDepartment: MetricItem[];
+  employeesByRole: MetricItem[];
+  employeesByRegion: MetricItem[];
+  employeesByDepartment: MetricItem[];
   recordsOverTime: MetricItem[];
   categoryModules: Record<string, AnalyticsModule>;
 }

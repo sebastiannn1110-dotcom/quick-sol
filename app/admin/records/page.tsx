@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import AdminGuard from "@/components/AdminGuard";
 import DataTable from "@/components/DataTable";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { PlatformRecord } from "@/lib/types";
 
-export default function AdminRecordsPage() {
+function AdminRecordsContent() {
   const { t } = useLanguage();
+  const searchParams = useSearchParams();
+  const uploadedBy = searchParams.get("uploadedBy");
   const [records, setRecords] = useState<PlatformRecord[]>([]);
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     async function loadRecords() {
-      const response = await fetch("/api/admin/records?pageSize=100", { cache: "no-store" });
+      const url = uploadedBy ? `/api/admin/records?pageSize=100&uploadedBy=${uploadedBy}` : "/api/admin/records?pageSize=100";
+      const response = await fetch(url, { cache: "no-store" });
       if (response.ok) {
         const payload = (await response.json()) as { records: PlatformRecord[]; count: number };
         setRecords(payload.records ?? []);
@@ -21,7 +25,7 @@ export default function AdminRecordsPage() {
       }
     }
     loadRecords();
-  }, []);
+  }, [uploadedBy]);
 
   return (
     <AdminGuard>
@@ -34,5 +38,13 @@ export default function AdminRecordsPage() {
         <DataTable records={records} />
       </div>
     </AdminGuard>
+  );
+}
+
+export default function AdminRecordsPage() {
+  return (
+    <Suspense fallback={<div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading records...</div>}>
+      <AdminRecordsContent />
+    </Suspense>
   );
 }

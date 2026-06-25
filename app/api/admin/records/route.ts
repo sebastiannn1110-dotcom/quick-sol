@@ -25,14 +25,20 @@ export async function GET(request: Request) {
     });
   }
 
-  const { data, error, count } = await context.supabase!
+  let query = context.supabase!
     .from("business_records")
     .select("*, profiles(full_name,email,department,region,role), upload_batches(original_file_name,detected_category,status)", {
       count: "exact"
     })
     .is("archived_at", null)
-    .order("created_at", { ascending: false })
-    .range(from, to);
+    .order("created_at", { ascending: false });
+
+  if (filters.uploadBatchId) query = query.eq("upload_batch_id", filters.uploadBatchId);
+  if (filters.uploadedBy) query = query.eq("uploaded_by", filters.uploadedBy);
+  if (filters.category) query = query.eq("category", filters.category);
+  if (filters.hasErrors) query = query.eq("has_errors", filters.hasErrors === "true");
+
+  const { data, error, count } = await query.range(from, to);
 
   if (error) return NextResponse.json({ error: "Unable to load admin records." }, { status: 500 });
   return NextResponse.json({

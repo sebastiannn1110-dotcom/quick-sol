@@ -7,3 +7,5 @@ The UI includes a language toggle for Spanish, English and Simplified Chinese. T
 Deployment/debugging notes are documented in [README_DEPLOYMENT_REPORT.md](README_DEPLOYMENT_REPORT.md).
 
 Technical vocabulary is documented in [README_TECHNICAL_GLOSSARY.md](README_TECHNICAL_GLOSSARY.md).
+
+Latest correction report is documented in [CHANGELOG_QUIKSOL_CORRECTIONS.md](CHANGELOG_QUIKSOL_CORRECTIONS.md).

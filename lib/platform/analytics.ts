@@ -43,13 +43,27 @@ function groupCount(values: Array<string | null | undefined>, emptyLabel = "Unsp
     .sort((a, b) => b.value - a.value);
 }
 
+function hasValue(value: unknown) {
+  return typeof value === "string" ? value.trim().length > 0 : value !== null && value !== undefined;
+}
+
+function mpnValue(record: PlatformRecord) {
+  return record.mpn?.trim() || record.mpn_quoted?.trim() || null;
+}
+
+function groupMpns(records: PlatformRecord[]): MetricItem[] {
+  const realMpns = groupCount(records.map(mpnValue).filter(Boolean) as string[]);
+  const missingCount = records.filter((record) => !mpnValue(record)).length;
+  return missingCount ? [...realMpns, { label: "Missing MPN", value: missingCount }] : realMpns;
+}
+
 function moduleFor(records: PlatformRecord[], stats: MetricItem[], groups: AnalyticsModule["groups"]) {
   return {
     stats,
     groups: {
       "Records by customer": groupCount(records.map((record) => record.customer ?? record.client)).slice(0, 8),
       "Records by supplier": groupCount(records.map((record) => record.supplier_name ?? record.supplier)).slice(0, 8),
-      "Top MPNs": groupCount(records.map((record) => record.mpn ?? record.mpn_quoted)).slice(0, 8),
+      "Top MPNs": groupMpns(records).slice(0, 8),
       ...groups
     }
   };
@@ -64,9 +78,16 @@ export function buildPlatformAnalytics(input: {
   const completedUploads = uploads.filter((upload) => upload.status !== "archived");
   const activeEmployees = profiles.filter((profile) => profile.is_active);
   const categories = new Set(records.map((record) => record.category ?? "Generic"));
+  const recordsMissingMpn = records.filter((record) => !mpnValue(record)).length;
   const incompleteRecords = records.filter((record) => {
-    const important = [record.customer, record.supplier, record.supplier_name, record.mpn, record.mpn_quoted];
-    return important.every((value) => !value);
+    const important = [
+      record.customer ?? record.client,
+      record.supplier ?? record.supplier_name,
+      mpnValue(record),
+      record.qty ?? record.req_qty,
+      record.price ?? record.total_price
+    ];
+    return important.some((value) => !hasValue(value));
   }).length;
 
   const recordsByCategory = groupCount(records.map((record) => record.category ?? "Generic"));
@@ -94,7 +115,8 @@ export function buildPlatformAnalytics(input: {
       averageGpRate: average(records, "gp_rate"),
       commissionTotal: sum(records, "commission"),
       recordsWithErrors: records.filter((record) => record.has_errors).length,
-      incompleteRecords
+      incompleteRecords,
+      recordsMissingMpn
     },
     recordsByCategory,
     uploadsByEmployee: groupCount(
@@ -102,8 +124,11 @@ export function buildPlatformAnalytics(input: {
     ),
     recordsByCustomer: groupCount(records.map((record) => record.customer ?? record.client)).slice(0, 10),
     recordsBySupplier: groupCount(records.map((record) => record.supplier_name ?? record.supplier)).slice(0, 10),
-    topMpns: groupCount(records.map((record) => record.mpn ?? record.mpn_quoted)).slice(0, 10),
+    topMpns: groupMpns(records).slice(0, 10),
     recordsByDepartment: groupCount(records.map((record) => record.profiles?.department)).slice(0, 10),
+    employeesByRole: groupCount(activeEmployees.map((profile) => profile.role)).slice(0, 10),
+    employeesByRegion: groupCount(activeEmployees.map((profile) => profile.region)).slice(0, 10),
+    employeesByDepartment: groupCount(activeEmployees.map((profile) => profile.department)).slice(0, 10),
     recordsOverTime: groupCount(records.map((record) => record.created_at.slice(0, 10))).slice(0, 30),
     categoryModules: {
       "Sales Margin": moduleFor(byCategory["Sales Margin"] ?? [], [

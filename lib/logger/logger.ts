@@ -1,5 +1,6 @@
 import type { LogEvent, LogLevel, PersistableLogEvent } from "@/lib/logger/types";
 import { sanitizeError, sanitizeForLog } from "@/lib/logger/sanitize";
+import { getSupabaseServiceRoleKey } from "@/lib/security/env";
 
 function color(level: LogLevel) {
   if (level === "error" || level === "fatal") return "\x1b[31m";
@@ -23,13 +24,14 @@ function normalizeEvent(event: LogEvent): PersistableLogEvent {
 async function persistSystemLog(event: PersistableLogEvent) {
   if (typeof window !== "undefined") return;
   if ("EdgeRuntime" in globalThis) return;
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return;
+  const serviceRoleKey = getSupabaseServiceRoleKey();
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !serviceRoleKey) return;
 
   try {
     const { createClient } = await import("@supabase/supabase-js");
     const service = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      serviceRoleKey,
       { auth: { persistSession: false, autoRefreshToken: false } }
     );
 

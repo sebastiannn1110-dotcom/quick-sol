@@ -28,8 +28,12 @@ export function getSupabasePublishableKey() {
 
 export function isServiceRoleConfigured() {
   return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_URL && getSupabaseServiceRoleKey()
   );
+}
+
+export function getSupabaseServiceRoleKey() {
+  return (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
 }
 
 export function isDemoModeAllowed() {

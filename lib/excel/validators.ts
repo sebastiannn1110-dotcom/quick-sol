@@ -22,6 +22,7 @@ export const recordsFilterSchema = z.object({
   query: z.string().optional(),
   category: z.string().optional(),
   uploadedBy: z.string().uuid().optional(),
+  uploadBatchId: z.string().uuid().optional(),
   customer: z.string().optional(),
   supplier: z.string().optional(),
   mpn: z.string().optional(),
