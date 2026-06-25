@@ -24,10 +24,10 @@ export default function AdminUploadsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">All Uploads</h1>
         </div>
-        <UploadHistory uploads={uploads} />
+        <UploadHistory uploads={uploads} showDownload />
       </div>
     </AdminGuard>
   );

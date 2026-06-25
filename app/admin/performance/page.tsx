@@ -36,7 +36,7 @@ export default function AdminPerformancePage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Observability</p>
+          <p className="text-sm font-medium text-orange-700">Observability</p>
           <h1 className="text-2xl font-semibold text-slate-950">Performance Logs</h1>
         </div>
 
@@ -82,7 +82,7 @@ export default function AdminPerformancePage() {
                     <td className="px-4 py-3 text-slate-600">{log.status}</td>
                     <td className="px-4 py-3 text-xs">
                       {log.trace_id ? (
-                        <Link className="font-medium text-brand-700" href={`/admin/traces/${log.trace_id}`}>
+                        <Link className="font-medium text-orange-700" href={`/admin/traces/${log.trace_id}`}>
                           {log.trace_id.slice(0, 8)}...
                         </Link>
                       ) : "-"}

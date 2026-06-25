@@ -37,7 +37,12 @@ function statusOf(upload: UploadLike) {
   return isBatch(upload) ? upload.status : "completed";
 }
 
-export default function UploadHistory({ uploads }: { uploads: UploadLike[] }) {
+function downloadHref(upload: UploadLike) {
+  if (!isBatch(upload) || !upload.stored_file_path) return null;
+  return `/api/admin/uploads/${upload.id}/download`;
+}
+
+export default function UploadHistory({ uploads, showDownload = false }: { uploads: UploadLike[]; showDownload?: boolean }) {
   return (
     <section className="rounded-md border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-200 px-4 py-3">
@@ -54,33 +59,53 @@ export default function UploadHistory({ uploads }: { uploads: UploadLike[] }) {
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Rows</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Errors</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Uploaded</th>
+              {showDownload ? <th className="px-4 py-3 text-left font-semibold text-slate-600">Excel</th> : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
-            {uploads.map((upload) => (
-              <tr key={upload.id}>
-                <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-                  {fileNameOf(upload)}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-600">{employeeOf(upload)}</td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  <CategoryBadge category={categoryOf(upload)} />
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">
-                  <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                    {statusOf(upload)}
-                  </span>
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-600">{rowsOf(upload)}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-600">{errorsOf(upload)}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                  {new Date(dateOf(upload)).toLocaleString()}
-                </td>
-              </tr>
-            ))}
+            {uploads.map((upload) => {
+              const href = downloadHref(upload);
+              return (
+                <tr key={upload.id}>
+                  <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+                    {fileNameOf(upload)}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">{employeeOf(upload)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <CategoryBadge category={categoryOf(upload)} />
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                      {statusOf(upload)}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">{rowsOf(upload)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">{errorsOf(upload)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                    {new Date(dateOf(upload)).toLocaleString()}
+                  </td>
+                  {showDownload ? (
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700"
+                        >
+                          Open Excel
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-400">No file</span>
+                      )}
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
             {!uploads.length ? (
               <tr>
-                <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>
+                <td className="px-4 py-8 text-center text-slate-500" colSpan={showDownload ? 8 : 7}>
                   No uploads yet.
                 </td>
               </tr>

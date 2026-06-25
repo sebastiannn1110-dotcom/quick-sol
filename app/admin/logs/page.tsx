@@ -62,7 +62,7 @@ export default function AdminLogsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Observability</p>
+          <p className="text-sm font-medium text-orange-700">Observability</p>
           <h1 className="text-2xl font-semibold text-slate-950">System Logs</h1>
         </div>
         <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -114,7 +114,7 @@ export default function AdminLogsPage() {
                     <td className="whitespace-nowrap px-4 py-3 text-xs">
                       {log.trace_id ? (
                         <div className="flex items-center gap-2">
-                          <Link className="font-medium text-brand-700" href={`/admin/traces/${log.trace_id}`}>
+                          <Link className="font-medium text-orange-700" href={`/admin/traces/${log.trace_id}`}>
                             {log.trace_id.slice(0, 8)}...
                           </Link>
                           <button type="button" onClick={() => copyTraceId(log.trace_id!)} className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">

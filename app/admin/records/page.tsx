@@ -25,7 +25,7 @@ export default function AdminRecordsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">All Records</h1>
           <p className="text-sm text-slate-500">{count} global records visible to admin.</p>
         </div>

@@ -46,7 +46,7 @@ export default function TracePage({ params }: { params: Promise<{ traceId: strin
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Trace Timeline</p>
+          <p className="text-sm font-medium text-orange-700">Trace Timeline</p>
           <h1 className="break-all text-2xl font-semibold text-slate-950">{traceId}</h1>
         </div>
         <section className="grid gap-4 md:grid-cols-2">

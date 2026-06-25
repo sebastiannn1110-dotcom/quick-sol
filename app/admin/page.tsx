@@ -37,12 +37,12 @@ export default function AdminPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin Dashboard</p>
+          <p className="text-sm font-medium text-orange-700">Admin Dashboard</p>
           <h1 className="text-2xl font-semibold text-slate-950">Administration</h1>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {ADMIN_LINKS.map((item) => (
-            <Link key={item.href} href={item.href} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm hover:border-brand-200 hover:bg-brand-50">
+            <Link key={item.href} href={item.href} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm hover:border-orange-200 hover:bg-orange-50">
               <p className="font-semibold text-slate-950">{item.label}</p>
               <p className="mt-1 text-sm text-slate-500">{item.detail}</p>
             </Link>

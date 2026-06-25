@@ -44,7 +44,7 @@ export default function AdminSecurityPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">Security Events</h1>
         </div>
 
@@ -93,7 +93,7 @@ export default function AdminSecurityPage() {
                   </div>
                   {event.trace_id ? (
                     <Link
-                      className="rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50"
+                      className="rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-50"
                       href={`/admin/traces/${event.trace_id}`}
                     >
                       View trace

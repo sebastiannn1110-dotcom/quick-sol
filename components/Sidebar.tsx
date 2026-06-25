@@ -2,36 +2,64 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  BarChart3,
+  Database,
+  LayoutDashboard,
+  ShieldCheck,
+  Tags,
+  Upload
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { Profile, UserRole } from "@/lib/types";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: "D" },
-  { href: "/upload", label: "Upload", icon: "U" },
-  { href: "/records", label: "Records", icon: "R" },
-  { href: "/categories", label: "Categories", icon: "C" },
-  { href: "/analytics", label: "Analytics", icon: "A" },
-  { href: "/admin", label: "Admin", icon: "AD" },
-  { href: "/settings", label: "Settings", icon: "S" }
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  roles?: UserRole[];
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/upload", label: "Upload", icon: Upload },
+  { href: "/records", label: "Records", icon: Database },
+  { href: "/categories", label: "Categories", icon: Tags },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/admin", label: "Admin", icon: ShieldCheck, roles: ["admin"] }
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
   const pathname = usePathname();
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (!item.roles) return true;
+    if (pathname.startsWith(item.href)) return true;
+    return profile ? item.roles.includes(profile.role) : false;
+  });
 
   return (
-    <aside className="border-b border-slate-200 bg-slate-950 text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r lg:border-slate-800">
+    <aside
+      className={`border-b text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r ${
+        isAdminArea ? "border-orange-900 bg-orange-950" : "border-slate-200 bg-slate-950 lg:border-slate-800"
+      }`}
+    >
       <div className="flex items-center justify-between px-4 py-4 lg:block lg:px-6 lg:py-6">
         <Link href="/dashboard" className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-brand-500 text-sm font-bold">
+          <span className={`flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold ${isAdminArea ? "bg-orange-500" : "bg-brand-500"}`}>
             QS
           </span>
           <span>
             <span className="block text-base font-semibold">Quiksol</span>
-            <span className="block text-xs text-slate-400">Excel Intelligence</span>
+            <span className={`block text-xs ${isAdminArea ? "text-orange-200" : "text-slate-400"}`}>
+              {profile?.role === "admin" ? "Admin Console" : "Excel Intelligence"}
+            </span>
           </span>
         </Link>
       </div>
       <nav className="flex gap-2 overflow-x-auto px-4 pb-4 lg:block lg:space-y-1 lg:overflow-visible lg:px-4">
-        {NAV_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const Icon = item.icon;
           return (
             <Link
               key={item.href}
@@ -39,15 +67,23 @@ export default function Sidebar() {
               className={`flex min-w-fit items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition ${
                 active
                   ? "bg-white text-slate-950"
-                  : "text-slate-300 hover:bg-slate-900 hover:text-white"
+                  : isAdminArea
+                    ? "text-orange-100 hover:bg-orange-900 hover:text-white"
+                    : "text-slate-300 hover:bg-slate-900 hover:text-white"
               }`}
             >
               <span
                 className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-bold ${
-                  active ? "bg-brand-100 text-brand-700" : "bg-slate-900 text-slate-300"
+                  active
+                    ? isAdminArea
+                      ? "bg-orange-100 text-orange-700"
+                      : "bg-brand-100 text-brand-700"
+                    : isAdminArea
+                      ? "bg-orange-900 text-orange-100"
+                      : "bg-slate-900 text-slate-300"
                 }`}
               >
-                {item.icon}
+                <Icon aria-hidden="true" className="h-4 w-4" />
               </span>
               {item.label}
             </Link>

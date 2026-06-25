@@ -1,18 +1,28 @@
 import LogoutButton from "@/components/LogoutButton";
+import type { Profile } from "@/lib/types";
 
-export default function Navbar() {
+export default function Navbar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
+  const roleLabel = profile?.role === "admin" ? "Admin workspace" : "Employee workspace";
+
   return (
-    <header className="border-b border-slate-200 bg-white">
+    <header className={`border-b bg-white ${isAdminArea ? "border-orange-200" : "border-slate-200"}`}>
       <div className="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <div>
-          <p className="text-sm font-medium text-slate-500">Internal Operations Platform</p>
+          <p className={`text-sm font-medium ${isAdminArea ? "text-orange-700" : "text-slate-500"}`}>{roleLabel}</p>
           <h1 className="text-lg font-semibold text-slate-950">Quiksol Excel Intelligence System</h1>
         </div>
         <div className="flex items-center gap-3">
-          <div className="hidden items-center gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 sm:flex">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Supabase RLS ready
-          </div>
+          {profile ? (
+            <div
+              className={`hidden rounded-md border px-3 py-2 text-sm sm:block ${
+                profile.role === "admin"
+                  ? "border-orange-200 bg-orange-50 text-orange-700"
+                  : "border-slate-200 bg-slate-50 text-slate-600"
+              }`}
+            >
+              {profile.full_name}
+            </div>
+          ) : null}
           <LogoutButton />
         </div>
       </div>

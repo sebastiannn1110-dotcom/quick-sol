@@ -33,7 +33,7 @@ export default function AdminErrorsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">Import Errors</h1>
         </div>
 
@@ -98,7 +98,7 @@ export default function AdminErrorsPage() {
                     </td>
                     <td className="px-4 py-3 text-xs">
                       {error.trace_id ? (
-                        <Link className="font-medium text-brand-700" href={`/admin/traces/${error.trace_id}`}>
+                        <Link className="font-medium text-orange-700" href={`/admin/traces/${error.trace_id}`}>
                           {error.trace_id.slice(0, 8)}...
                         </Link>
                       ) : "-"}

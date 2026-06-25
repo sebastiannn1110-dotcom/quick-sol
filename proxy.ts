@@ -11,7 +11,6 @@ const PROTECTED_PREFIXES = [
   "/records",
   "/analytics",
   "/categories",
-  "/settings",
   "/admin"
 ];
 

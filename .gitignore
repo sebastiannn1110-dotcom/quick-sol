@@ -11,3 +11,4 @@ yarn-error.log*
 pnpm-debug.log*
 tsconfig.tsbuildinfo
 supabase/.temp/
+/logo ia.png

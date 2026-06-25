@@ -1,13 +1,32 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import PageViewLogger from "@/components/PageViewLogger";
+import AIAssistantWidget from "@/components/AIAssistantWidget";
+import type { Profile } from "@/lib/types";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicPage = pathname === "/login";
+  const isAdminArea = pathname.startsWith("/admin");
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    if (isPublicPage) return;
+
+    async function loadProfile() {
+      const response = await fetch("/api/me", { cache: "no-store" });
+      if (response.ok) {
+        const payload = (await response.json()) as { profile: Profile };
+        setProfile(payload.profile);
+      }
+    }
+
+    loadProfile();
+  }, [isPublicPage]);
 
   if (isPublicPage) {
     return (
@@ -21,13 +40,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-slate-50 lg:flex">
       <PageViewLogger />
-      <Sidebar />
+      <Sidebar profile={profile} isAdminArea={isAdminArea} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Navbar />
+        <Navbar profile={profile} isAdminArea={isAdminArea} />
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 sm:px-6 lg:px-8">
           {children}
         </main>
       </div>
+      <AIAssistantWidget profile={profile} />
     </div>
   );
 }

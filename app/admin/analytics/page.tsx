@@ -23,7 +23,7 @@ export default function AdminAnalyticsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">Global Analytics</h1>
         </div>
         {analytics ? <AnalyticsCards analytics={analytics} /> : <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading analytics...</div>}

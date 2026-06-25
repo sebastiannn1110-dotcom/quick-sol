@@ -22,7 +22,7 @@ export default function AdminAuditLogsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-brand-700">Admin</p>
+          <p className="text-sm font-medium text-orange-700">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-950">Audit Logs</h1>
         </div>
         <section className="rounded-md border border-slate-200 bg-white shadow-sm">
