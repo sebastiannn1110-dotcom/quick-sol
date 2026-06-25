@@ -80,10 +80,56 @@ export async function POST(request: Request) {
           status: "completed",
           metadata: { fileSize: audio.size, fileType: audio.type }
         });
-        const transcription = await transcribeAudio(audio);
-        transcript = transcription.transcript;
-        detectedLanguage = transcription.detectedLanguage;
-        duration = transcription.duration;
+
+        await logger.info({
+          traceId: context.requestMeta.traceId,
+          requestId: context.requestMeta.requestId,
+          userId: context.profile.id,
+          userEmail: context.profile.email,
+          userRole: context.profile.role,
+          route: context.requestMeta.route,
+          module: "voice",
+          action: "voice_transcription_started",
+          message: "Voice transcription started.",
+          status: "started",
+          metadata: { fileSize: audio.size, fileType: audio.type }
+        });
+
+        try {
+          const transcription = await transcribeAudio(audio);
+          transcript = transcription.transcript;
+          detectedLanguage = transcription.detectedLanguage;
+          duration = transcription.duration;
+
+          await logger.info({
+            traceId: context.requestMeta.traceId,
+            requestId: context.requestMeta.requestId,
+            userId: context.profile.id,
+            userEmail: context.profile.email,
+            userRole: context.profile.role,
+            route: context.requestMeta.route,
+            module: "voice",
+            action: "voice_transcription_completed",
+            message: "Voice transcription completed.",
+            status: "completed",
+            metadata: { detectedLanguage, duration }
+          });
+        } catch (error) {
+          await logger.warn({
+            traceId: context.requestMeta.traceId,
+            requestId: context.requestMeta.requestId,
+            userId: context.profile.id,
+            userEmail: context.profile.email,
+            userRole: context.profile.role,
+            route: context.requestMeta.route,
+            module: "voice",
+            action: "voice_transcription_failed",
+            message: "Voice transcription failed.",
+            status: "failed",
+            error
+          });
+          throw error;
+        }
       } else {
         transcript = textMessage;
         detectedLanguage = requestedLanguage ? normalizeLanguage(requestedLanguage) : detectLanguageFromTranscript(transcript);

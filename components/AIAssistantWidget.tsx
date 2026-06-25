@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, PlayCircle, Send, Square, X } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { PlayCircle, Send, X } from "lucide-react";
+import AiVoiceRecorder, { type AiVoiceResult } from "@/components/ai/AiVoiceRecorder";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
 
@@ -20,13 +21,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState("");
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -46,167 +41,33 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
     });
   }, [t]);
 
-  useEffect(() => {
-    setVoiceSupported(
-      typeof window !== "undefined" &&
-        typeof navigator !== "undefined" &&
-        Boolean(navigator.mediaDevices?.getUserMedia) &&
-        typeof MediaRecorder !== "undefined"
-    );
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      recorderRef.current?.stop();
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    };
-  }, []);
-
-  function preferredAudioMimeType() {
-    if (typeof MediaRecorder === "undefined") return "";
-    return [
-      "audio/webm;codecs=opus",
-      "audio/webm",
-      "audio/ogg;codecs=opus",
-      "audio/mp4"
-    ].find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
-  }
-
-  function playAudio(audioBase64: string, audioMimeType = "audio/mpeg") {
+  async function playAudio(audioBase64: string, audioMimeType = "audio/mpeg") {
     const audio = new Audio(`data:${audioMimeType};base64,${audioBase64}`);
-    void audio.play();
+    await audio.play();
   }
 
-  async function submitVoice(audioBlob: Blob) {
-    const formData = new FormData();
-    const extension = audioBlob.type.includes("ogg")
-      ? "ogg"
-      : audioBlob.type.includes("mp4")
-        ? "m4a"
-        : "webm";
-    formData.append("audio", new File([audioBlob], `voice-message.${extension}`, { type: audioBlob.type || "audio/webm" }));
-    formData.append("language", language);
-
-    setLoading(true);
-    setVoiceStatus(t("assistant.processingAudio"));
-
-    try {
-      const response = await fetch("/api/ai/voice/ask", {
-        method: "POST",
-        body: formData
-      });
-      const payload = (await response.json()) as {
-        transcript?: string;
-        answerText?: string;
-        error?: string;
-        audioBase64?: string | null;
-        audioMimeType?: string | null;
-        audioError?: string | null;
-        detectedLanguage?: string | null;
-      };
-
-      if (!response.ok) {
-        setMessages((current) => [
-          ...current,
-          { role: "assistant", content: payload.error ?? t("assistant.unavailable") }
-        ]);
-        return;
-      }
-
-      const nextMessages: ChatMessage[] = [];
-      if (payload.transcript) nextMessages.push({ role: "user", content: payload.transcript });
-      nextMessages.push({
-        role: "assistant",
-        content: payload.answerText ?? t("assistant.noAnswer"),
-        audioBase64: payload.audioBase64,
-        audioMimeType: payload.audioMimeType,
-        audioError: payload.audioError,
-        detectedLanguage: payload.detectedLanguage
-      });
-
-      setMessages((current) => [...current, ...nextMessages]);
-
-      if (payload.audioBase64) {
-        setVoiceStatus(t("assistant.generatingVoice"));
-        try {
-          playAudio(payload.audioBase64, payload.audioMimeType ?? "audio/mpeg");
-        } catch {
-          // Browser autoplay can fail; the play button remains available.
-        }
-      }
-    } catch {
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content: t("assistant.connection") }
-      ]);
-    } finally {
-      setLoading(false);
-      setVoiceStatus("");
-    }
+  function handleVoiceResult(payload: AiVoiceResult) {
+    const nextMessages: ChatMessage[] = [];
+    if (payload.transcript) nextMessages.push({ role: "user", content: payload.transcript });
+    nextMessages.push({
+      role: "assistant",
+      content: payload.answerText ?? t("assistant.noAnswer"),
+      audioBase64: payload.audioBase64,
+      audioMimeType: payload.audioMimeType,
+      audioError: payload.audioError,
+      detectedLanguage: payload.detectedLanguage
+    });
+    setMessages((current) => [...current, ...nextMessages]);
   }
 
-  function openAudioFallback() {
-    setVoiceStatus(t("assistant.voiceUnavailable"));
-    fileInputRef.current?.click();
-  }
-
-  async function startRecording() {
-    if (loading || recording) return;
-
-    if (!voiceSupported) {
-      openAudioFallback();
-      return;
-    }
-
-    try {
-      chunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const mimeType = preferredAudioMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        recorderRef.current = null;
-        setRecording(false);
-        if (blob.size > 0) void submitVoice(blob);
-      };
-
-      recorder.start();
-      setRecording(true);
-      setVoiceStatus(t("assistant.recording"));
-    } catch {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      recorderRef.current = null;
-      setRecording(false);
-      openAudioFallback();
-    }
-  }
-
-  function handleAudioFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file || loading || recording) return;
-    void submitVoice(file);
-  }
-
-  function stopRecording() {
-    if (recorderRef.current && recorderRef.current.state !== "inactive") {
-      recorderRef.current.stop();
-    }
+  function handleVoiceError(errorMessage: string) {
+    setMessages((current) => [...current, { role: "assistant", content: errorMessage }]);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmed = message.trim();
-    if (!trimmed || loading || recording) return;
+    if (!trimmed || loading || voiceBusy) return;
 
     const nextMessages = [...messages, { role: "user" as const, content: trimmed }];
     setMessages(nextMessages);
@@ -275,7 +136,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
                 {item.audioBase64 ? (
                   <button
                     type="button"
-                    onClick={() => playAudio(item.audioBase64!, item.audioMimeType ?? "audio/mpeg")}
+                    onClick={() => void playAudio(item.audioBase64!, item.audioMimeType ?? "audio/mpeg")}
                     className="mt-2 flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                   >
                     <PlayCircle className="h-3.5 w-3.5" />
@@ -286,39 +147,28 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
               </div>
             ))}
             {loading ? <p className="text-xs text-slate-500">{t("assistant.thinking")}</p> : null}
-            {voiceStatus ? <p className="text-xs text-slate-500">{voiceStatus}</p> : null}
           </div>
 
           <form onSubmit={handleSubmit} className="flex gap-2 border-t border-slate-200 bg-white p-3">
             <input
               value={message}
               onChange={(event) => setMessage(event.target.value)}
+              disabled={loading || voiceBusy}
               className="focus-ring min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
               placeholder={placeholder}
             />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/webm,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/ogg,video/webm"
-              capture
-              className="hidden"
-              onChange={handleAudioFileChange}
+            <AiVoiceRecorder
+              disabled={loading}
+              language={language}
+              t={t}
+              onBusyChange={setVoiceBusy}
+              onVoiceResult={handleVoiceResult}
+              onErrorMessage={handleVoiceError}
+              onPlayAudio={playAudio}
             />
             <button
-              type="button"
-              onClick={recording ? stopRecording : startRecording}
-              disabled={loading}
-              className={`focus-ring rounded-md p-2 text-white disabled:cursor-not-allowed disabled:opacity-50 ${
-                recording ? "bg-red-600 hover:bg-red-700" : "bg-slate-800 hover:bg-slate-900"
-              }`}
-              aria-label={recording ? t("assistant.stopRecording") : t("assistant.record")}
-              title={!voiceSupported ? t("assistant.voiceUnavailable") : undefined}
-            >
-              {recording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-            </button>
-            <button
               type="submit"
-              disabled={loading || recording || !message.trim()}
+              disabled={loading || voiceBusy || !message.trim()}
               className="focus-ring rounded-md bg-brand-600 p-2 text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={t("assistant.send")}
             >
