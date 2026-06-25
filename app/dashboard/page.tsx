@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import AnalyticsCards, { ChartCard } from "@/components/AnalyticsCards";
+import { useLanguage } from "@/components/LanguageProvider";
 import type { PlatformAnalyticsSummary } from "@/lib/types";
 
 export default function DashboardPage() {
+  const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<PlatformAnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,26 +20,26 @@ export default function DashboardPage() {
           analytics?: PlatformAnalyticsSummary;
           error?: string;
         };
-        if (!response.ok || !payload.analytics) throw new Error(payload.error ?? "Unable to load analytics.");
+        if (!response.ok || !payload.analytics) throw new Error(payload.error ?? t("dashboard.unavailable"));
         setAnalytics(payload.analytics);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load analytics.");
+        setError(loadError instanceof Error ? loadError.message : t("dashboard.unavailable"));
       } finally {
         setLoading(false);
       }
     }
 
     loadAnalytics();
-  }, []);
+  }, [t]);
 
   if (loading) {
-    return <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading dashboard...</div>;
+    return <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("dashboard.loading")}</div>;
   }
 
   if (error || !analytics) {
     return (
       <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-        {error ?? "Dashboard data is unavailable."}
+        {error ?? t("dashboard.unavailable")}
       </div>
     );
   }
@@ -46,10 +48,10 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-medium text-brand-700">My Analytics</p>
-          <h1 className="text-2xl font-semibold text-slate-950">Operations Dashboard</h1>
+          <p className="text-sm font-medium text-brand-700">{t("dashboard.eyebrow")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("dashboard.title")}</h1>
         </div>
-        <p className="text-sm text-slate-500">Protected by Supabase Auth and RLS</p>
+        <p className="text-sm text-slate-500">{t("dashboard.protected")}</p>
       </div>
 
       <AnalyticsCards analytics={analytics} />

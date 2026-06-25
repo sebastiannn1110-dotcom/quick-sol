@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Send, X } from "lucide-react";
+import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
 
 interface ChatMessage {
@@ -11,20 +12,28 @@ interface ChatMessage {
 }
 
 export default function AIAssistantWidget({ profile }: { profile: Profile | null }) {
+  const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "Hola. Soy el asistente de Quiksol. Puedo ayudarte a encontrar datos o explicar como usar el programa."
+      content: t("assistant.initial")
     }
   ]);
 
   const placeholder = useMemo(() => {
-    if (profile?.role === "admin") return "Pregunta por datos, empleados, uploads o uso del panel...";
-    return "Pregunta por tus archivos, registros o como usar el programa...";
-  }, [profile?.role]);
+    if (profile?.role === "admin") return t("assistant.placeholder.admin");
+    return t("assistant.placeholder.employee");
+  }, [profile?.role, t]);
+
+  useEffect(() => {
+    setMessages((currentMessages) => {
+      if (currentMessages.length !== 1 || currentMessages[0]?.role !== "assistant") return currentMessages;
+      return [{ role: "assistant", content: t("assistant.initial") }];
+    });
+  }, [t]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,14 +57,14 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
         {
           role: "assistant",
           content: response.ok
-            ? payload.answer ?? "No pude generar una respuesta."
-            : payload.error ?? "El asistente no esta disponible ahora."
+            ? payload.answer ?? t("assistant.noAnswer")
+            : payload.error ?? t("assistant.unavailable")
         }
       ]);
     } catch {
       setMessages([
         ...nextMessages,
-        { role: "assistant", content: "No pude conectarme con el asistente. Intenta de nuevo." }
+        { role: "assistant", content: t("assistant.connection") }
       ]);
     } finally {
       setLoading(false);
@@ -70,15 +79,15 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
             <div className="flex items-center gap-3">
               <Image src="/logo-ia.png" alt="" width={32} height={32} className="rounded-md bg-white object-cover" />
               <div>
-                <p className="text-sm font-semibold">Asistente Quiksol</p>
-                <p className="text-xs text-slate-300">{profile?.role === "admin" ? "Modo admin" : "Modo empleado"}</p>
+                <p className="text-sm font-semibold">{t("assistant.title")}</p>
+                <p className="text-xs text-slate-300">{profile?.role === "admin" ? t("assistant.modeAdmin") : t("assistant.modeEmployee")}</p>
               </div>
             </div>
             <button
               type="button"
               onClick={() => setOpen(false)}
               className="rounded-md p-1 text-slate-300 hover:bg-slate-800 hover:text-white"
-              aria-label="Cerrar asistente"
+              aria-label={t("assistant.close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -97,7 +106,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
                 {item.content}
               </div>
             ))}
-            {loading ? <p className="text-xs text-slate-500">Pensando...</p> : null}
+            {loading ? <p className="text-xs text-slate-500">{t("assistant.thinking")}</p> : null}
           </div>
 
           <form onSubmit={handleSubmit} className="flex gap-2 border-t border-slate-200 bg-white p-3">
@@ -111,7 +120,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
               type="submit"
               disabled={loading || !message.trim()}
               className="focus-ring rounded-md bg-brand-600 p-2 text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="Enviar mensaje"
+              aria-label={t("assistant.send")}
             >
               <Send className="h-4 w-4" />
             </button>
@@ -123,7 +132,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
         type="button"
         onClick={() => setOpen((value) => !value)}
         className="focus-ring flex h-14 w-14 items-center justify-center rounded-full border border-slate-200 bg-white p-1 shadow-xl transition hover:scale-105"
-        aria-label="Abrir asistente IA"
+        aria-label={t("assistant.open")}
       >
         <Image src="/logo-ia.png" alt="" width={46} height={46} className="rounded-full object-cover" />
       </button>

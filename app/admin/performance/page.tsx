@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface PerformanceLog {
   id: string;
@@ -17,6 +18,7 @@ interface PerformanceLog {
 }
 
 export default function AdminPerformancePage() {
+  const { t, locale } = useLanguage();
   const [logs, setLogs] = useState<PerformanceLog[]>([]);
 
   useEffect(() => {
@@ -36,21 +38,21 @@ export default function AdminPerformancePage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-orange-700">Observability</p>
-          <h1 className="text-2xl font-semibold text-slate-950">Performance Logs</h1>
+          <p className="text-sm font-medium text-orange-700">{t("admin.observability")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("admin.performanceTitle")}</h1>
         </div>
 
         <section className="grid gap-4 md:grid-cols-3">
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Measured operations</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.measuredOperations")}</p>
             <p className="mt-2 text-2xl font-semibold text-slate-950">{logs.length}</p>
           </div>
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Slow operations</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.slowOperations")}</p>
             <p className="mt-2 text-2xl font-semibold text-amber-700">{slowLogs.length}</p>
           </div>
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Failed operations</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.failedOperations")}</p>
             <p className="mt-2 text-2xl font-semibold text-red-700">
               {logs.filter((log) => log.status === "failed").length}
             </p>
@@ -62,18 +64,18 @@ export default function AdminPerformancePage() {
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Time</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Operation</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Module</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Duration</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Trace</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.time")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.operation")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.module")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.duration")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.status")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.trace")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {logs.map((log) => (
                   <tr key={log.id}>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{new Date(log.created_at).toLocaleString(locale)}</td>
                     <td className="px-4 py-3 font-medium text-slate-950">{log.operation}</td>
                     <td className="px-4 py-3 text-slate-600">{log.module}</td>
                     <td className={`px-4 py-3 font-semibold ${Number(log.duration_ms) > 1500 ? "text-amber-700" : "text-slate-700"}`}>
@@ -91,7 +93,7 @@ export default function AdminPerformancePage() {
                 ))}
                 {!logs.length ? (
                   <tr>
-                    <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>No performance logs found.</td>
+                    <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>{t("admin.noPerformance")}</td>
                   </tr>
                 ) : null}
               </tbody>

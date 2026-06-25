@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
+import { useLanguage } from "@/components/LanguageProvider";
 import type { SecurityEvent } from "@/lib/types";
 
 const ALERT_EVENT_TYPES = new Set([
@@ -20,6 +21,7 @@ const ALERT_EVENT_TYPES = new Set([
 ]);
 
 export default function AdminSecurityPage() {
+  const { t, locale } = useLanguage();
   const [events, setEvents] = useState<SecurityEvent[]>([]);
 
   useEffect(() => {
@@ -44,21 +46,21 @@ export default function AdminSecurityPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-orange-700">Admin</p>
-          <h1 className="text-2xl font-semibold text-slate-950">Security Events</h1>
+          <p className="text-sm font-medium text-orange-700">{t("nav.admin")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("admin.securityTitle")}</h1>
         </div>
 
         <section className="grid gap-4 md:grid-cols-3">
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Total events</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.totalEvents")}</p>
             <p className="mt-2 text-2xl font-semibold text-slate-950">{events.length}</p>
           </div>
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Active alerts</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.activeAlerts")}</p>
             <p className="mt-2 text-2xl font-semibold text-red-700">{alertEvents.length}</p>
           </div>
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Critical severity</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.criticalSeverity")}</p>
             <p className="mt-2 text-2xl font-semibold text-red-800">
               {events.filter((event) => event.severity === "critical").length}
             </p>
@@ -67,12 +69,12 @@ export default function AdminSecurityPage() {
 
         {alertEvents.length ? (
           <section className="rounded-md border border-red-200 bg-red-50 p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-red-900">Operational alerts</h2>
+            <h2 className="text-sm font-semibold text-red-900">{t("admin.operationalAlerts")}</h2>
             <div className="mt-3 grid gap-2">
               {alertEvents.slice(0, 8).map((event) => (
                 <div key={`alert-${event.id}`} className="rounded-md bg-white p-3 text-sm text-red-900">
                   <p className="font-semibold">{event.event_type} - {event.severity}</p>
-                  <p className="mt-1 text-red-700">{event.route ?? "unknown route"}</p>
+                  <p className="mt-1 text-red-700">{event.route ?? t("admin.unknownRoute")}</p>
                 </div>
               ))}
             </div>
@@ -86,9 +88,9 @@ export default function AdminSecurityPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-950">{event.event_type} - {event.severity}</p>
-                    <p className="mt-1 text-slate-600">{event.route ?? "unknown route"}</p>
+                    <p className="mt-1 text-slate-600">{event.route ?? t("admin.unknownRoute")}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {event.actor_email ?? event.actor_id ?? "unknown actor"} - {new Date(event.created_at).toLocaleString()}
+                      {event.actor_email ?? event.actor_id ?? t("admin.unknownActor")} - {new Date(event.created_at).toLocaleString(locale)}
                     </p>
                   </div>
                   {event.trace_id ? (
@@ -96,7 +98,7 @@ export default function AdminSecurityPage() {
                       className="rounded-md border border-slate-200 px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-50"
                       href={`/admin/traces/${event.trace_id}`}
                     >
-                      View trace
+                      {t("admin.viewTrace")}
                     </Link>
                   ) : null}
                 </div>
@@ -107,7 +109,7 @@ export default function AdminSecurityPage() {
                 ) : null}
               </div>
             ))}
-            {!events.length ? <p className="p-6 text-sm text-slate-500">No security events found.</p> : null}
+            {!events.length ? <p className="p-6 text-sm text-slate-500">{t("admin.noSecurity")}</p> : null}
           </div>
         </section>
       </div>

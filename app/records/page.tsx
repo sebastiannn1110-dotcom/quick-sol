@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import DataTable from "@/components/DataTable";
+import { useLanguage } from "@/components/LanguageProvider";
 import SearchBar from "@/components/SearchBar";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import type { PlatformRecord, Profile } from "@/lib/types";
@@ -27,6 +28,7 @@ const CATEGORIES = [
 ];
 
 export default function RecordsPage() {
+  const { t, tc } = useLanguage();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [uploadedBy, setUploadedBy] = useState("");
@@ -61,7 +63,7 @@ export default function RecordsPage() {
       setLoading(true);
       const response = await fetch(`/api/records?${params.toString()}`, { cache: "no-store" });
       const payload = (await response.json()) as RecordsPayload & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Unable to load records.");
+      if (!response.ok) throw new Error(payload.error ?? t("records.loading"));
       clientLogger.searchExecuted({
         query,
         category,
@@ -73,11 +75,11 @@ export default function RecordsPage() {
       setCount(payload.count ?? 0);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load records.");
+      setError(loadError instanceof Error ? loadError.message : t("records.loading"));
     } finally {
       setLoading(false);
     }
-  }, [category, country, customer, hasErrors, manufacturer, mpn, page, po, query, supplier, uploadedBy]);
+  }, [category, country, customer, hasErrors, manufacturer, mpn, page, po, query, supplier, t, uploadedBy]);
 
   useEffect(() => {
     const timeout = window.setTimeout(loadRecords, 250);
@@ -88,11 +90,11 @@ export default function RecordsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-medium text-brand-700">Search and traceability</p>
-          <h1 className="text-2xl font-semibold text-slate-950">My Records</h1>
+          <p className="text-sm font-medium text-brand-700">{t("records.eyebrow")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("records.title")}</h1>
         </div>
         <div className="text-sm text-slate-500">
-          <span className="font-semibold text-slate-950">{count}</span> matching records
+          <span className="font-semibold text-slate-950">{count}</span> {t("records.matching")}
         </div>
       </div>
 
@@ -105,40 +107,40 @@ export default function RecordsPage() {
                 setQuery(value);
                 setPage(1);
               }}
-              placeholder="Search by customer, supplier, MPN, line ID, PO, QPDDD, description or comments"
+              placeholder={t("records.searchPlaceholder")}
             />
           </div>
           <select value={category} onChange={(event) => setCategory(event.target.value)} className="focus-ring rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm">
-            <option value="">All categories</option>
+            <option value="">{t("records.allCategories")}</option>
             {CATEGORIES.map((item) => (
-              <option key={item} value={item}>{item}</option>
+              <option key={item} value={item}>{tc(item)}</option>
             ))}
           </select>
           <select value={uploadedBy} onChange={(event) => setUploadedBy(event.target.value)} className="focus-ring rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm">
-            <option value="">All uploaders</option>
+            <option value="">{t("records.allUploaders")}</option>
             {employees.map((employee) => (
               <option key={employee.id} value={employee.id}>
                 {employee.full_name}
               </option>
             ))}
           </select>
-          <input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder="Customer" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
-          <input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Supplier" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+          <input value={customer} onChange={(event) => setCustomer(event.target.value)} placeholder={t("records.customer")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+          <input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder={t("records.supplier")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
           <input value={mpn} onChange={(event) => setMpn(event.target.value)} placeholder="MPN" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
-          <input value={manufacturer} onChange={(event) => setManufacturer(event.target.value)} placeholder="Manufacturer" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+          <input value={manufacturer} onChange={(event) => setManufacturer(event.target.value)} placeholder={t("records.manufacturer")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
           <input value={po} onChange={(event) => setPo(event.target.value)} placeholder="PO" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
-          <input value={country} onChange={(event) => setCountry(event.target.value)} placeholder="Country" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+          <input value={country} onChange={(event) => setCountry(event.target.value)} placeholder={t("records.country")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
           <select value={hasErrors} onChange={(event) => setHasErrors(event.target.value)} className="focus-ring rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm">
-            <option value="">Any quality state</option>
-            <option value="true">Has errors</option>
-            <option value="false">No errors</option>
+            <option value="">{t("records.anyQuality")}</option>
+            <option value="true">{t("records.hasErrors")}</option>
+            <option value="false">{t("records.noErrors")}</option>
           </select>
         </div>
       </section>
 
       {error ? <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
       {loading ? (
-        <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading records...</div>
+        <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("records.loading")}</div>
       ) : (
         <>
           <DataTable records={records} />
@@ -148,15 +150,15 @@ export default function RecordsPage() {
               onClick={() => setPage((current) => Math.max(1, current - 1))}
               className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-50"
             >
-              Previous
+              {t("records.previous")}
             </button>
-            <span className="text-sm text-slate-500">Page {page}</span>
+            <span className="text-sm text-slate-500">{t("records.page")} {page}</span>
             <button
               disabled={page * 25 >= count}
               onClick={() => setPage((current) => current + 1)}
               className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-sm font-medium disabled:opacity-50"
             >
-              Next
+              {t("records.next")}
             </button>
           </div>
         </>

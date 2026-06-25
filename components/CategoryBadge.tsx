@@ -1,3 +1,6 @@
+"use client";
+
+import { useLanguage } from "@/components/LanguageProvider";
 import type { BusinessCategory } from "@/lib/types";
 
 const COLORS: Record<BusinessCategory, string> = {
@@ -20,13 +23,15 @@ const COLORS: Record<BusinessCategory, string> = {
 };
 
 export default function CategoryBadge({ category }: { category: BusinessCategory }) {
+  const { tc } = useLanguage();
+
   return (
     <span
       className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ring-1 ring-inset ${
         COLORS[category] ?? COLORS.Unknown
       }`}
     >
-      {category}
+      {tc(category)}
     </span>
   );
 }

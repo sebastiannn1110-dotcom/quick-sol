@@ -4,22 +4,25 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import AnalyticsCards from "@/components/AnalyticsCards";
+import { useLanguage } from "@/components/LanguageProvider";
+import type { TranslationKey } from "@/lib/i18n";
 import type { PlatformAnalyticsSummary } from "@/lib/types";
 
 const ADMIN_LINKS = [
-  { href: "/admin/users", label: "Users", detail: "Roles, departments, activation" },
-  { href: "/admin/uploads", label: "All Uploads", detail: "Batch status and archive actions" },
-  { href: "/admin/records", label: "All Records", detail: "Global search and traceability" },
-  { href: "/admin/analytics", label: "Global Analytics", detail: "Executive metrics" },
-  { href: "/admin/import-errors", label: "Import Errors", detail: "Row and column issues" },
-  { href: "/admin/logs", label: "System Logs", detail: "Trace requests and backend failures" },
-  { href: "/admin/performance", label: "Performance", detail: "Slow queries and measured operations" },
-  { href: "/admin/audit-logs", label: "Audit Logs", detail: "Administrative actions" },
-  { href: "/admin/security", label: "Security Events", detail: "Unauthorized access attempts" },
-  { href: "/categories", label: "Categories", detail: "Category analytics" }
-];
+  { href: "/admin/users", label: "admin.links.users", detail: "admin.links.usersDetail" },
+  { href: "/admin/uploads", label: "admin.links.uploads", detail: "admin.links.uploadsDetail" },
+  { href: "/admin/records", label: "admin.links.records", detail: "admin.links.recordsDetail" },
+  { href: "/admin/analytics", label: "admin.links.analytics", detail: "admin.links.analyticsDetail" },
+  { href: "/admin/import-errors", label: "admin.links.importErrors", detail: "admin.links.importErrorsDetail" },
+  { href: "/admin/logs", label: "admin.links.logs", detail: "admin.links.logsDetail" },
+  { href: "/admin/performance", label: "admin.links.performance", detail: "admin.links.performanceDetail" },
+  { href: "/admin/audit-logs", label: "admin.links.audit", detail: "admin.links.auditDetail" },
+  { href: "/admin/security", label: "admin.links.security", detail: "admin.links.securityDetail" },
+  { href: "/categories", label: "admin.links.categories", detail: "admin.links.categoriesDetail" }
+] satisfies Array<{ href: string; label: TranslationKey; detail: TranslationKey }>;
 
 export default function AdminPage() {
+  const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<PlatformAnalyticsSummary | null>(null);
 
   useEffect(() => {
@@ -37,14 +40,14 @@ export default function AdminPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-orange-700">Admin Dashboard</p>
-          <h1 className="text-2xl font-semibold text-slate-950">Administration</h1>
+          <p className="text-sm font-medium text-orange-700">{t("admin.eyebrow")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("admin.title")}</h1>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {ADMIN_LINKS.map((item) => (
             <Link key={item.href} href={item.href} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm hover:border-orange-200 hover:bg-orange-50">
-              <p className="font-semibold text-slate-950">{item.label}</p>
-              <p className="mt-1 text-sm text-slate-500">{item.detail}</p>
+              <p className="font-semibold text-slate-950">{t(item.label)}</p>
+              <p className="mt-1 text-sm text-slate-500">{t(item.detail)}</p>
             </Link>
           ))}
         </div>

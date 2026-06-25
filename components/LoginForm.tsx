@@ -4,10 +4,13 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import LanguageToggle from "@/components/LanguageToggle";
+import { useLanguage } from "@/components/LanguageProvider";
 
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { t } = useLanguage();
   const redirect = searchParams.get("redirect") ?? "/dashboard";
   const setupError = searchParams.get("error");
   const [supabase, setSupabase] = useState(() => createSupabaseBrowserClient());
@@ -18,11 +21,16 @@ export default function LoginForm() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(
     setupError === "inactive_user"
-      ? "Your user is inactive. Contact an admin."
+      ? t("auth.inactive")
       : setupError === "supabase_not_configured"
-        ? "Supabase environment variables are missing."
+        ? t("auth.envMissing")
         : null
   );
+
+  useEffect(() => {
+    if (setupError === "inactive_user") setError(t("auth.inactive"));
+    else if (setupError === "supabase_not_configured") setError(t("auth.envMissing"));
+  }, [setupError, t]);
 
   useEffect(() => {
     async function loadRuntimeConfig() {
@@ -58,11 +66,11 @@ export default function LoginForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (configLoading) {
-      setError("Login configuration is still loading. Try again in a moment.");
+      setError(t("auth.configLoading"));
       return;
     }
     if (!supabase) {
-      setError("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.");
+      setError(t("auth.supabaseMissing"));
       return;
     }
 
@@ -79,7 +87,7 @@ export default function LoginForm() {
 
     if (signInError) {
       clientLogger.loginFailed({ email, reason: signInError.message });
-      setError("Invalid credentials or inactive account.");
+      setError(t("auth.invalid"));
       return;
     }
 
@@ -90,7 +98,7 @@ export default function LoginForm() {
 
   async function handleReset() {
     if (!supabase || !email) {
-      setError("Enter your email before requesting a password reset.");
+      setError(t("auth.enterEmail"));
       return;
     }
 
@@ -98,10 +106,10 @@ export default function LoginForm() {
       redirectTo: `${window.location.origin}/login`
     });
 
-    if (resetError) setError("Unable to send reset email.");
+    if (resetError) setError(t("auth.resetFailed"));
     else {
       clientLogger.passwordResetRequested({ email });
-      setMessage("Password reset email sent.");
+      setMessage(t("auth.resetSent"));
     }
   }
 
@@ -111,20 +119,22 @@ export default function LoginForm() {
         <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
           QS
         </div>
-        <p className="text-sm font-medium text-brand-700">Quiksol Data Intelligence Platform</p>
-        <h1 className="mt-1 text-2xl font-semibold text-slate-950">Sign in</h1>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-brand-700">Quiksol Data Intelligence Platform</p>
+          <LanguageToggle />
+        </div>
+        <h1 className="mt-1 text-2xl font-semibold text-slate-950">{t("auth.signIn")}</h1>
       </div>
 
       {!supabase ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Supabase is not configured. Create `.env.local` with the required Supabase variables to
-          enable secure login.
+          {t("auth.notConfiguredNotice")}
         </div>
       ) : null}
 
       <form onSubmit={handleSubmit} className="mt-5 grid gap-4">
         <label className="grid gap-1 text-sm font-medium text-slate-700">
-          Email
+          {t("auth.email")}
           <input
             type="email"
             required
@@ -135,14 +145,14 @@ export default function LoginForm() {
           />
         </label>
         <label className="grid gap-1 text-sm font-medium text-slate-700">
-          Password
+          {t("auth.password")}
           <input
             type="password"
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal text-slate-950"
-            placeholder="Your password"
+            placeholder={t("auth.passwordPlaceholder")}
           />
         </label>
 
@@ -154,14 +164,14 @@ export default function LoginForm() {
           className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           type="submit"
         >
-          {configLoading ? "Preparing login..." : loading ? "Signing in..." : "Sign in"}
+          {configLoading ? t("auth.preparing") : loading ? t("auth.signingIn") : t("auth.signIn")}
         </button>
         <button
           type="button"
           onClick={handleReset}
           className="text-sm font-medium text-slate-600 hover:text-slate-950"
         >
-          Send password reset email
+          {t("auth.reset")}
         </button>
       </form>
     </div>

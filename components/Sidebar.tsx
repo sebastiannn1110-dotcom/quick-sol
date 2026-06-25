@@ -11,26 +11,29 @@ import {
   Upload
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useLanguage } from "@/components/LanguageProvider";
+import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
 
 interface NavItem {
   href: string;
-  label: string;
+  labelKey: TranslationKey;
   icon: LucideIcon;
   roles?: UserRole[];
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/upload", label: "Upload", icon: Upload },
-  { href: "/records", label: "Records", icon: Database },
-  { href: "/categories", label: "Categories", icon: Tags },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/admin", label: "Admin", icon: ShieldCheck, roles: ["admin"] }
+  { href: "/dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
+  { href: "/upload", labelKey: "nav.upload", icon: Upload },
+  { href: "/records", labelKey: "nav.records", icon: Database },
+  { href: "/categories", labelKey: "nav.categories", icon: Tags },
+  { href: "/analytics", labelKey: "nav.analytics", icon: BarChart3 },
+  { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
 ];
 
 export default function Sidebar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
   const pathname = usePathname();
+  const { t } = useLanguage();
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (!item.roles) return true;
     if (pathname.startsWith(item.href)) return true;
@@ -51,7 +54,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
           <span>
             <span className="block text-base font-semibold">Quiksol</span>
             <span className={`block text-xs ${isAdminArea ? "text-orange-200" : "text-slate-400"}`}>
-              {profile?.role === "admin" ? "Admin Console" : "Excel Intelligence"}
+              {profile?.role === "admin" ? t("app.subtitle.admin") : t("app.subtitle.employee")}
             </span>
           </span>
         </Link>
@@ -85,7 +88,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
               >
                 <Icon aria-hidden="true" className="h-4 w-4" />
               </span>
-              {item.label}
+              {t(item.labelKey)}
             </Link>
           );
         })}

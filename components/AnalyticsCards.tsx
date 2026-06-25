@@ -1,15 +1,20 @@
-import type { MetricItem, PlatformAnalyticsSummary } from "@/lib/types";
+"use client";
 
-function formatValue(value: number | string) {
+import type { MetricItem, PlatformAnalyticsSummary } from "@/lib/types";
+import { useLanguage } from "@/components/LanguageProvider";
+
+function formatValue(value: number | string, locale: string) {
   if (typeof value === "string") return value;
-  return new Intl.NumberFormat("en", {
+  return new Intl.NumberFormat(locale, {
     maximumFractionDigits: value % 1 === 0 ? 0 : 2
   }).format(value);
 }
 
 function BarList({ items }: { items: MetricItem[] }) {
+  const { t, tl, locale } = useLanguage();
+
   if (!items.length) {
-    return <p className="text-sm text-slate-500">No data available.</p>;
+    return <p className="text-sm text-slate-500">{t("charts.noData")}</p>;
   }
 
   const max = Math.max(...items.map((item) => item.value), 1);
@@ -19,8 +24,8 @@ function BarList({ items }: { items: MetricItem[] }) {
       {items.slice(0, 8).map((item) => (
         <div key={item.label} className="space-y-1">
           <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="truncate font-medium text-slate-700">{item.label}</span>
-            <span className="text-slate-500">{formatValue(item.value)}</span>
+            <span className="truncate font-medium text-slate-700">{tl(item.label)}</span>
+            <span className="text-slate-500">{formatValue(item.value, locale)}</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-slate-100">
             <div
@@ -43,28 +48,33 @@ export function MetricCard({
   value: string | number;
   detail?: string;
 }) {
+  const { tl, locale } = useLanguage();
+
   return (
     <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-sm font-medium text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-950">{formatValue(value)}</p>
-      {detail ? <p className="mt-1 text-xs text-slate-500">{detail}</p> : null}
+      <p className="text-sm font-medium text-slate-500">{tl(label)}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-950">{formatValue(value, locale)}</p>
+      {detail ? <p className="mt-1 text-xs text-slate-500">{tl(detail)}</p> : null}
     </div>
   );
 }
 
 export function ChartCard({ title, items }: { title: string; items: MetricItem[] }) {
+  const { tl } = useLanguage();
+
   return (
     <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-4 text-sm font-semibold text-slate-950">{title}</h2>
+      <h2 className="mb-4 text-sm font-semibold text-slate-950">{tl(title)}</h2>
       <BarList items={items} />
     </section>
   );
 }
 
 export default function AnalyticsCards({ analytics }: { analytics: PlatformAnalyticsSummary }) {
+  const { t, locale } = useLanguage();
   const lastUpload = analytics.totals.lastUpload
-    ? new Date(analytics.totals.lastUpload).toLocaleString()
-    : "No uploads yet";
+    ? new Date(analytics.totals.lastUpload).toLocaleString(locale)
+    : t("history.empty");
 
   return (
     <div className="space-y-5">

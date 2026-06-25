@@ -6,9 +6,10 @@ import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import PageViewLogger from "@/components/PageViewLogger";
 import AIAssistantWidget from "@/components/AIAssistantWidget";
+import { LanguageProvider } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicPage = pathname === "/login";
   const isAdminArea = pathname.startsWith("/admin");
@@ -49,5 +50,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <AIAssistantWidget profile={profile} />
     </div>
+  );
+}
+
+export default function AppShell({ children }: { children: React.ReactNode }) {
+  return (
+    <LanguageProvider>
+      <ShellContent>{children}</ShellContent>
+    </LanguageProvider>
   );
 }

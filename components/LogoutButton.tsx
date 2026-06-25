@@ -4,11 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useLanguage } from "@/components/LanguageProvider";
 
 export default function LogoutButton() {
   const router = useRouter();
   const supabase = createSupabaseBrowserClient();
   const [loading, setLoading] = useState(false);
+  const { t } = useLanguage();
 
   async function handleLogout() {
     setLoading(true);
@@ -25,7 +27,7 @@ export default function LogoutButton() {
       onClick={handleLogout}
       className="focus-ring rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {loading ? "Signing out..." : "Sign out"}
+      {loading ? t("auth.signingOut") : t("auth.signOut")}
     </button>
   );
 }

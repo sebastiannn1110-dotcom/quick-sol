@@ -2,6 +2,7 @@
 
 import { FormEvent, useRef, useState } from "react";
 import { clientLogger } from "@/lib/logger/clientLogger";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface UploadResult {
   message: string;
@@ -41,16 +42,8 @@ const INITIAL_FORM = {
   notes: ""
 };
 
-const PROGRESS_STEPS = [
-  "Uploading file",
-  "Reading sheets",
-  "Detecting headers",
-  "Normalizing rows",
-  "Saving to Supabase",
-  "Finished"
-];
-
 export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
+  const { t, tc } = useLanguage();
   const [form, setForm] = useState(INITIAL_FORM);
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,6 +51,14 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const progressSteps = [
+    t("upload.progress.uploading"),
+    t("upload.progress.reading"),
+    t("upload.progress.headers"),
+    t("upload.progress.normalizing"),
+    t("upload.progress.saving"),
+    t("upload.progress.finished")
+  ];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,7 +68,7 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
     setProgressStep(0);
 
     const progressTimer = window.setInterval(() => {
-      setProgressStep((step) => Math.min(step + 1, PROGRESS_STEPS.length - 2));
+      setProgressStep((step) => Math.min(step + 1, progressSteps.length - 2));
     }, 900);
 
     try {
@@ -86,11 +87,11 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
       });
       const result = (await response.json()) as UploadResult & { error?: string };
 
-      if (!response.ok) throw new Error(result.error ?? "Upload failed.");
+      if (!response.ok) throw new Error(result.error ?? t("upload.failed"));
 
-      setProgressStep(PROGRESS_STEPS.length - 1);
+      setProgressStep(progressSteps.length - 1);
       setMessage(
-        `${result.message}. Quality score: ${result.dataQualityScore ?? result.upload.data_quality_score ?? "n/a"}`
+        `${result.message}. ${t("upload.qualityScore")}: ${result.dataQualityScore ?? result.upload.data_quality_score ?? "n/a"}`
       );
       clientLogger.uploadCompleted({
         recordsUploaded: result.recordsUploaded,
@@ -102,9 +103,9 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
       onUploaded?.(result);
     } catch (uploadError) {
       clientLogger.uploadFailed({
-        message: uploadError instanceof Error ? uploadError.message : "Upload failed"
+        message: uploadError instanceof Error ? uploadError.message : t("upload.failed")
       });
-      setError(uploadError instanceof Error ? uploadError.message : "Upload failed.");
+      setError(uploadError instanceof Error ? uploadError.message : t("upload.failed"));
     } finally {
       window.clearInterval(progressTimer);
       setLoading(false);
@@ -118,15 +119,15 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
   return (
     <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-4">
-        <h2 className="text-lg font-semibold text-slate-950">Upload Excel File</h2>
+        <h2 className="text-lg font-semibold text-slate-950">{t("upload.cardTitle")}</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Accepted formats: .xlsx, .xls and .csv. Macros are rejected.
+          {t("upload.accepted")}
         </p>
       </div>
       <form onSubmit={handleSubmit} className="grid gap-4">
         <div className="grid gap-4 md:grid-cols-2">
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Upload Type
+            {t("upload.type")}
             <select
               required
               value={form.selectedCategory}
@@ -135,13 +136,13 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
             >
               {UPLOAD_CATEGORIES.map((category) => (
                 <option key={category} value={category}>
-                  {category === "Auto Detect" ? "Auto Detect Category" : category}
+                  {category === "Auto Detect" ? t("upload.autoDetectCategory") : tc(category)}
                 </option>
               ))}
             </select>
           </label>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            File
+            {t("upload.file")}
             <input
               ref={fileInputRef}
               required
@@ -152,40 +153,40 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
             />
           </label>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Department
+            {t("upload.department")}
             <input
               required
               value={form.department}
               onChange={(event) => updateField("department", event.target.value)}
               className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal text-slate-950"
-              placeholder="Sales"
+              placeholder={t("upload.departmentPlaceholder")}
             />
           </label>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Region
+            {t("upload.region")}
             <input
               required
               value={form.region}
               onChange={(event) => updateField("region", event.target.value)}
               className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal text-slate-950"
-              placeholder="North America"
+              placeholder={t("upload.regionPlaceholder")}
             />
           </label>
         </div>
         <label className="grid gap-1 text-sm font-medium text-slate-700">
-          Notes
+          {t("upload.notes")}
           <textarea
             value={form.notes}
             onChange={(event) => updateField("notes", event.target.value)}
             className="focus-ring min-h-24 rounded-md border border-slate-300 px-3 py-2.5 font-normal text-slate-950"
-            placeholder="Context for this upload"
+            placeholder={t("upload.notesPlaceholder")}
           />
         </label>
 
         {loading ? (
           <div className="rounded-md bg-slate-50 p-3">
             <div className="flex flex-wrap gap-2">
-              {PROGRESS_STEPS.map((step, index) => (
+              {progressSteps.map((step, index) => (
                 <span
                   key={step}
                   className={`rounded-md px-2 py-1 text-xs font-medium ${
@@ -215,7 +216,7 @@ export default function UploadExcelCard({ onUploaded }: UploadExcelCardProps) {
             className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
           >
-            {loading ? "Processing..." : "Upload Excel File"}
+            {loading ? t("upload.processing") : t("upload.submit")}
           </button>
         </div>
       </form>

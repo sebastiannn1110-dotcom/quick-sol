@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ColumnMapper from "@/components/ColumnMapper";
+import { useLanguage } from "@/components/LanguageProvider";
 import UploadExcelCard from "@/components/UploadExcelCard";
 import UploadHistory from "@/components/UploadHistory";
 import type { BusinessCategory, UploadBatch } from "@/lib/types";
@@ -13,6 +14,7 @@ interface UploadResult {
 }
 
 export default function UploadPage() {
+  const { t } = useLanguage();
   const [uploads, setUploads] = useState<UploadBatch[]>([]);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,8 +34,8 @@ export default function UploadPage() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-sm font-medium text-brand-700">Secure data intake</p>
-        <h1 className="text-2xl font-semibold text-slate-950">Upload Excel File</h1>
+        <p className="text-sm font-medium text-brand-700">{t("upload.eyebrow")}</p>
+        <h1 className="text-2xl font-semibold text-slate-950">{t("upload.title")}</h1>
       </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <UploadExcelCard
@@ -52,7 +54,7 @@ export default function UploadPage() {
         />
       </div>
       {loading ? (
-        <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading upload history...</div>
+        <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("upload.loadingHistory")}</div>
       ) : (
         <UploadHistory uploads={uploads} />
       )}

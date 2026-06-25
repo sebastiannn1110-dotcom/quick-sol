@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface TraceEvent {
   id: string;
@@ -23,6 +24,7 @@ interface TraceEvent {
 }
 
 export default function TracePage({ params }: { params: Promise<{ traceId: string }> }) {
+  const { t, locale } = useLanguage();
   const [traceId, setTraceId] = useState("");
   const [events, setEvents] = useState<TraceEvent[]>([]);
 
@@ -46,17 +48,17 @@ export default function TracePage({ params }: { params: Promise<{ traceId: strin
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-orange-700">Trace Timeline</p>
+          <p className="text-sm font-medium text-orange-700">{t("admin.traceTimeline")}</p>
           <h1 className="break-all text-2xl font-semibold text-slate-950">{traceId}</h1>
         </div>
         <section className="grid gap-4 md:grid-cols-2">
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">Last successful step</p>
-            <p className="mt-2 font-semibold text-slate-950">{lastSuccessful?.action ?? lastSuccessful?.event_type ?? "None"}</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.lastSuccessfulStep")}</p>
+            <p className="mt-2 font-semibold text-slate-950">{lastSuccessful?.action ?? lastSuccessful?.event_type ?? t("admin.none")}</p>
           </div>
           <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">First failed step</p>
-            <p className="mt-2 font-semibold text-red-700">{failedEvent?.action ?? failedEvent?.event_type ?? "No failure"}</p>
+            <p className="text-sm font-medium text-slate-500">{t("admin.firstFailedStep")}</p>
+            <p className="mt-2 font-semibold text-red-700">{failedEvent?.action ?? failedEvent?.event_type ?? t("admin.noFailure")}</p>
           </div>
         </section>
         <section className="rounded-md border border-slate-200 bg-white shadow-sm">
@@ -66,7 +68,7 @@ export default function TracePage({ params }: { params: Promise<{ traceId: strin
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-950">{index + 1}. {event.action ?? event.event_type ?? event.error_type}</p>
-                    <p className="text-sm text-slate-500">{event.source} · {event.module ?? event.severity ?? "event"} · {new Date(event.created_at).toLocaleString()}</p>
+                    <p className="text-sm text-slate-500">{event.source} · {event.module ?? event.severity ?? t("admin.event")} · {new Date(event.created_at).toLocaleString(locale)}</p>
                   </div>
                   {event.duration_ms !== undefined && event.duration_ms !== null ? (
                     <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{event.duration_ms}ms</span>
@@ -78,7 +80,7 @@ export default function TracePage({ params }: { params: Promise<{ traceId: strin
                 </pre>
               </div>
             ))}
-            {!events.length ? <p className="p-6 text-sm text-slate-500">No trace events found.</p> : null}
+            {!events.length ? <p className="p-6 text-sm text-slate-500">{t("admin.noTraceEvents")}</p> : null}
           </div>
         </section>
       </div>

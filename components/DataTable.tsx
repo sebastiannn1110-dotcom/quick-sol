@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import CategoryBadge from "@/components/CategoryBadge";
+import { useLanguage } from "@/components/LanguageProvider";
 import type { BusinessCategory, BusinessRecord, PlatformRecord } from "@/lib/types";
 
 type RecordLike = BusinessRecord | PlatformRecord;
@@ -113,16 +114,23 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
 }
 
 export default function DataTable({ records }: { records: RecordLike[] }) {
+  const { t } = useLanguage();
   const [selectedRecord, setSelectedRecord] = useState<RecordLike | null>(null);
   const visibleRecords = useMemo(() => records.slice(0, 500), [records]);
+  const translatedStatus = (status: string) => {
+    if (status === "Has errors") return t("table.hasErrors");
+    if (status === "Clean") return t("table.clean");
+    if (status === "Unspecified") return t("table.unspecified");
+    return status;
+  };
 
   return (
     <section className="rounded-md border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-950">Records</h2>
+          <h2 className="text-sm font-semibold text-slate-950">{t("table.title")}</h2>
           <p className="text-xs text-slate-500">
-            Showing {visibleRecords.length} of {records.length} records
+            {t("table.showing")} {visibleRecords.length} {t("table.of")} {records.length}
           </p>
         </div>
       </div>
@@ -130,18 +138,19 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Primary value</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Category</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Employee</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Source</th>
-              <th className="px-4 py-3 text-right font-semibold text-slate-600">Details</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.primary")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.category")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.employee")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.status")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.source")}</th>
+              <th className="px-4 py-3 text-right font-semibold text-slate-600">{t("table.details")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
             {visibleRecords.map((record) => {
               const employee = employeeOf(record);
               const source = sourceOf(record);
+              const status = statusValue(record);
               return (
                 <tr key={record.id} className="hover:bg-slate-50">
                   <td className="max-w-xs px-4 py-3">
@@ -155,10 +164,10 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
                     {employee.name}
                     <span className="block text-xs text-slate-400">{employee.id}</span>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">{statusValue(record)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-600">{translatedStatus(status)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">
                     {source.source}
-                    <span className="block text-xs text-slate-400">Row {source.row}</span>
+                    <span className="block text-xs text-slate-400">{t("table.row")} {source.row}</span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <button
@@ -166,7 +175,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
                       onClick={() => setSelectedRecord(record)}
                       className="focus-ring rounded-md bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                     >
-                      View
+                      {t("table.view")}
                     </button>
                   </td>
                 </tr>
@@ -175,7 +184,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
             {!visibleRecords.length ? (
               <tr>
                 <td className="px-4 py-8 text-center text-slate-500" colSpan={6}>
-                  No records match the current filters.
+                  {t("table.empty")}
                 </td>
               </tr>
             ) : null}
@@ -188,20 +197,20 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
           <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-md bg-white shadow-soft">
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-950">Record Details</h2>
-                <p className="text-sm text-slate-500">Traceable raw and normalized data.</p>
+                <h2 className="text-lg font-semibold text-slate-950">{t("table.recordDetails")}</h2>
+                <p className="text-sm text-slate-500">{t("table.traceable")}</p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedRecord(null)}
                 className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700"
               >
-                Close
+                {t("table.close")}
               </button>
             </div>
             <div className="grid gap-4 p-4 lg:grid-cols-2">
-              <JsonBlock title="View Normalized Data" value={normalizedDataOf(selectedRecord)} />
-              <JsonBlock title="View Raw Excel Row" value={rawDataOf(selectedRecord)} />
+              <JsonBlock title={t("table.normalized")} value={normalizedDataOf(selectedRecord)} />
+              <JsonBlock title={t("table.raw")} value={rawDataOf(selectedRecord)} />
             </div>
           </div>
         </div>

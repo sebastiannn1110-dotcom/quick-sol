@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
+import { useLanguage } from "@/components/LanguageProvider";
 
 interface SystemLog {
   id: string;
@@ -23,6 +24,7 @@ interface SystemLog {
 }
 
 export default function AdminLogsPage() {
+  const { t, locale } = useLanguage();
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [level, setLevel] = useState("");
   const [moduleName, setModuleName] = useState("");
@@ -62,23 +64,23 @@ export default function AdminLogsPage() {
     <AdminGuard>
       <div className="space-y-6">
         <div>
-          <p className="text-sm font-medium text-orange-700">Observability</p>
-          <h1 className="text-2xl font-semibold text-slate-950">System Logs</h1>
+          <p className="text-sm font-medium text-orange-700">{t("admin.observability")}</p>
+          <h1 className="text-2xl font-semibold text-slate-950">{t("admin.systemLogsTitle")}</h1>
         </div>
         <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
           <div className="grid gap-3 md:grid-cols-4">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search action or message" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("admin.searchActionMessage")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
             <input value={traceId} onChange={(event) => setTraceId(event.target.value)} placeholder="Trace ID" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
-            <input value={uploadBatchId} onChange={(event) => setUploadBatchId(event.target.value)} placeholder="Upload batch ID" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
-            <input value={user} onChange={(event) => setUser(event.target.value)} placeholder="User email or ID" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+            <input value={uploadBatchId} onChange={(event) => setUploadBatchId(event.target.value)} placeholder={t("admin.uploadBatchId")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
+            <input value={user} onChange={(event) => setUser(event.target.value)} placeholder={t("admin.userEmailOrId")} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 text-sm" />
             <select value={level} onChange={(event) => setLevel(event.target.value)} className="focus-ring rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm">
-              <option value="">All levels</option>
+              <option value="">{t("admin.allLevels")}</option>
               {["debug", "info", "warn", "error", "fatal", "security", "audit"].map((item) => (
                 <option key={item} value={item}>{item}</option>
               ))}
             </select>
             <select value={moduleName} onChange={(event) => setModuleName(event.target.value)} className="focus-ring rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm">
-              <option value="">All modules</option>
+              <option value="">{t("admin.allModules")}</option>
               {["upload", "excel-parser", "header-detector", "normalizer", "category-detector", "auth", "admin", "records", "analytics", "supabase", "api", "frontend", "security"].map((item) => (
                 <option key={item} value={item}>{item}</option>
               ))}
@@ -92,20 +94,20 @@ export default function AdminLogsPage() {
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Time</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Level</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Module</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Action</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Message</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">User</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Trace</th>
-                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Details</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.time")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.level")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.module")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.action")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.message")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.user")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.trace")}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("admin.details")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {logs.map((log) => (
                   <tr key={log.id}>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{new Date(log.created_at).toLocaleString(locale)}</td>
                     <td className="px-4 py-3"><span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{log.level}</span></td>
                     <td className="px-4 py-3 text-slate-600">{log.module}</td>
                     <td className="px-4 py-3 font-medium text-slate-950">{log.action}</td>
@@ -118,14 +120,14 @@ export default function AdminLogsPage() {
                             {log.trace_id.slice(0, 8)}...
                           </Link>
                           <button type="button" onClick={() => copyTraceId(log.trace_id!)} className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
-                            Copy
+                            {t("admin.copy")}
                           </button>
                         </div>
                       ) : "-"}
                     </td>
                     <td className="px-4 py-3 text-xs">
                       <details>
-                        <summary className="cursor-pointer font-medium text-slate-600">View</summary>
+                        <summary className="cursor-pointer font-medium text-slate-600">{t("admin.view")}</summary>
                         <pre className="mt-2 max-h-48 max-w-lg overflow-auto rounded-md bg-slate-950 p-3 text-slate-100">
                           {JSON.stringify({ metadata: log.metadata, error: log.error, route: log.route, uploadBatchId: log.upload_batch_id }, null, 2)}
                         </pre>
@@ -135,7 +137,7 @@ export default function AdminLogsPage() {
                 ))}
                 {!logs.length ? (
                   <tr>
-                    <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>No logs found.</td>
+                    <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>{t("admin.noLogs")}</td>
                   </tr>
                 ) : null}
               </tbody>

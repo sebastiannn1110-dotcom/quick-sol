@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import DataTable from "@/components/DataTable";
+import { useLanguage } from "@/components/LanguageProvider";
 import UploadHistory from "@/components/UploadHistory";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
 
@@ -24,6 +25,7 @@ interface EmployeeDetailPayload {
 }
 
 export default function EmployeesPage() {
+  const { t, locale } = useLanguage();
   const [employees, setEmployees] = useState<EmployeeWithCounts[]>([]);
   const [employeeId, setEmployeeId] = useState("");
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
@@ -53,11 +55,17 @@ export default function EmployeesPage() {
     loadEmployees();
   }, [loadEmployees]);
 
+  const roleLabel = (role: Profile["role"]) => {
+    if (role === "admin") return t("role.admin");
+    if (role === "manager") return t("role.manager");
+    return t("role.employee");
+  };
+
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-sm font-medium text-brand-700">Employee activity</p>
-        <h1 className="text-2xl font-semibold text-slate-950">Employees</h1>
+        <p className="text-sm font-medium text-brand-700">{t("employees.eyebrow")}</p>
+        <h1 className="text-2xl font-semibold text-slate-950">{t("employees.title")}</h1>
       </div>
 
       <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -71,11 +79,11 @@ export default function EmployeesPage() {
           <input
             value={employeeId}
             onChange={(event) => setEmployeeId(event.target.value)}
-            placeholder="Search by Profile/User UUID"
+            placeholder={t("employees.searchPlaceholder")}
             className="focus-ring min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2.5 text-sm"
           />
           <button type="submit" className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700">
-            Search
+            {t("employees.search")}
           </button>
         </form>
       </section>
@@ -83,11 +91,11 @@ export default function EmployeesPage() {
       <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
         <section className="rounded-md border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-950">Employee Directory</h2>
+            <h2 className="text-sm font-semibold text-slate-950">{t("employees.directory")}</h2>
           </div>
           <div className="divide-y divide-slate-100">
             {loading ? (
-              <p className="p-4 text-sm text-slate-500">Loading employees...</p>
+              <p className="p-4 text-sm text-slate-500">{t("employees.loading")}</p>
             ) : (
               employees.map((employee) => (
                 <button
@@ -101,10 +109,10 @@ export default function EmployeesPage() {
                 >
                   <p className="font-medium text-slate-950">{employee.full_name}</p>
                   <p className="text-sm text-slate-500">
-                    {employee.email} · {employee.department ?? "No department"} · {employee.region ?? "No region"}
+                    {employee.email} · {employee.department ?? t("employees.noDepartment")} · {employee.region ?? t("employees.noRegion")}
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
-                    {employee.uploadCount} uploads · {employee.recordCount} records · {employee.role}
+                    {employee.uploadCount} {t("employees.uploads")} · {employee.recordCount} {t("employees.records")} · {roleLabel(employee.role)}
                   </p>
                 </button>
               ))
@@ -114,7 +122,7 @@ export default function EmployeesPage() {
 
         <div className="space-y-5">
           {detailLoading ? (
-            <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">Loading employee profile...</div>
+            <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("employees.loadingProfile")}</div>
           ) : null}
 
           {detail?.employee ? (
@@ -122,21 +130,21 @@ export default function EmployeesPage() {
               <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                 <h2 className="text-xl font-semibold text-slate-950">{detail.employee.full_name}</h2>
                 <p className="text-sm text-slate-500">
-                  {detail.employee.email} · {detail.employee.role} · {detail.employee.department ?? "No department"} · {detail.employee.region ?? "No region"}
+                  {detail.employee.email} · {roleLabel(detail.employee.role)} · {detail.employee.department ?? t("employees.noDepartment")} · {detail.employee.region ?? t("employees.noRegion")}
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div className="rounded-md bg-slate-50 p-3">
-                    <p className="text-xs font-medium text-slate-500">Uploads</p>
+                    <p className="text-xs font-medium text-slate-500">{t("employees.uploadsLabel")}</p>
                     <p className="mt-1 text-xl font-semibold text-slate-950">{detail.summary?.uploadCount ?? 0}</p>
                   </div>
                   <div className="rounded-md bg-slate-50 p-3">
-                    <p className="text-xs font-medium text-slate-500">Records</p>
+                    <p className="text-xs font-medium text-slate-500">{t("employees.recordsLabel")}</p>
                     <p className="mt-1 text-xl font-semibold text-slate-950">{detail.summary?.recordCount ?? 0}</p>
                   </div>
                   <div className="rounded-md bg-slate-50 p-3">
-                    <p className="text-xs font-medium text-slate-500">Last upload</p>
+                    <p className="text-xs font-medium text-slate-500">{t("employees.lastUpload")}</p>
                     <p className="mt-1 text-sm font-semibold text-slate-950">
-                      {detail.summary?.lastUpload ? new Date(detail.summary.lastUpload).toLocaleString() : "No uploads"}
+                      {detail.summary?.lastUpload ? new Date(detail.summary.lastUpload).toLocaleString(locale) : t("employees.noUploads")}
                     </p>
                   </div>
                 </div>
@@ -146,7 +154,7 @@ export default function EmployeesPage() {
             </>
           ) : (
             <div className="rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
-              Select an employee or search by UUID.
+              {t("employees.selectPrompt")}
             </div>
           )}
         </div>

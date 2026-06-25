@@ -1,5 +1,8 @@
+"use client";
+
 import type { BusinessCategory, Upload, UploadBatch } from "@/lib/types";
 import CategoryBadge from "@/components/CategoryBadge";
+import { useLanguage } from "@/components/LanguageProvider";
 
 type UploadLike = Upload | UploadBatch;
 
@@ -43,23 +46,34 @@ function downloadHref(upload: UploadLike) {
 }
 
 export default function UploadHistory({ uploads, showDownload = false }: { uploads: UploadLike[]; showDownload?: boolean }) {
+  const { t, locale } = useLanguage();
+  const translateStatus = (status: string) => {
+    if (status === "pending") return t("history.status.pending");
+    if (status === "uploading") return t("history.status.uploading");
+    if (status === "processing") return t("history.status.processing");
+    if (status === "completed") return t("history.status.completed");
+    if (status === "failed") return t("history.status.failed");
+    if (status === "archived") return t("history.status.archived");
+    return status;
+  };
+
   return (
     <section className="rounded-md border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-slate-950">Upload History</h2>
+        <h2 className="text-sm font-semibold text-slate-950">{t("history.title")}</h2>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">File</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Uploaded by</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Category</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Rows</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Errors</th>
-              <th className="px-4 py-3 text-left font-semibold text-slate-600">Uploaded</th>
-              {showDownload ? <th className="px-4 py-3 text-left font-semibold text-slate-600">Excel</th> : null}
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.file")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.uploadedBy")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.category")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.status")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.rows")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.errors")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.uploaded")}</th>
+              {showDownload ? <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.excel")}</th> : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
@@ -76,13 +90,13 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-                      {statusOf(upload)}
+                      {translateStatus(statusOf(upload))}
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{rowsOf(upload)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{errorsOf(upload)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                    {new Date(dateOf(upload)).toLocaleString()}
+                    {new Date(dateOf(upload)).toLocaleString(locale)}
                   </td>
                   {showDownload ? (
                     <td className="whitespace-nowrap px-4 py-3">
@@ -93,10 +107,10 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
                           rel="noreferrer"
                           className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700"
                         >
-                          Open Excel
+                          {t("history.openExcel")}
                         </a>
                       ) : (
-                        <span className="text-xs text-slate-400">No file</span>
+                        <span className="text-xs text-slate-400">{t("history.noFile")}</span>
                       )}
                     </td>
                   ) : null}
@@ -106,7 +120,7 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
             {!uploads.length ? (
               <tr>
                 <td className="px-4 py-8 text-center text-slate-500" colSpan={showDownload ? 8 : 7}>
-                  No uploads yet.
+                  {t("history.empty")}
                 </td>
               </tr>
             ) : null}
