@@ -19,6 +19,32 @@ type AssistantIntent =
   | "admin_global_search"
   | "help_usage";
 
+type RankingItem = {
+  label: string;
+  value: number;
+};
+
+type LatestUploadSummary = {
+  file?: string;
+  category?: string;
+  status?: string;
+  uploadedAt?: string;
+  totalRows?: number;
+  validRows?: number;
+  invalidRows?: number;
+  errorCount?: number;
+  dataQualityScore?: number;
+  topMpns: RankingItem[];
+  topSuppliers: RankingItem[];
+  topCustomers: RankingItem[];
+  totals: {
+    qty: number;
+    totalPrice: number;
+    gp: number;
+    commission: number;
+  };
+};
+
 function getOpenAIKey() {
   return process.env.OPEN_IA || process.env.OPENAI_API_KEY || "";
 }
@@ -27,12 +53,21 @@ function compact(value: unknown, max = 9000) {
   return JSON.stringify(value, null, 2).slice(0, max);
 }
 
+function normalizeForIntent(message: string) {
+  return message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function isLatestUploadQuestion(message: string) {
-  return /ultimo|ultima|last|recent|reciente|último|última/i.test(message) && /excel|upload|carga|archivo/i.test(message);
+  const text = normalizeForIntent(message);
+  return /ultimo|ultima|last|recent|reciente/.test(text) && /excel|upload|carga|archivo/.test(text);
 }
 
 function asksForRanking(message: string) {
-  return /top|ranking|mas repetid|más repetid|repeated|frequent|frecuencia|conteo|count|rank/i.test(message);
+  const text = normalizeForIntent(message);
+  return /top|ranking|mas repetid|repeated|frequent|frecuencia|conteo|count|rank/.test(text);
 }
 
 function cleanSearchText(message: string) {
@@ -44,21 +79,21 @@ function cleanSearchText(message: string) {
 }
 
 function detectIntent(message: string, isAdmin: boolean): AssistantIntent {
-  const text = message.toLowerCase();
-  if (/mpn|part number|pn|p\/n/i.test(text)) return "search_mpn";
-  if (/supplier|proveedor/i.test(text)) return "search_supplier";
-  if (/customer|cliente/i.test(text)) return "search_customer";
-  if (/error|errores|import/i.test(text)) return "explain_import_errors";
-  if (/upload|subi[oó]|carga|excel/i.test(text) && /employee|empleado|luis|quiksol/i.test(text)) return "search_employee_uploads";
-  if (/upload|carga|excel/i.test(text)) return "search_upload";
-  if (/dashboard|resumen|summary|metric|m[eé]trica|gp|commission|comisi[oó]n/i.test(text)) return "summarize_dashboard";
-  if (/record|registro|id/i.test(text)) return "find_record_by_id";
-  if (/como|how|help|ayuda|usar/i.test(text)) return "help_usage";
+  const text = normalizeForIntent(message);
+  if (/mpn|part number|pn|p\/n/.test(text)) return "search_mpn";
+  if (/supplier|proveedor/.test(text)) return "search_supplier";
+  if (/customer|cliente/.test(text)) return "search_customer";
+  if (/error|errores|import/.test(text)) return "explain_import_errors";
+  if (/upload|subio|carga|excel/.test(text) && /employee|empleado|luis|quiksol/.test(text)) return "search_employee_uploads";
+  if (/upload|carga|excel/.test(text)) return "search_upload";
+  if (/dashboard|resumen|summary|metric|metrica|gp|commission|comision/.test(text)) return "summarize_dashboard";
+  if (/record|registro|id/.test(text)) return "find_record_by_id";
+  if (/como|how|help|ayuda|usar/.test(text)) return "help_usage";
   return isAdmin ? "admin_global_search" : "help_usage";
 }
 
 function likelyName(message: string) {
-  const match = message.match(/\b(?:de|from|employee|empleado|subi[oó])\s+([A-ZÁÉÍÓÚÑ][\p{L}\s]{1,40})/u);
+  const match = message.match(/\b(?:de|from|employee|empleado|subio|subió)\s+([A-ZÁÉÍÓÚÑ][\p{L}\s]{1,40})/u);
   return match?.[1]?.trim() ?? "";
 }
 
@@ -89,6 +124,78 @@ function groupCount<T extends Record<string, unknown>>(rows: T[], labelKeys: str
     .slice(0, 20);
 }
 
+function formatNumber(value: number | undefined) {
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value ?? 0);
+}
+
+function formatRanking(items: RankingItem[], max = 8) {
+  return items
+    .slice(0, max)
+    .map((item) => `- ${item.label}: ${formatNumber(item.value)} vez${item.value === 1 ? "" : "es"}`)
+    .join("\n");
+}
+
+function buildLatestUploadAnswer(summary: LatestUploadSummary, message: string) {
+  const text = normalizeForIntent(message);
+  const file = summary.file ? ` (${summary.file})` : "";
+  const rowsLine = `${formatNumber(summary.validRows)} de ${formatNumber(summary.totalRows)} filas válidas`;
+  const cleanLine =
+    (summary.errorCount ?? 0) === 0 && (summary.invalidRows ?? 0) === 0
+      ? "sin errores ni filas inválidas"
+      : `${formatNumber(summary.errorCount)} errores y ${formatNumber(summary.invalidRows)} filas inválidas`;
+
+  if (/mpn|part number|pn|p\/n/.test(text) && asksForRanking(message)) {
+    if (!summary.topMpns.length) {
+      return `Revisé el último Excel${file}, pero no encontré MPN normalizados en sus registros. La carga sí quedó con ${rowsLine}.`;
+    }
+
+    const hasRepeated = summary.topMpns.some((item) => item.value > 1);
+    if (!hasRepeated) {
+      return [
+        `Revisé el último Excel${file}. No hay MPN repetidos: los MPN aparecen una sola vez.`,
+        "",
+        "Te muestro algunos como referencia:",
+        formatRanking(summary.topMpns)
+      ].join("\n");
+    }
+
+    return [
+      `Estos son los MPN más repetidos del último Excel${file}:`,
+      "",
+      formatRanking(summary.topMpns),
+      "",
+      `La carga quedó con ${rowsLine}, ${cleanLine}.`
+    ].join("\n");
+  }
+
+  if (/supplier|proveedor/.test(text) && asksForRanking(message)) {
+    return [
+      `Estos son los suppliers más frecuentes del último Excel${file}:`,
+      "",
+      summary.topSuppliers.length ? formatRanking(summary.topSuppliers) : "No encontré suppliers normalizados en este archivo.",
+      "",
+      `La carga quedó con ${rowsLine}, ${cleanLine}.`
+    ].join("\n");
+  }
+
+  if (/customer|cliente/.test(text) && asksForRanking(message)) {
+    return [
+      `Estos son los customers más frecuentes del último Excel${file}:`,
+      "",
+      summary.topCustomers.length ? formatRanking(summary.topCustomers) : "No encontré customers normalizados en este archivo.",
+      "",
+      `La carga quedó con ${rowsLine}, ${cleanLine}.`
+    ].join("\n");
+  }
+
+  return [
+    `El último Excel${file} quedó ${cleanLine}.`,
+    "",
+    `Se importaron ${rowsLine} y la calidad quedó en ${formatNumber(summary.dataQualityScore)}%.`,
+    `Totales principales: QTY ${formatNumber(summary.totals.qty)}, Total Price ${formatNumber(summary.totals.totalPrice)}, GP ${formatNumber(summary.totals.gp)} y Commission ${formatNumber(summary.totals.commission)}.`
+  ].join("\n");
+}
+
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
@@ -105,14 +212,6 @@ export async function POST(request: Request) {
   });
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 
-  const apiKey = getOpenAIKey();
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "El asistente no esta configurado. Agrega OPEN_IA en Render." },
-      { status: 503 }
-    );
-  }
-
   const supabase = context.supabase;
   const isAdmin = context.profile.role === "admin";
   const searchText = cleanSearchText(message);
@@ -123,7 +222,7 @@ export async function POST(request: Request) {
   let errors: unknown[] = [];
   let employees: unknown[] = [];
   let aggregates: unknown[] = [];
-  let latestUploadSummary: unknown = null;
+  let latestUploadSummary: LatestUploadSummary | null = null;
 
   if (supabase) {
     const employeeName = isAdmin ? likelyName(message) : "";
@@ -219,6 +318,21 @@ export async function POST(request: Request) {
     }
   }
 
+  if (latestUploadSummary && language === "Spanish" && isLatestUploadQuestion(message)) {
+    return NextResponse.json({
+      intent,
+      answer: buildLatestUploadAnswer(latestUploadSummary, message)
+    });
+  }
+
+  const apiKey = getOpenAIKey();
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "El asistente no está configurado. Agrega OPEN_IA en Render." },
+      { status: 503 }
+    );
+  }
+
   const client = new OpenAI({ apiKey });
   const roleScope = isAdmin
     ? "The user is admin: they can receive global summaries about employees, uploads and records."
@@ -256,7 +370,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       intent,
-      answer: response.output_text?.trim() || "No encontre una respuesta util con el contexto disponible."
+      answer: response.output_text?.trim() || "No encontré una respuesta útil con el contexto disponible."
     });
   } catch {
     return NextResponse.json(
