@@ -26,11 +26,17 @@ function isDemoModeAllowed() {
 }
 
 function getSupabasePublishableKey() {
-  return (
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    ""
-  );
+  const candidates = [
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ];
+
+  return candidates.find(isValidSupabasePublicKey)?.trim() ?? "";
+}
+
+function isValidSupabasePublicKey(value: string | undefined) {
+  const key = value?.trim();
+  return Boolean(key && (key.startsWith("sb_publishable_") || key.startsWith("eyJ")));
 }
 
 function isProtectedPath(pathname: string) {

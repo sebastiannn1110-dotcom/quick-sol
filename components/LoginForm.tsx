@@ -11,7 +11,7 @@ export default function LoginForm() {
   const redirect = searchParams.get("redirect") ?? "/dashboard";
   const setupError = searchParams.get("error");
   const [supabase, setSupabase] = useState(() => createSupabaseBrowserClient());
-  const [configLoading, setConfigLoading] = useState(!supabase);
+  const [configLoading, setConfigLoading] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,12 +25,13 @@ export default function LoginForm() {
   );
 
   useEffect(() => {
-    if (supabase) return;
-
     async function loadRuntimeConfig() {
       try {
         const response = await fetch("/api/auth/public-config", { cache: "no-store" });
-        if (!response.ok) return;
+        if (!response.ok) {
+          setSupabase(null);
+          return;
+        }
         const config = (await response.json()) as {
           configured: boolean;
           supabaseUrl?: string;
@@ -43,6 +44,8 @@ export default function LoginForm() {
               publishableKey: config.supabasePublishableKey
             })
           );
+        } else {
+          setSupabase(null);
         }
       } finally {
         setConfigLoading(false);
@@ -50,7 +53,7 @@ export default function LoginForm() {
     }
 
     loadRuntimeConfig();
-  }, [supabase]);
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
