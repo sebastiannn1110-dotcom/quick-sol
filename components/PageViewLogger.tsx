@@ -8,6 +8,7 @@ export default function PageViewLogger() {
   const pathname = usePathname();
 
   useEffect(() => {
+    if (pathname === "/login") return;
     clientLogger.pageView({ path: pathname });
   }, [pathname]);
 
