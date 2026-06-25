@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectLanguageFromTranscript, normalizeLanguage, validateAudioFile, VoiceInputError } from "@/lib/voice/transcription";
+import {
+  detectLanguageFromTranscript,
+  normalizeAudioMimeType,
+  normalizeLanguage,
+  validateAudioFile,
+  VoiceInputError
+} from "@/lib/voice/transcription";
 
 describe("voice transcription helpers", () => {
   it("normalizes supported languages", () => {
@@ -10,9 +16,15 @@ describe("voice transcription helpers", () => {
   });
 
   it("detects language from transcript text", () => {
-    expect(detectLanguageFromTranscript("Muéstrame el último Excel")).toBe("es");
+    expect(detectLanguageFromTranscript("Muestrame el ultimo Excel")).toBe("es");
     expect(detectLanguageFromTranscript("Find supplier MCC")).toBe("en");
     expect(detectLanguageFromTranscript("帮我找供应商 MCC")).toBe("zh");
+  });
+
+  it("accepts browser audio MIME parameters", () => {
+    expect(normalizeAudioMimeType("audio/webm;codecs=opus")).toBe("audio/webm");
+    const file = new File(["x"], "voice-message.webm", { type: "audio/webm;codecs=opus" });
+    expect(() => validateAudioFile(file)).not.toThrow();
   });
 
   it("rejects invalid audio formats", () => {

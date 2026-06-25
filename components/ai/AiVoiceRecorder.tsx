@@ -120,6 +120,10 @@ function extensionForMimeType(mimeType: string) {
   return "webm";
 }
 
+function normalizeAudioMimeType(mimeType: string) {
+  return mimeType.split(";")[0]?.trim().toLowerCase() || "audio/webm";
+}
+
 async function logClientVoiceEvent(action: string, message: string, metadata?: Record<string, unknown>, level: "info" | "warn" | "error" = "info") {
   if (typeof window === "undefined") return;
   try {
@@ -158,6 +162,7 @@ export default function AiVoiceRecorder({
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const startedAtRef = useRef<number | null>(null);
+  const elapsedSecondsRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const busy = BUSY_STATES.has(recorderState);
@@ -181,7 +186,9 @@ export default function AiVoiceRecorder({
     setElapsedSeconds(0);
     timerRef.current = window.setInterval(() => {
       if (!startedAtRef.current) return;
-      setElapsedSeconds(Math.floor((Date.now() - startedAtRef.current) / 1000));
+      const nextElapsedSeconds = Math.floor((Date.now() - startedAtRef.current) / 1000);
+      elapsedSecondsRef.current = nextElapsedSeconds;
+      setElapsedSeconds(nextElapsedSeconds);
     }, 1000);
 
     return () => {
@@ -230,11 +237,13 @@ export default function AiVoiceRecorder({
     recorderRef.current = null;
     chunksRef.current = [];
     startedAtRef.current = null;
+    elapsedSecondsRef.current = 0;
     setElapsedSeconds(0);
   }
 
   async function submitAudio(audioBlob: Blob) {
-    const mimeType = audioBlob.type || "audio/webm";
+    const rawMimeType = audioBlob.type || "audio/webm";
+    const mimeType = normalizeAudioMimeType(rawMimeType);
     const extension = extensionForMimeType(mimeType);
     const formData = new FormData();
     formData.append("audio", new File([audioBlob], `voice-message.${extension}`, { type: mimeType }));
@@ -245,7 +254,8 @@ export default function AiVoiceRecorder({
     setRecorderState("uploading");
     await logClientVoiceEvent("voice_audio_upload_started", "Voice audio upload started.", {
       fileSize: audioBlob.size,
-      fileType: mimeType
+      fileType: mimeType,
+      rawFileType: rawMimeType
     });
 
     try {
@@ -303,12 +313,13 @@ export default function AiVoiceRecorder({
     const chunks = chunksRef.current;
     const mimeType = recorder?.mimeType || chunks[0]?.type || "audio/webm";
     const blob = new Blob(chunks, { type: mimeType });
+    const durationSeconds = elapsedSecondsRef.current;
 
     resetRecorderRefs();
     setRecorderState("uploading");
 
     await logClientVoiceEvent("voice_recording_stopped", "Voice recording stopped.", {
-      durationSeconds: elapsedSeconds,
+      durationSeconds,
       chunks: chunks.length
     });
 

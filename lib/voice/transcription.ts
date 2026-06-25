@@ -6,9 +6,11 @@ const ALLOWED_AUDIO_TYPES = new Set([
   "audio/mpeg",
   "audio/mp3",
   "audio/wav",
+  "audio/wave",
   "audio/x-wav",
   "audio/mp4",
   "audio/m4a",
+  "audio/x-m4a",
   "audio/ogg",
   "video/webm"
 ]);
@@ -19,9 +21,11 @@ const EXTENSION_BY_TYPE: Record<string, string> = {
   "audio/mpeg": "mp3",
   "audio/mp3": "mp3",
   "audio/wav": "wav",
+  "audio/wave": "wav",
   "audio/x-wav": "wav",
   "audio/mp4": "m4a",
   "audio/m4a": "m4a",
+  "audio/x-m4a": "m4a",
   "audio/ogg": "ogg"
 };
 
@@ -60,12 +64,17 @@ export function detectLanguageFromTranscript(text: string): AssistantLanguage {
   return "es";
 }
 
+export function normalizeAudioMimeType(type: string) {
+  return type.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
 export function validateAudioFile(file: File) {
   if (!file.size) throw new VoiceInputError("Audio file is empty.");
   if (file.size > getVoiceMaxAudioBytes()) {
     throw new VoiceInputError(`Audio file exceeds the ${Math.round(getVoiceMaxAudioBytes() / 1024 / 1024)} MB limit.`);
   }
-  if (file.type && !ALLOWED_AUDIO_TYPES.has(file.type)) {
+  const normalizedType = normalizeAudioMimeType(file.type);
+  if (normalizedType && !ALLOWED_AUDIO_TYPES.has(normalizedType)) {
     throw new VoiceInputError("Unsupported audio format. Use webm, mp3, wav, m4a or ogg.");
   }
 }
@@ -75,9 +84,12 @@ function getOpenAIKey() {
 }
 
 function fileWithTranscriptionName(file: File) {
-  if (file.name && /\.[a-z0-9]+$/i.test(file.name)) return file;
-  const extension = EXTENSION_BY_TYPE[file.type] ?? "webm";
-  return new File([file], `voice-message.${extension}`, { type: file.type || "audio/webm" });
+  const normalizedType = normalizeAudioMimeType(file.type) || "audio/webm";
+  const hasExtension = Boolean(file.name && /\.[a-z0-9]+$/i.test(file.name));
+  if (hasExtension && file.type === normalizedType) return file;
+
+  const extension = EXTENSION_BY_TYPE[normalizedType] ?? "webm";
+  return new File([file], hasExtension ? file.name : `voice-message.${extension}`, { type: normalizedType });
 }
 
 export async function transcribeAudio(file: File) {
