@@ -14,7 +14,10 @@ Upload guidance:
 
 - Upload type: `Sales Margin` or `Auto Detect`
 - Expected records: `1000`
-- Expected errors: near `0`
+- Expected valid rows: `1000`
+- Expected invalid rows: `0`
+- Expected import errors: `0`
+- Expected data quality score: `100`
 - Expected category: `Sales Margin`
 - Expected metrics populated: `QTY`, `Total Price`, `GP`, `Commission`, `Potential_Amount_USD`
 

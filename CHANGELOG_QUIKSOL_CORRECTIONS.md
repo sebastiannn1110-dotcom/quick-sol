@@ -30,6 +30,7 @@ Fecha: 2026-06-25
   - Ver trazabilidad
 - Se agrego modal `Import Error Details` con resumen, filtros, severidad, tipo de error, columna y sugerencia de correccion.
 - Se mejoro la normalizacion de MPN para variantes como `Part Number`, `PN`, `P/N`, `Manufacturer Part Number`, `Mfr Part Number`, `MFG Part Number`, `Part No`, `Item Number`, `Component`, `Clean MPN` y `MPN Quoted`.
+- Se corrigio el falso positivo `unrecognized_columns`: columnas extra como `Region`, `Status` o `Category` se preservan en `raw_data`, pero ya no generan un error por cada fila.
 - `Top MPNs` ya no pone `Unspecified` como MPN principal; usa `Missing MPN` separado como advertencia de calidad.
 - Se agrego metrica `Records missing MPN`.
 - Se agregaron tooltips y modales de graficas con Recharts para cards principales.
@@ -42,6 +43,7 @@ Fecha: 2026-06-25
 - Se mejoro la IA para buscar en Supabase por rol sin enviar archivos Excel completos ni `raw_data` masivo a OpenAI.
 - Se agrego endpoint compatible `/api/ai/assistant`.
 - Se genero Excel limpio de prueba con 1,000 filas en `test-files/quiksol_perfect_upload_clean.xlsx`.
+- Se agrego prueba automatizada que valida el Excel perfecto con el parser real: `1000` filas, `1000` validas, `0` invalidas, `0` errores, score `100`.
 
 ## Archivos Principales Modificados
 
@@ -159,7 +161,9 @@ Subir como:
 Resultados esperados:
 
 - `1000` records
-- errores cercanos a `0`
+- `0` import errors
+- `0` invalid rows
+- `100` data quality score
 - categoria esperada `Sales Margin`
 - metricas pobladas: `QTY`, `Total Price`, `GP`, `Commission`, `Potential_Amount_USD`
 

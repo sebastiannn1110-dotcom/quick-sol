@@ -271,15 +271,6 @@ export function normalizeRow(rawData: JsonRecord, context?: LogContext) {
     normalizedData[field] = safeValue;
   }
 
-  if (unmappedHeaders.length) {
-    issues.push({
-      errorType: "unrecognized_columns",
-      message: `${unmappedHeaders.length} columns were preserved as raw data but not mapped.`,
-      rawValue: unmappedHeaders.slice(0, 10).join(", "),
-      severity: "low"
-    });
-  }
-
   if (!columns.mpn) {
     const fallbackMpn =
       columns.mpn_quoted ??

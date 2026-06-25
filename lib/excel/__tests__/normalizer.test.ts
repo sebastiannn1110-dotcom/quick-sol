@@ -38,4 +38,24 @@ describe("normalizeRow", () => {
     expect(normalizeRow({ Component: "CMP-300" }).columns.mpn).toBe("CMP-300");
     expect(normalizeRow({ "MPN Quoted": "QT-400" }).columns.mpn).toBe("QT-400");
   });
+
+  it("preserves extra columns without creating import errors", () => {
+    const result = normalizeRow({
+      Customer: "Sanmina",
+      Supplier: "Arrow",
+      MPN: "ABC123",
+      QTY: 100,
+      Cost: 1,
+      Price: 1.25,
+      "GP rate": 0.2,
+      Region: "North America",
+      Status: "Clean",
+      Category: "Sales Margin"
+    });
+
+    expect(result.normalizedData.region).toBe("North America");
+    expect(result.normalizedData.status).toBe("Clean");
+    expect(result.normalizedData.category).toBe("Sales Margin");
+    expect(result.issues).toEqual([]);
+  });
 });
