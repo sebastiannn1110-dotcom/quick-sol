@@ -286,7 +286,7 @@ const ui = {
     "assistant.processingAudio": "Procesando audio...",
     "assistant.generatingVoice": "Generando voz...",
     "assistant.playResponse": "Reproducir respuesta",
-    "assistant.voiceUnavailable": "Tu navegador no permite grabar audio.",
+    "assistant.voiceUnavailable": "Grabacion directa no disponible. Selecciona o graba un audio.",
     "assistant.transcript": "Transcripcion"
   },
   en: {
@@ -568,7 +568,7 @@ const ui = {
     "assistant.processingAudio": "Processing audio...",
     "assistant.generatingVoice": "Generating voice...",
     "assistant.playResponse": "Play response",
-    "assistant.voiceUnavailable": "Your browser cannot record audio.",
+    "assistant.voiceUnavailable": "Direct recording is unavailable. Select or record an audio file.",
     "assistant.transcript": "Transcript"
   },
   zh: {
@@ -850,7 +850,7 @@ const ui = {
     "assistant.processingAudio": "正在处理音频...",
     "assistant.generatingVoice": "正在生成语音...",
     "assistant.playResponse": "播放回答",
-    "assistant.voiceUnavailable": "你的浏览器无法录音。",
+    "assistant.voiceUnavailable": "无法直接录音。请选择或录制一个音频文件。",
     "assistant.transcript": "转录"
   }
 } as const;

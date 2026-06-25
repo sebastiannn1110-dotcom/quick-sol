@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Mic, PlayCircle, Send, Square, X } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
@@ -26,6 +26,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -144,8 +145,18 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
     }
   }
 
+  function openAudioFallback() {
+    setVoiceStatus(t("assistant.voiceUnavailable"));
+    fileInputRef.current?.click();
+  }
+
   async function startRecording() {
-    if (!voiceSupported || loading || recording) return;
+    if (loading || recording) return;
+
+    if (!voiceSupported) {
+      openAudioFallback();
+      return;
+    }
 
     try {
       chunksRef.current = [];
@@ -171,9 +182,19 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
       setRecording(true);
       setVoiceStatus(t("assistant.recording"));
     } catch {
-      setVoiceStatus(t("assistant.voiceUnavailable"));
-      setTimeout(() => setVoiceStatus(""), 3500);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      recorderRef.current = null;
+      setRecording(false);
+      openAudioFallback();
     }
+  }
+
+  function handleAudioFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || loading || recording) return;
+    void submitVoice(file);
   }
 
   function stopRecording() {
@@ -275,10 +296,18 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
               className="focus-ring min-w-0 flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-950"
               placeholder={placeholder}
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/webm,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/ogg,video/webm"
+              capture
+              className="hidden"
+              onChange={handleAudioFileChange}
+            />
             <button
               type="button"
               onClick={recording ? stopRecording : startRecording}
-              disabled={loading || !voiceSupported}
+              disabled={loading}
               className={`focus-ring rounded-md p-2 text-white disabled:cursor-not-allowed disabled:opacity-50 ${
                 recording ? "bg-red-600 hover:bg-red-700" : "bg-slate-800 hover:bg-slate-900"
               }`}
