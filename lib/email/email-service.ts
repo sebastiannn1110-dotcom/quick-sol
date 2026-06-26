@@ -49,12 +49,18 @@ async function sendWithResend(input: SendEmailInput): Promise<SendEmailResult> {
       text: input.text ?? compactText(input.html)
     })
   });
-  const payload = (await response.json().catch(() => null)) as { id?: string; message?: string } | null;
+  const payload = (await response.json().catch(() => null)) as {
+    id?: string;
+    message?: string;
+    error?: string;
+    name?: string;
+  } | null;
   if (!response.ok) {
+    const details = [payload?.name, payload?.message, payload?.error].filter(Boolean).join(": ");
     return {
       provider: "resend",
       status: "failed",
-      errorMessage: payload?.message ?? `Resend failed with status ${response.status}`
+      errorMessage: details || `Resend failed with status ${response.status}`
     };
   }
   return { provider: "resend", status: "sent", messageId: payload?.id };

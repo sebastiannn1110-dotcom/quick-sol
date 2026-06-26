@@ -13,20 +13,28 @@ export default function AdminEmailAlertsPage() {
   const [testRecipients, setTestRecipients] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [setupRequired, setSetupRequired] = useState(false);
 
   const loadData = useCallback(async () => {
     const [rulesResponse, eventsResponse] = await Promise.all([
       fetch("/api/admin/email-alerts", { cache: "no-store" }),
       fetch("/api/admin/email-alerts/events", { cache: "no-store" })
     ]);
+    const rulesPayload = await rulesResponse.json().catch(() => null);
+    const eventsPayload = await eventsResponse.json().catch(() => null);
+    if (rulesPayload?.provider) setProvider(rulesPayload.provider);
+    setSetupRequired(Boolean(rulesPayload?.setupRequired || eventsPayload?.setupRequired));
     if (rulesResponse.ok) {
-      const payload = await rulesResponse.json();
+      const payload = rulesPayload;
       setRules(payload.rules ?? []);
-      setProvider(payload.provider ?? "mock");
+    } else if (rulesPayload?.error) {
+      setError(rulesPayload.error);
     }
     if (eventsResponse.ok) {
-      const payload = await eventsResponse.json();
+      const payload = eventsPayload;
       setEvents(payload.events ?? []);
+    } else if (eventsPayload?.error) {
+      setError(eventsPayload.error);
     }
   }, []);
 
@@ -47,7 +55,11 @@ export default function AdminEmailAlertsPage() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Unable to send test email.");
-      setMessage(`Test processed with provider ${payload.result.provider}: ${payload.result.status}`);
+      if (payload.result.status === "sent") {
+        setMessage(`Test sent with provider ${payload.result.provider}.`);
+      } else {
+        setError(`Test processed with provider ${payload.result.provider}: ${payload.result.status}. ${payload.result.errorMessage ?? ""}`.trim());
+      }
       await loadData();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Unable to send test email.");
@@ -83,6 +95,11 @@ export default function AdminEmailAlertsPage() {
         {provider === "mock" ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             No hay proveedor de email configurado. Las reglas quedan creadas y los tests se registran en modo mock/skipped.
+          </p>
+        ) : null}
+        {setupRequired ? (
+          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            Faltan las tablas de email en Supabase. Ejecuta la migracion supabase/migrations/20260626010000_email_alerts.sql para activar reglas e historial.
           </p>
         ) : null}
         {message ? <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p> : null}
