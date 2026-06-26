@@ -10,6 +10,8 @@ Technical vocabulary is documented in [README_TECHNICAL_GLOSSARY.md](README_TECH
 
 Latest correction report is documented in [CHANGELOG_QUIKSOL_CORRECTIONS.md](CHANGELOG_QUIKSOL_CORRECTIONS.md).
 
+Commercial valuation and full product scope are documented in [README_VALORACION_PRODUCTO.md](README_VALORACION_PRODUCTO.md).
+
 ## Voice Assistant Environment
 
 Server-side voice features use OpenAI transcription and ElevenLabs TTS. Add these in Render as secret/server environment variables, never as `NEXT_PUBLIC_*`:
