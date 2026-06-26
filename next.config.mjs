@@ -5,8 +5,9 @@ const nextConfig = {
   async headers() {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
-    const connectSources = ["'self'", supabaseOrigin].filter(Boolean).join(" ");
+    const connectSources = ["'self'", supabaseOrigin, "https://api.openai.com", "https://api.elevenlabs.io"].filter(Boolean).join(" ");
     const imgSources = ["'self'", "data:", "blob:", supabaseOrigin].filter(Boolean).join(" ");
+    const mediaSources = ["'self'", "data:", "blob:", "https:"].join(" ");
 
     const contentSecurityPolicy = [
       "default-src 'self'",
@@ -17,7 +18,8 @@ const nextConfig = {
       `img-src ${imgSources}`,
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
-      "font-src 'self'",
+      "font-src 'self' data:",
+      `media-src ${mediaSources}`,
       "object-src 'none'",
       "upgrade-insecure-requests"
     ].join("; ");

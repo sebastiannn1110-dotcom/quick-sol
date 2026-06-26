@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import type { AssistantLanguage } from "@/lib/ai/assistantCore";
 
 const ALLOWED_AUDIO_TYPES = new Set([
@@ -100,13 +100,12 @@ function isUnreadableAudioError(error: unknown) {
   return getErrorStatus(error) === 400 && /audio file|unsupported|corrupt|could not be decoded/.test(message);
 }
 
-function fileWithTranscriptionName(file: File) {
+async function fileWithTranscriptionName(file: File) {
   const normalizedType = normalizeAudioMimeType(file.type) || "audio/webm";
   const hasExtension = Boolean(file.name && /\.[a-z0-9]+$/i.test(file.name));
-  if (hasExtension && file.type === normalizedType) return file;
-
   const extension = EXTENSION_BY_TYPE[normalizedType] ?? "webm";
-  return new File([file], hasExtension ? file.name : `voice-message.${extension}`, { type: normalizedType });
+  const name = hasExtension ? file.name : `voice-message.${extension}`;
+  return toFile(await file.arrayBuffer(), name, { type: normalizedType });
 }
 
 export async function transcribeAudio(file: File) {
@@ -119,7 +118,7 @@ export async function transcribeAudio(file: File) {
 
   const client = new OpenAI({ apiKey });
   const result = await client.audio.transcriptions.create({
-    file: fileWithTranscriptionName(file),
+    file: await fileWithTranscriptionName(file),
     model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
     response_format: "json"
   }).catch((error: unknown) => {

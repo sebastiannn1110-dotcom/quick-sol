@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { PlayCircle, Send, X } from "lucide-react";
+import { Send, X } from "lucide-react";
+import AiAudioPlayer from "@/components/ai/AiAudioPlayer";
 import AiVoiceRecorder, { type AiVoiceResult } from "@/components/ai/AiVoiceRecorder";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
@@ -40,11 +41,6 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
       return [{ role: "assistant", content: t("assistant.initial") }];
     });
   }, [t]);
-
-  async function playAudio(audioBase64: string, audioMimeType = "audio/mpeg") {
-    const audio = new Audio(`data:${audioMimeType};base64,${audioBase64}`);
-    await audio.play();
-  }
 
   function handleVoiceResult(payload: AiVoiceResult) {
     const nextMessages: ChatMessage[] = [];
@@ -134,14 +130,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
               >
                 {item.content}
                 {item.audioBase64 ? (
-                  <button
-                    type="button"
-                    onClick={() => void playAudio(item.audioBase64!, item.audioMimeType ?? "audio/mpeg")}
-                    className="mt-2 flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    <PlayCircle className="h-3.5 w-3.5" />
-                    {t("assistant.playResponse")}
-                  </button>
+                  <AiAudioPlayer audioBase64={item.audioBase64} audioMimeType={item.audioMimeType} t={t} />
                 ) : null}
                 {item.audioError ? <p className="mt-2 text-xs text-amber-700">{item.audioError}</p> : null}
               </div>
@@ -164,7 +153,6 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
               onBusyChange={setVoiceBusy}
               onVoiceResult={handleVoiceResult}
               onErrorMessage={handleVoiceError}
-              onPlayAudio={playAudio}
             />
             <button
               type="submit"
