@@ -9,6 +9,7 @@ import { safeStorageUpload } from "@/lib/supabase/supabase-safe";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { SECURITY_LIMITS } from "@/lib/security/env";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
+import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -451,6 +452,36 @@ export async function POST(request: Request) {
       }
     });
 
+    const missingMpnCount = parsedWorkbook.records.filter((record) => !record.columns.mpn).length;
+    const gpRates = parsedWorkbook.records
+      .map((record) => Number(record.columns.gp_rate))
+      .filter((value) => Number.isFinite(value));
+    const lowGpRate = gpRates.length ? Math.min(...gpRates) : null;
+    const alertBase = {
+      actorName: context.profile.full_name,
+      actorEmail: context.profile.email,
+      fileName: originalFileName,
+      uploadBatchId,
+      errorCount: parsedWorkbook.errorCount,
+      dataQualityScore: parsedWorkbook.dataQualityScore,
+      missingMpnCount,
+      lowGpRate,
+      totalRows: parsedWorkbook.totalRows,
+      validRows: parsedWorkbook.validRows,
+      dashboardUrl: process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/admin/uploads` : null,
+      metadata: {
+        detectedCategory: parsedWorkbook.detectedCategory,
+        invalidRows: parsedWorkbook.invalidRows
+      }
+    };
+    await Promise.all([
+      evaluateEmailAlertRules({ ...alertBase, eventType: "upload_completed" }),
+      evaluateEmailAlertRules({ ...alertBase, eventType: "upload_has_many_errors" }),
+      evaluateEmailAlertRules({ ...alertBase, eventType: "import_quality_below_threshold" }),
+      evaluateEmailAlertRules({ ...alertBase, eventType: "missing_mpn_threshold" }),
+      evaluateEmailAlertRules({ ...alertBase, eventType: "low_gp_rate" })
+    ]);
+
     return NextResponse.json({
       message: "Records Uploaded Successfully",
       upload,
@@ -461,6 +492,15 @@ export async function POST(request: Request) {
   } catch (error) {
     await logAuditEvent(context, "upload_failed", "upload_batch", null, {
       message: error instanceof Error ? error.message : "Unknown upload error"
+    });
+    await evaluateEmailAlertRules({
+      eventType: "upload_failed",
+      actorName: context.profile.full_name,
+      actorEmail: context.profile.email,
+      errorCount: 1,
+      metadata: {
+        message: error instanceof Error ? error.message : "Unknown upload error"
+      }
     });
     return handleRouteError(error, logContext, {
       module: "upload",

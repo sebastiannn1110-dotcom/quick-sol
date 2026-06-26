@@ -2,6 +2,7 @@
 
 import LogoutButton from "@/components/LogoutButton";
 import LanguageToggle from "@/components/LanguageToggle";
+import GlobalExecutiveSearch from "@/components/search/GlobalExecutiveSearch";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
 
@@ -12,10 +13,11 @@ export default function Navbar({ profile, isAdminArea = false }: { profile: Prof
   return (
     <header className={`border-b bg-white ${isAdminArea ? "border-orange-200" : "border-slate-200"}`}>
       <div className="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-        <div>
+        <div className="shrink-0">
           <p className={`text-sm font-medium ${isAdminArea ? "text-orange-700" : "text-slate-500"}`}>{roleLabel}</p>
           <h1 className="text-lg font-semibold text-slate-950">{t("app.title")}</h1>
         </div>
+        <GlobalExecutiveSearch />
         <div className="flex items-center gap-3">
           <LanguageToggle />
           {profile ? (

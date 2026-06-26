@@ -19,6 +19,7 @@ const ADMIN_LINKS = [
   { href: "/admin/performance", label: "admin.links.performance", detail: "admin.links.performanceDetail" },
   { href: "/admin/audit-logs", label: "admin.links.audit", detail: "admin.links.auditDetail" },
   { href: "/admin/security", label: "admin.links.security", detail: "admin.links.securityDetail" },
+  { href: "/admin/email-alerts", label: "admin.links.emailAlerts", detail: "admin.links.emailAlertsDetail" },
   { href: "/categories", label: "admin.links.categories", detail: "admin.links.categoriesDetail" }
 ] satisfies Array<{ href: string; label: TranslationKey; detail: TranslationKey }>;
 

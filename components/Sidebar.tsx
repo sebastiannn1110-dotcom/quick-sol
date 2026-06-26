@@ -6,6 +6,8 @@ import {
   BarChart3,
   Database,
   LayoutDashboard,
+  Scale,
+  Search,
   ShieldCheck,
   Tags,
   Upload
@@ -28,6 +30,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/records", labelKey: "nav.records", icon: Database },
   { href: "/categories", labelKey: "nav.categories", icon: Tags },
   { href: "/analytics", labelKey: "nav.analytics", icon: BarChart3 },
+  { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
+  { href: "/mpn-comparator", labelKey: "nav.mpnComparator", icon: Scale },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
 ];
 
