@@ -17,4 +17,4 @@ export const ANALYTICS_UPLOAD_SELECT = [
   "completed_at", "archived_at", "profiles(full_name,email,department,region,role)"
 ].join(",");
 
-export const ANALYTICS_PROFILE_SELECT = "id,full_name,email,role,department,region,is_active,created_at,updated_at,avatar_path";
+export const ANALYTICS_PROFILE_SELECT = "id,full_name,email,role,department,region,is_active,created_at,updated_at";

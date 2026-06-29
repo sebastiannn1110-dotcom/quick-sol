@@ -1,6 +1,7 @@
 import type { LogContext, LogModule } from "@/lib/logger/types";
 import { logger } from "@/lib/logger/logger";
 import { sanitizeForLog } from "@/lib/logger/sanitize";
+import { serverSupabaseClientOptions } from "@/lib/supabase/node-client-options";
 
 async function persistPerformanceLog(
   operation: string,
@@ -19,7 +20,7 @@ async function persistPerformanceLog(
     const service = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY,
-      { auth: { persistSession: false, autoRefreshToken: false } }
+      serverSupabaseClientOptions()
     );
 
     await service.from("performance_logs").insert({

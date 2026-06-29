@@ -12,10 +12,12 @@ import {
   Search,
   ShieldCheck,
   Tags,
-  Upload
+  Upload,
+  Users
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
+import QuiksolIcon from "@/components/QuiksolIcon";
 import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
 
@@ -34,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/analytics", labelKey: "nav.analytics", icon: BarChart3 },
   { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
   { href: "/mpn-comparator", labelKey: "nav.mpnComparator", icon: Scale },
+  { href: "/employees", labelKey: "nav.employees", icon: Users },
   { href: "/chat", labelKey: "nav.chat", icon: MessageCircle },
   { href: "/profile", labelKey: "nav.profile", icon: UserCircle },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
@@ -56,9 +59,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
     >
       <div className="flex items-center justify-between px-4 py-4 lg:block lg:px-6 lg:py-6">
         <Link href="/dashboard" className="flex items-center gap-3">
-          <span className={`flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold ${isAdminArea ? "bg-orange-500" : "bg-brand-500"}`}>
-            QS
-          </span>
+          <QuiksolIcon size={40} className={isAdminArea ? "ring-1 ring-orange-300" : "ring-1 ring-brand-400"} />
           <span>
             <span className="block text-base font-semibold">Quiksol</span>
             <span className={`block text-xs ${isAdminArea ? "text-orange-200" : "text-slate-400"}`}>

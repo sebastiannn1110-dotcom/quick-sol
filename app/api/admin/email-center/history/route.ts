@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const limit = Math.min(Math.max(Number(searchParams.get("limit") || 50), 1), 200);
   const { data, error } = await context.supabase
     .from("admin_email_messages")
-    .select("id, subject, sender_user_id, recipients, recipient_count, status, provider, error_message, metadata, created_at, sent_at")
+    .select("id, subject, sender_user_id, recipients, recipient_count, status, provider, error_message, metadata, created_at, sent_at, admin_email_attachments(id,file_name,file_type,file_size,created_at)")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) return NextResponse.json({ error: "No se pudo cargar el historial." }, { status: 500 });

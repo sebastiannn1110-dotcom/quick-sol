@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import LanguageToggle from "@/components/LanguageToggle";
+import QuiksolIcon from "@/components/QuiksolIcon";
 import { useLanguage } from "@/components/LanguageProvider";
 
 export default function LoginForm() {
@@ -100,9 +101,7 @@ export default function LoginForm() {
   return (
     <div className="w-full max-w-md rounded-md border border-slate-200 bg-white p-6 shadow-soft">
       <div className="mb-6">
-        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
-          QS
-        </div>
+        <QuiksolIcon size={44} className="mb-4 ring-1 ring-brand-100" />
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-brand-700">Quiksol Data Intelligence Platform</p>
           <LanguageToggle />

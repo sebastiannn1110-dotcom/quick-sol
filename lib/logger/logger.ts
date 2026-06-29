@@ -1,6 +1,7 @@
 import type { LogEvent, LogLevel, PersistableLogEvent } from "@/lib/logger/types";
 import { sanitizeError, sanitizeForLog } from "@/lib/logger/sanitize";
 import { getSupabaseServiceRoleKey } from "@/lib/security/env";
+import { serverSupabaseClientOptions } from "@/lib/supabase/node-client-options";
 
 function color(level: LogLevel) {
   if (level === "error" || level === "fatal") return "\x1b[31m";
@@ -32,7 +33,7 @@ async function persistSystemLog(event: PersistableLogEvent) {
     const service = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       serviceRoleKey,
-      { auth: { persistSession: false, autoRefreshToken: false } }
+      serverSupabaseClientOptions()
     );
 
     await service.from("system_logs").insert({

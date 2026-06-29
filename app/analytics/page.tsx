@@ -29,20 +29,33 @@ export default function AnalyticsPage() {
   const { t } = useLanguage();
   const [analytics, setAnalytics] = useState<PlatformAnalyticsSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadAnalytics() {
-      setLoading(true);
-      const response = await fetch("/api/analytics", { cache: "no-store" });
-      const payload = (await response.json()) as { analytics: PlatformAnalyticsSummary };
-      setAnalytics(payload.analytics);
-      setLoading(false);
+      try {
+        setLoading(true);
+        const response = await fetch("/api/analytics", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as {
+          analytics?: PlatformAnalyticsSummary;
+          error?: string;
+        } | null;
+        if (!response.ok || !payload?.analytics) throw new Error(payload?.error ?? t("dashboard.unavailable"));
+        setAnalytics(payload.analytics);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : t("dashboard.unavailable"));
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadAnalytics();
-  }, []);
+  }, [t]);
 
   if (loading || !analytics) {
+    if (error) {
+      return <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
+    }
     return <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("analytics.loading")}</div>;
   }
 

@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function missingTable(error: { code?: string; message?: string } | null) {
-  return Boolean(error && (error.code === "42P01" || error.message?.includes("admin_email_messages")));
+  return Boolean(error && (error.code === "42P01" || error.message?.includes("admin_email_messages") || error.message?.includes("admin_email_attachments")));
 }
 
 export async function GET(request: Request) {
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
       .limit(500),
     context.supabase
       .from("admin_email_messages")
-      .select("id, subject, sender_user_id, recipients, recipient_count, status, provider, error_message, metadata, created_at, sent_at")
+      .select("id, subject, sender_user_id, recipients, recipient_count, status, provider, error_message, metadata, created_at, sent_at, admin_email_attachments(id,file_name,file_type,file_size,created_at)")
       .order("created_at", { ascending: false })
       .limit(50)
   ]);

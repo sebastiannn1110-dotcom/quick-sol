@@ -6,6 +6,11 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   text?: string;
+  attachments?: Array<{
+    filename: string;
+    contentBase64: string;
+    contentType: string;
+  }>;
 }
 
 export interface SendEmailResult {
@@ -46,7 +51,12 @@ async function sendWithResend(input: SendEmailInput): Promise<SendEmailResult> {
       to: input.to,
       subject: input.subject,
       html: input.html,
-      text: input.text ?? compactText(input.html)
+      text: input.text ?? compactText(input.html),
+      attachments: input.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: attachment.contentBase64,
+        content_type: attachment.contentType
+      }))
     })
   });
   const payload = (await response.json().catch(() => null)) as {
@@ -83,7 +93,12 @@ async function sendWithSmtp(input: SendEmailInput): Promise<SendEmailResult> {
     to: input.to.join(", "),
     subject: input.subject,
     html: input.html,
-    text: input.text ?? compactText(input.html)
+    text: input.text ?? compactText(input.html),
+    attachments: input.attachments?.map((attachment) => ({
+      filename: attachment.filename,
+      content: Buffer.from(attachment.contentBase64, "base64"),
+      contentType: attachment.contentType
+    }))
   });
   return { provider: "smtp", status: "sent", messageId: result.messageId };
 }

@@ -5,6 +5,8 @@ export interface ChatUser {
   role: "admin" | "manager" | "employee";
   department: string | null;
   region: string | null;
+  bio?: string | null;
+  job_title?: string | null;
   avatar_path?: string | null;
 }
 

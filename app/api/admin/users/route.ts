@@ -14,6 +14,8 @@ const updateUserSchema = z.object({
   role: z.enum(["admin", "manager", "employee"]).optional(),
   department: z.string().nullable().optional(),
   region: z.string().nullable().optional(),
+  bio: z.string().trim().max(500).nullable().optional(),
+  job_title: z.string().trim().max(120).nullable().optional(),
   is_active: z.boolean().optional(),
   confirmSelfDeactivate: z.boolean().optional()
 });
@@ -24,6 +26,8 @@ const inviteUserSchema = z.object({
   role: z.enum(["admin", "manager", "employee"]).default("employee"),
   department: z.string().optional(),
   region: z.string().optional(),
+  bio: z.string().trim().max(500).optional(),
+  job_title: z.string().trim().max(120).optional(),
   password: z.string().min(8).optional()
 });
 
@@ -91,6 +95,8 @@ export async function POST(request: Request) {
       role: body.data.role,
       department: body.data.department ?? null,
       region: body.data.region ?? null,
+      bio: body.data.bio ?? null,
+      job_title: body.data.job_title ?? null,
       is_active: true
     })
     .select("*")
@@ -150,6 +156,8 @@ export async function PATCH(request: Request) {
     ...(body.data.role ? { role: body.data.role } : {}),
     ...(body.data.department !== undefined ? { department: body.data.department } : {}),
     ...(body.data.region !== undefined ? { region: body.data.region } : {}),
+    ...(body.data.bio !== undefined ? { bio: body.data.bio } : {}),
+    ...(body.data.job_title !== undefined ? { job_title: body.data.job_title } : {}),
     ...(body.data.is_active !== undefined ? { is_active: body.data.is_active } : {})
   };
 

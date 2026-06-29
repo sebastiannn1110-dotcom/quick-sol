@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { MessageSquarePlus } from "lucide-react";
 import ChatWindow from "@/components/chat/ChatWindow";
 import ConversationList, { conversationTitle } from "@/components/chat/ConversationList";
@@ -9,6 +10,8 @@ import type { ChatConversation, ChatMessage, ChatUser } from "@/components/chat/
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function ChatLayout() {
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get("conversation") ?? "";
   const [currentUser, setCurrentUser] = useState<ChatUser | null>(null);
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
@@ -26,8 +29,8 @@ export default function ChatLayout() {
     const payload = await response.json().catch(() => null);
     if (!response.ok) { setError(payload?.error ?? "No se pudieron cargar las conversaciones."); return; }
     setConversations(payload.conversations ?? []);
-    setActiveId((current) => current || payload.conversations?.[0]?.id || "");
-  }, []);
+    setActiveId((current) => requestedConversationId || current || payload.conversations?.[0]?.id || "");
+  }, [requestedConversationId]);
 
   const loadMessages = useCallback(async (conversationId: string, silent = false) => {
     if (!conversationId) { setMessages([]); return; }

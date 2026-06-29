@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   generatePasswordResetCode,
   generatePasswordResetToken,
+  getPasswordResetSecret,
   hashPasswordResetCode,
   hashPasswordResetToken,
   newPasswordSchema,
@@ -36,5 +37,20 @@ describe("password reset security helpers", () => {
   it("requires a strong replacement password", () => {
     expect(newPasswordSchema.safeParse("weak-password").success).toBe(false);
     expect(newPasswordSchema.safeParse("StrongPassword2026").success).toBe(true);
+  });
+
+  it("fails closed in production when the reset secret is missing", () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalSecret = process.env.PASSWORD_RESET_SECRET;
+
+    try {
+      process.env.NODE_ENV = "production";
+      delete process.env.PASSWORD_RESET_SECRET;
+      expect(() => getPasswordResetSecret()).toThrow("PASSWORD_RESET_SECRET");
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      if (originalSecret === undefined) delete process.env.PASSWORD_RESET_SECRET;
+      else process.env.PASSWORD_RESET_SECRET = originalSecret;
+    }
   });
 });

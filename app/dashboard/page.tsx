@@ -15,12 +15,13 @@ export default function DashboardPage() {
     async function loadAnalytics() {
       try {
         setLoading(true);
+        setError(null);
         const response = await fetch("/api/analytics", { cache: "no-store" });
-        const payload = (await response.json()) as {
+        const payload = (await response.json().catch(() => null)) as {
           analytics?: PlatformAnalyticsSummary;
           error?: string;
-        };
-        if (!response.ok || !payload.analytics) throw new Error(payload.error ?? t("dashboard.unavailable"));
+        } | null;
+        if (!response.ok || !payload?.analytics) throw new Error(payload?.error ?? t("dashboard.unavailable"));
         setAnalytics(payload.analytics);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : t("dashboard.unavailable"));

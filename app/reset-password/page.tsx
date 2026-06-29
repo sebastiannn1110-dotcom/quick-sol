@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import QuiksolIcon from "@/components/QuiksolIcon";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -25,8 +26,8 @@ function ResetPasswordForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, code })
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "El codigo no es valido.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.resetToken) throw new Error(payload?.error ?? "El codigo no es valido.");
       setResetToken(payload.resetToken);
     } catch (verifyError) {
       setError(verifyError instanceof Error ? verifyError.message : "El codigo no es valido.");
@@ -49,8 +50,8 @@ function ResetPasswordForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, resetToken, password })
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No se pudo cambiar la contrasena.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "No se pudo cambiar la contrasena.");
       setSuccess(true);
     } catch (confirmError) {
       setError(confirmError instanceof Error ? confirmError.message : "No se pudo cambiar la contrasena.");
@@ -61,7 +62,7 @@ function ResetPasswordForm() {
 
   return (
     <div className="w-full max-w-md rounded-md border border-slate-200 bg-white p-6 shadow-soft">
-      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">QS</div>
+      <QuiksolIcon size={44} className="mb-4 ring-1 ring-brand-100" />
       <h1 className="text-2xl font-semibold text-slate-950">Restablecer contrasena</h1>
       {success ? (
         <div className="mt-5 space-y-4">

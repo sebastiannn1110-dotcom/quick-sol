@@ -13,6 +13,8 @@ type UserForm = {
   role: Profile["role"];
   department: string;
   region: string;
+  bio: string;
+  job_title: string;
   password: string;
 };
 
@@ -22,6 +24,8 @@ const EMPTY_FORM: UserForm = {
   role: "employee",
   department: "",
   region: "",
+  bio: "",
+  job_title: "",
   password: ""
 };
 
@@ -47,7 +51,7 @@ export default function AdminUsersPage() {
   }, []);
 
   const visibleUsers = users.filter((user) =>
-    [user.full_name, user.email, user.role, user.department, user.region]
+    [user.full_name, user.email, user.role, user.department, user.region, user.job_title, user.bio]
       .join(" ")
       .toLowerCase()
       .includes(search.toLowerCase())
@@ -68,6 +72,8 @@ export default function AdminUsersPage() {
       role: user.role,
       department: user.department ?? "",
       region: user.region ?? "",
+      bio: user.bio ?? "",
+      job_title: user.job_title ?? "",
       password: ""
     });
     setMessage(null);
@@ -86,6 +92,8 @@ export default function AdminUsersPage() {
       role: form.role,
       department: form.department.trim() || null,
       region: form.region.trim() || null,
+      bio: form.bio.trim() || null,
+      job_title: form.job_title.trim() || null,
       ...(form.password.trim() ? { password: form.password.trim() } : {})
     };
 
@@ -161,7 +169,7 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <UserAvatar name={user.full_name} avatarPath={user.avatar_path} size="sm" />
-                        <div><p className="font-medium text-slate-950">{user.full_name}</p><p className="text-xs text-slate-500">{user.email}</p></div>
+                        <div><p className="font-medium text-slate-950">{user.full_name}</p><p className="text-xs text-slate-500">{user.email}</p>{user.job_title ? <p className="text-xs text-slate-400">{user.job_title}</p> : null}</div>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{user.role}</td>
@@ -231,12 +239,20 @@ export default function AdminUsersPage() {
                   Region
                   <input value={form.region} onChange={(event) => setForm((current) => ({ ...current, region: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
                 </label>
+                <label className="grid gap-1 text-sm font-medium text-slate-700">
+                  Cargo visible
+                  <input value={form.job_title} maxLength={120} onChange={(event) => setForm((current) => ({ ...current, job_title: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
+                </label>
                 {modalMode === "create" ? (
                   <label className="grid gap-1 text-sm font-medium text-slate-700">
                     Temporary password
                     <input value={form.password} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} placeholder="Auto-generate if empty" className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
                   </label>
                 ) : null}
+                <label className="grid gap-1 text-sm font-medium text-slate-700 sm:col-span-2">
+                  Descripcion interna
+                  <textarea value={form.bio} maxLength={500} rows={4} onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
+                </label>
                 <div className="sm:col-span-2 flex justify-end">
                   <button type="submit" className="focus-ring rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
                     {modalMode === "create" ? "Create Employee" : "Save Employee"}

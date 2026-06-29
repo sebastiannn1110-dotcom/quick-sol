@@ -68,6 +68,8 @@ export interface Profile {
   role: UserRole;
   department: string | null;
   region: string | null;
+  bio?: string | null;
+  job_title?: string | null;
   avatar_path?: string | null;
   is_active: boolean;
   created_at: string;

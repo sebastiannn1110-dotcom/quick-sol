@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import LanguageToggle from "@/components/LanguageToggle";
+import QuiksolIcon from "@/components/QuiksolIcon";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -21,8 +22,8 @@ export default function ForgotPasswordPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email })
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "No se pudo procesar la solicitud.");
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "No se pudo procesar la solicitud.");
       router.push(`/reset-password?email=${encodeURIComponent(email.trim().toLowerCase())}`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "No se pudo procesar la solicitud.");
@@ -36,7 +37,7 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md rounded-md border border-slate-200 bg-white p-6 shadow-soft">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">QS</div>
+            <QuiksolIcon size={44} className="mb-4 ring-1 ring-brand-100" />
             <h1 className="text-2xl font-semibold text-slate-950">Recuperar contrasena</h1>
           </div>
           <LanguageToggle />
