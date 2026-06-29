@@ -6,6 +6,8 @@ import {
   BarChart3,
   Database,
   LayoutDashboard,
+  MessageCircle,
+  UserCircle,
   Scale,
   Search,
   ShieldCheck,
@@ -32,6 +34,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/analytics", labelKey: "nav.analytics", icon: BarChart3 },
   { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
   { href: "/mpn-comparator", labelKey: "nav.mpnComparator", icon: Scale },
+  { href: "/chat", labelKey: "nav.chat", icon: MessageCircle },
+  { href: "/profile", labelKey: "nav.profile", icon: UserCircle },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
 ];
 

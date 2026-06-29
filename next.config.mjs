@@ -5,7 +5,8 @@ const nextConfig = {
   async headers() {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
-    const connectSources = ["'self'", supabaseOrigin, "https://api.openai.com", "https://api.elevenlabs.io"].filter(Boolean).join(" ");
+    const supabaseWebSocket = supabaseUrl ? `wss://${new URL(supabaseUrl).host}` : "";
+    const connectSources = ["'self'", supabaseOrigin, supabaseWebSocket, "https://api.openai.com", "https://api.elevenlabs.io"].filter(Boolean).join(" ");
     const imgSources = ["'self'", "data:", "blob:", supabaseOrigin].filter(Boolean).join(" ");
     const mediaSources = ["'self'", "data:", "blob:", "https:"].join(" ");
 
@@ -16,7 +17,7 @@ const nextConfig = {
       "frame-ancestors 'none'",
       `connect-src ${connectSources}`,
       `img-src ${imgSources}`,
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline'",
       "font-src 'self' data:",
       `media-src ${mediaSources}`,
@@ -32,6 +33,9 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
           {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=()"

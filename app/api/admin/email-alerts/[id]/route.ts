@@ -52,12 +52,9 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const { id } = await params;
   if (context.isDemoMode || !context.supabase) return NextResponse.json({ ok: true, demo: true });
 
-  const { error } = await context.supabase
-    .from("email_alert_rules")
-    .update({ enabled: false })
-    .eq("id", id);
+  const { error } = await context.supabase.from("email_alert_rules").delete().eq("id", id);
 
-  if (error) return NextResponse.json({ error: "Unable to disable email alert rule." }, { status: 500 });
-  await logAuditEvent(context, "email_alert_rule_disabled", "email_alert_rule", id);
+  if (error) return NextResponse.json({ error: "Unable to delete email alert rule." }, { status: 500 });
+  await logAuditEvent(context, "email_alert_rule_deleted", "email_alert_rule", id);
   return NextResponse.json({ ok: true });
 }

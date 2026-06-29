@@ -4,13 +4,15 @@ import { createClient } from "@supabase/supabase-js";
 import { REQUEST_HEADER, TRACE_HEADER, createRequestId, createTraceId } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password"];
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/upload",
   "/records",
   "/analytics",
   "/categories",
+  "/chat",
+  "/profile",
   "/admin"
 ];
 

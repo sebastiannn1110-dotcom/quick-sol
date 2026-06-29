@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { answerAssistantQuestion, AssistantConfigError, type AssistantLanguage } from "@/lib/ai/assistantCore";
 import { logger } from "@/lib/logger/logger";
-import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { synthesizeSpeech } from "@/lib/voice/elevenlabs";
 import {
   detectLanguageFromTranscript,
@@ -33,10 +34,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Voice assistant is disabled." }, { status: 503 });
   }
 
-  const rate = checkRateLimit({
-    key: `voice:${context.profile.id}`,
+  const rate = await checkPersistentRateLimit({
+    action: "voice_assistant",
+    identifier: context.profile.id,
     limit: 20,
-    windowMs: 10 * 60 * 1000
+    windowSeconds: 10 * 60,
+    blockSeconds: 5 * 60
   });
   if (!rate.allowed) {
     await logger.warn({

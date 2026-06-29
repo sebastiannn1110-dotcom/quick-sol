@@ -15,7 +15,10 @@ export type LogModule =
   | "frontend"
   | "security"
   | "voice"
-  | "email";
+  | "email"
+  | "ai"
+  | "chat"
+  | "profile";
 
 export interface LogError {
   name?: string;

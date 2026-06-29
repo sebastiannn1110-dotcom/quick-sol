@@ -25,11 +25,12 @@ import ChartTypeSelector, { type ChartType } from "@/components/charts/ChartType
 const COLORS = ["#2563eb", "#f97316", "#10b981", "#a855f7", "#ef4444", "#14b8a6", "#f59e0b", "#64748b"];
 
 function downloadCsv(title: string, rows: MetricItem[]) {
+  const preventFormulaInjection = (value: string) => /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   const csv = [
     ["label", "value", "percent"],
     ...rows.map((row) => [row.label, String(row.value), row.percent === undefined ? "" : String(row.percent)])
   ]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .map((row) => row.map((cell) => `"${preventFormulaInjection(String(cell)).replace(/"/g, '""')}"`).join(","))
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);

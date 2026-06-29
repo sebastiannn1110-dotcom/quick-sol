@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
-import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { answerAssistantQuestion, AssistantConfigError, type AssistantLanguage } from "@/lib/ai/assistantCore";
 
 export const runtime = "nodejs";
@@ -21,10 +22,12 @@ export async function POST(request: Request) {
   const language = normalizeRequestLanguage(body?.language);
   if (!message) return NextResponse.json({ error: "Message is required." }, { status: 400 });
 
-  const rate = checkRateLimit({
-    key: `assistant:${context.profile.id}`,
+  const rate = await checkPersistentRateLimit({
+    action: "assistant",
+    identifier: context.profile.id,
     limit: 30,
-    windowMs: 15 * 60 * 1000
+    windowSeconds: 15 * 60,
+    blockSeconds: 5 * 60
   });
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 

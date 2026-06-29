@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -96,23 +97,6 @@ export default function LoginForm() {
     router.refresh();
   }
 
-  async function handleReset() {
-    if (!supabase || !email) {
-      setError(t("auth.enterEmail"));
-      return;
-    }
-
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`
-    });
-
-    if (resetError) setError(t("auth.resetFailed"));
-    else {
-      clientLogger.passwordResetRequested({ email });
-      setMessage(t("auth.resetSent"));
-    }
-  }
-
   return (
     <div className="w-full max-w-md rounded-md border border-slate-200 bg-white p-6 shadow-soft">
       <div className="mb-6">
@@ -166,13 +150,12 @@ export default function LoginForm() {
         >
           {configLoading ? t("auth.preparing") : loading ? t("auth.signingIn") : t("auth.signIn")}
         </button>
-        <button
-          type="button"
-          onClick={handleReset}
-          className="text-sm font-medium text-slate-600 hover:text-slate-950"
+        <Link
+          href="/forgot-password"
+          className="text-center text-sm font-medium text-slate-600 hover:text-slate-950"
         >
           {t("auth.reset")}
-        </button>
+        </Link>
       </form>
     </div>
   );

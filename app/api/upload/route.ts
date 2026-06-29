@@ -6,7 +6,8 @@ import { handleRouteError } from "@/lib/errors/errorHandler";
 import { FileValidationError, StorageError, SupabaseError, ValidationError } from "@/lib/errors/AppError";
 import { logger } from "@/lib/logger/logger";
 import { safeStorageUpload } from "@/lib/supabase/supabase-safe";
-import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { SECURITY_LIMITS } from "@/lib/security/env";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
@@ -98,10 +99,12 @@ export async function POST(request: Request) {
     status: "started"
   });
 
-  const rate = checkRateLimit({
-    key: `upload:${context.profile.id}`,
+  const rate = await checkPersistentRateLimit({
+    action: "upload",
+    identifier: context.profile.id,
     limit: 10,
-    windowMs: 15 * 60 * 1000
+    windowSeconds: 15 * 60,
+    blockSeconds: 15 * 60
   });
   if (!rate.allowed) {
     await logger.security({

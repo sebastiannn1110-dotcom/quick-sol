@@ -7,6 +7,7 @@ import { buildPlatformAnalytics } from "@/lib/platform/analytics";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
+import { ANALYTICS_PROFILE_SELECT, ANALYTICS_RECORD_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,9 +53,10 @@ export async function GET(request: Request) {
             () =>
               context.supabase!
                 .from("business_records")
-                .select("*, profiles(full_name,email,department,region,role)")
+                .select(ANALYTICS_RECORD_SELECT)
                 .is("archived_at", null)
-                .limit(10000),
+                .limit(10000)
+                .overrideTypes<PlatformRecord[]>(),
             { filters: { archived_at: null }, limit: 10000, scope: "admin_global_analytics" }
           ),
           safeQuery<UploadBatch[]>(
@@ -63,14 +65,15 @@ export async function GET(request: Request) {
             () =>
               context.supabase!
                 .from("upload_batches")
-                .select("*, profiles(full_name,email,department,region,role)")
-                .limit(5000),
+                .select(ANALYTICS_UPLOAD_SELECT)
+                .limit(5000)
+                .overrideTypes<UploadBatch[]>(),
             { limit: 5000, scope: "admin_global_analytics" }
           ),
           safeQuery<Profile[]>(
             "profiles",
             logContext,
-            () => context.supabase!.from("profiles").select("*"),
+            () => context.supabase!.from("profiles").select(ANALYTICS_PROFILE_SELECT).overrideTypes<Profile[]>(),
             { scope: "admin_global_analytics" }
           )
         ]);

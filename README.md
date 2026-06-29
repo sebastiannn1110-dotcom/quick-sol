@@ -12,6 +12,15 @@ Latest correction report is documented in [CHANGELOG_QUIKSOL_CORRECTIONS.md](CHA
 
 Commercial valuation and full product scope are documented in [README_VALORACION_PRODUCTO.md](README_VALORACION_PRODUCTO.md).
 
+## Enterprise MVP
+
+- [Architecture review](docs/ENTERPRISE_MVP_ARCHITECTURE_REVIEW.md)
+- [Security hardening report](docs/SECURITY_HARDENING_REPORT.md)
+- [Performance review](docs/PERFORMANCE_REVIEW.md)
+- [Implementation and test guide](docs/ENTERPRISE_MVP_IMPLEMENTATION_REPORT.md)
+
+Run `supabase/migrations/20260629000000_enterprise_mvp.sql` after the existing platform, observability and email-alert migrations before enabling password recovery, email center, chat or avatars in production.
+
 ## Voice Assistant Environment
 
 Server-side voice features use OpenAI transcription and ElevenLabs TTS. Add these in Render as secret/server environment variables, never as `NEXT_PUBLIC_*`:

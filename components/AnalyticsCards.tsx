@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import type { MetricItem, PlatformAnalyticsSummary } from "@/lib/types";
 import { useLanguage } from "@/components/LanguageProvider";
-import AnalyticsModal from "@/components/charts/AnalyticsModal";
 import MetricCard from "@/components/charts/MetricCard";
+
+const AnalyticsModal = dynamic(() => import("@/components/charts/AnalyticsModal"), { ssr: false });
 
 function formatValue(value: number | string, locale: string) {
   if (typeof value === "string") return value;

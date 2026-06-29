@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { sendEmail } from "@/lib/email/email-service";
+import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
+import { rateLimitResponse } from "@/lib/security/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +19,8 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = testSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid test email request.", issues: parsed.error.flatten() }, { status: 400 });
+  const rate = await checkPersistentRateLimit({ action: "email_alert_test", identifier: context.profile.id, limit: 12, windowSeconds: 60 * 60 });
+  if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 
   const subject = parsed.data.subject || "[Quiksol] Email alerts test";
   const result = await sendEmail({

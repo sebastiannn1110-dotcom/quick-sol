@@ -7,6 +7,7 @@ import { buildPlatformAnalytics } from "@/lib/platform/analytics";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
+import { ANALYTICS_PROFILE_SELECT, ANALYTICS_RECORD_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,9 +53,10 @@ export async function GET(request: Request) {
             () =>
               context.supabase!
                 .from("business_records")
-                .select("*, profiles(full_name,email,department,region,role)")
+                .select(ANALYTICS_RECORD_SELECT)
                 .is("archived_at", null)
-                .limit(5000),
+                .limit(5000)
+                .overrideTypes<PlatformRecord[]>(),
             { filters: { archived_at: null }, limit: 5000, scope: "employee_analytics" }
           ),
           safeQuery<UploadBatch[]>(
@@ -63,15 +65,16 @@ export async function GET(request: Request) {
             () =>
               context.supabase!
                 .from("upload_batches")
-                .select("*, profiles(full_name,email,department,region,role)")
+                .select(ANALYTICS_UPLOAD_SELECT)
                 .order("created_at", { ascending: false })
-                .limit(1000),
+                .limit(1000)
+                .overrideTypes<UploadBatch[]>(),
             { orderBy: "created_at_desc", limit: 1000, scope: "employee_analytics" }
           ),
           safeQuery<Profile[]>(
             "profiles",
             logContext,
-            () => context.supabase!.from("profiles").select("*").eq("is_active", true),
+            () => context.supabase!.from("profiles").select(ANALYTICS_PROFILE_SELECT).eq("is_active", true).overrideTypes<Profile[]>(),
             { filters: { is_active: true }, scope: "employee_analytics" }
           )
         ]);

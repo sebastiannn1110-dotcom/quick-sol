@@ -11,7 +11,7 @@ import type { Profile } from "@/lib/types";
 
 function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isPublicPage = pathname === "/login";
+  const isPublicPage = ["/login", "/forgot-password", "/reset-password"].includes(pathname);
   const isAdminArea = pathname.startsWith("/admin");
   const [profile, setProfile] = useState<Profile | null>(null);
 

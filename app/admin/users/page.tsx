@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
+import UserAvatar from "@/components/chat/UserAvatar";
 
 type UserForm = {
   id?: string;
@@ -158,8 +159,10 @@ export default function AdminUsersPage() {
                 {visibleUsers.map((user) => (
                   <tr key={user.id}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-slate-950">{user.full_name}</p>
-                      <p className="text-xs text-slate-500">{user.email}</p>
+                      <div className="flex items-center gap-3">
+                        <UserAvatar name={user.full_name} avatarPath={user.avatar_path} size="sm" />
+                        <div><p className="font-medium text-slate-950">{user.full_name}</p><p className="text-xs text-slate-500">{user.email}</p></div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{user.role}</td>
                     <td className="px-4 py-3 text-slate-600">{user.department ?? "-"}</td>

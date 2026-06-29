@@ -178,9 +178,10 @@ export function buildPlatformAnalytics(input: {
         { label: "Data quality score", value: records.length ? Math.round(((records.length - incompleteRecords) / records.length) * 100) : 0 }
       ], {
         "Missing values": groupCount(
-          (byCategory.Generic ?? []).map((record) =>
-            Object.values(record.normalized_data).some((value) => value === null) ? "Has missing values" : "Complete"
-          )
+          (byCategory.Generic ?? []).map((record) => {
+            const normalized = record.normalized_data ?? {};
+            return Object.values(normalized).some((value) => value === null) ? "Has missing values" : "Complete";
+          })
         )
       })
     }

@@ -87,6 +87,32 @@ export async function GET(request: Request) {
     });
   }
 
+  const directoryResult = await context.supabase!.rpc("get_employee_activity_directory");
+  if (!directoryResult.error) {
+    return NextResponse.json({
+      employees: (directoryResult.data ?? []).map((profile: {
+        id: string;
+        full_name: string;
+        email: string;
+        role: string;
+        department: string | null;
+        region: string | null;
+        is_active: boolean;
+        avatar_path: string | null;
+        created_at: string;
+        updated_at: string;
+        upload_count: number | string;
+        record_count: number | string;
+        last_upload: string | null;
+      }) => ({
+        ...profile,
+        uploadCount: Number(profile.upload_count ?? 0),
+        recordCount: Number(profile.record_count ?? 0),
+        lastUpload: profile.last_upload ?? null
+      }))
+    });
+  }
+
   const { data: profiles, error } = await context.supabase!
     .from("profiles")
     .select("*")
