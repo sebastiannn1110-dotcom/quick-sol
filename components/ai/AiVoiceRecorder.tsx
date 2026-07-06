@@ -11,7 +11,9 @@ export type RecorderState =
   | "stopping"
   | "uploading"
   | "transcribing"
+  | "looking_up"
   | "thinking"
+  | "generating_voice"
   | "speaking"
   | "error";
 
@@ -23,6 +25,14 @@ export interface AiVoiceResult {
   audioMimeType?: string | null;
   audioError?: string | null;
   detectedLanguage?: string | null;
+  voiceUsed?: string | null;
+  timings?: {
+    transcriptionMs?: number;
+    dataLookupMs?: number;
+    llmMs?: number;
+    ttsMs?: number;
+    totalMs?: number;
+  };
 }
 
 interface AiVoiceRecorderProps {
@@ -50,7 +60,9 @@ const BUSY_STATES = new Set<RecorderState>([
   "stopping",
   "uploading",
   "transcribing",
+  "looking_up",
   "thinking",
+  "generating_voice",
   "speaking"
 ]);
 
@@ -164,6 +176,7 @@ export default function AiVoiceRecorder({
   const startedAtRef = useRef<number | null>(null);
   const elapsedSecondsRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const progressTimersRef = useRef<number[]>([]);
 
   const busy = BUSY_STATES.has(recorderState);
 
@@ -203,6 +216,7 @@ export default function AiVoiceRecorder({
         recorderRef.current.stop();
       }
       stopMediaStream(streamRef.current);
+      progressTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
 
@@ -220,8 +234,12 @@ export default function AiVoiceRecorder({
         return t("assistant.uploadingAudio");
       case "transcribing":
         return t("assistant.transcribingAudio");
+      case "looking_up":
+        return t("assistant.searchingData");
       case "thinking":
         return t("assistant.thinking");
+      case "generating_voice":
+        return t("assistant.generatingVoice");
       case "speaking":
         return t("assistant.speaking");
       case "error":
@@ -239,6 +257,20 @@ export default function AiVoiceRecorder({
     startedAtRef.current = null;
     elapsedSecondsRef.current = 0;
     setElapsedSeconds(0);
+  }
+
+  function clearProgressTimers() {
+    progressTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    progressTimersRef.current = [];
+  }
+
+  function startPerceivedRealtimeStates() {
+    clearProgressTimers();
+    progressTimersRef.current = [
+      window.setTimeout(() => setRecorderState((current) => current === "transcribing" ? "looking_up" : current), 1200),
+      window.setTimeout(() => setRecorderState((current) => current === "transcribing" || current === "looking_up" ? "thinking" : current), 2800),
+      window.setTimeout(() => setRecorderState((current) => current === "transcribing" || current === "looking_up" || current === "thinking" ? "generating_voice" : current), 5200)
+    ];
   }
 
   async function submitAudio(audioBlob: Blob) {
@@ -264,7 +296,9 @@ export default function AiVoiceRecorder({
         body: formData
       });
       setRecorderState("transcribing");
+      startPerceivedRealtimeStates();
       const response = await request;
+      clearProgressTimers();
       setRecorderState("thinking");
       const payload = (await response.json()) as AiVoiceResult;
 
@@ -295,6 +329,7 @@ export default function AiVoiceRecorder({
 
       setRecorderState("idle");
     } catch (error) {
+      clearProgressTimers();
       const errorMessage = t("assistant.connection");
       setRecorderState("error");
       setHumanError(errorMessage);

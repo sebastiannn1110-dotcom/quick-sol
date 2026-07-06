@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Send, X } from "lucide-react";
+import { RefreshCcw, Send, X } from "lucide-react";
 import AiAudioPlayer from "@/components/ai/AiAudioPlayer";
 import AiVoiceRecorder, { type AiVoiceResult } from "@/components/ai/AiVoiceRecorder";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -15,6 +15,13 @@ interface ChatMessage {
   audioMimeType?: string | null;
   audioError?: string | null;
   detectedLanguage?: string | null;
+  timings?: {
+    transcriptionMs?: number;
+    dataLookupMs?: number;
+    llmMs?: number;
+    ttsMs?: number;
+    totalMs?: number;
+  };
 }
 
 export default function AIAssistantWidget({ profile }: { profile: Profile | null }) {
@@ -51,9 +58,15 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
       audioBase64: payload.audioBase64,
       audioMimeType: payload.audioMimeType,
       audioError: payload.audioError,
-      detectedLanguage: payload.detectedLanguage
+      detectedLanguage: payload.detectedLanguage,
+      timings: payload.timings
     });
     setMessages((current) => [...current, ...nextMessages]);
+  }
+
+  function resetConversation() {
+    setMessages([{ role: "assistant", content: t("assistant.initial") }]);
+    setMessage("");
   }
 
   function handleVoiceError(errorMessage: string) {
@@ -76,14 +89,15 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmed, language })
       });
-      const payload = (await response.json()) as { answer?: string; error?: string };
+      const payload = (await response.json()) as { answer?: string; error?: string; timings?: ChatMessage["timings"] };
       setMessages([
         ...nextMessages,
         {
           role: "assistant",
           content: response.ok
             ? payload.answer ?? t("assistant.noAnswer")
-            : payload.error ?? t("assistant.unavailable")
+            : payload.error ?? t("assistant.unavailable"),
+          timings: payload.timings
         }
       ]);
     } catch {
@@ -110,6 +124,15 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
             </div>
             <button
               type="button"
+              onClick={resetConversation}
+              className="rounded-md p-1 text-slate-300 hover:bg-slate-800 hover:text-white"
+              aria-label={t("assistant.newQuestion")}
+              title={t("assistant.newQuestion")}
+            >
+              <RefreshCcw className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
               onClick={() => setOpen(false)}
               className="rounded-md p-1 text-slate-300 hover:bg-slate-800 hover:text-white"
               aria-label={t("assistant.close")}
@@ -133,6 +156,12 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
                   <AiAudioPlayer audioBase64={item.audioBase64} audioMimeType={item.audioMimeType} t={t} />
                 ) : null}
                 {item.audioError ? <p className="mt-2 text-xs text-amber-700">{item.audioError}</p> : null}
+                {item.timings?.totalMs ? (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    {t("assistant.processingTime")}: {(item.timings.totalMs / 1000).toFixed(1)}s
+                    {item.timings.ttsMs ? ` · voz ${(item.timings.ttsMs / 1000).toFixed(1)}s` : ""}
+                  </p>
+                ) : null}
               </div>
             ))}
             {loading ? <p className="text-xs text-slate-500">{t("assistant.thinking")}</p> : null}

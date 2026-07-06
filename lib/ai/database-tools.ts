@@ -15,11 +15,17 @@ export type AiDatabaseToolName =
   | "getMissingMpnRecords";
 
 export interface AiToolResult {
+  ok: boolean;
   tool: AiDatabaseToolName;
+  scope: "own" | "team" | "company";
+  total?: number;
+  rows?: unknown[];
   data: unknown;
   summary: string;
   empty: boolean;
   truncated?: boolean;
+  warning?: string;
+  error?: string;
 }
 
 function requireSupabase(context: AuthContext) {
@@ -31,8 +37,30 @@ function cleanSearchTerm(value: string, max = 100) {
   return value.replace(/[^\p{L}\p{N}\s._@-]/gu, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
-function result(tool: AiDatabaseToolName, data: unknown, summary: string, empty: boolean, truncated = false): AiToolResult {
-  return { tool, data, summary, empty, truncated };
+function rowsFromData(data: unknown): unknown[] | undefined {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    if (Array.isArray(record.records)) return record.records;
+    if (Array.isArray(record.uploads)) return record.uploads;
+    if (Array.isArray(record.offers)) return record.offers;
+  }
+  return undefined;
+}
+
+function result(context: AuthContext, tool: AiDatabaseToolName, data: unknown, summary: string, empty: boolean, truncated = false): AiToolResult {
+  const rows = rowsFromData(data);
+  return {
+    ok: !empty,
+    tool,
+    scope: getAiPermissionScope(context).mode,
+    total: rows?.length,
+    rows,
+    data,
+    summary,
+    empty,
+    truncated
+  };
 }
 
 export async function getLatestUpload(context: AuthContext) {
@@ -45,13 +73,13 @@ export async function getLatestUpload(context: AuthContext) {
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
-  return result("getLatestUpload", data, data ? `Ultima carga: ${data.original_file_name}, ${data.total_rows} filas y ${data.error_count} errores.` : "No hay cargas visibles.", !data);
+  return result(context, "getLatestUpload", data, data ? `Ultima carga: ${data.original_file_name}, ${data.total_rows} filas y ${data.error_count} errores.` : "No hay cargas visibles.", !data);
 }
 
 export async function searchBusinessRecords(context: AuthContext, searchTerm: string) {
   const supabase = requireSupabase(context);
   const term = cleanSearchTerm(searchTerm);
-  if (term.length < 2) return result("searchBusinessRecords", [], "La busqueda necesita al menos dos caracteres.", true);
+  if (term.length < 2) return result(context, "searchBusinessRecords", [], "La busqueda necesita al menos dos caracteres.", true);
   const pattern = `%${term}%`;
   let query = supabase
     .from("business_records")
@@ -63,7 +91,7 @@ export async function searchBusinessRecords(context: AuthContext, searchTerm: st
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;
-  return result("searchBusinessRecords", data ?? [], `Se encontraron ${data?.length ?? 0} registros para ${term}.`, !data?.length, (data?.length ?? 0) === 50);
+  return result(context, "searchBusinessRecords", data ?? [], `Se encontraron ${data?.length ?? 0} registros para ${term}.`, !data?.length, (data?.length ?? 0) === 50);
 }
 
 export async function getRecordsByMpn(context: AuthContext, mpnInput: string) {
@@ -79,7 +107,7 @@ export async function getRecordsByMpn(context: AuthContext, mpnInput: string) {
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;
-  return result("getRecordsByMpn", data ?? [], `Se encontraron ${data?.length ?? 0} registros para el MPN ${mpn}.`, !data?.length, (data?.length ?? 0) === 100);
+  return result(context, "getRecordsByMpn", data ?? [], `Se encontraron ${data?.length ?? 0} registros para el MPN ${mpn}.`, !data?.length, (data?.length ?? 0) === 100);
 }
 
 export async function getUploadsByUser(context: AuthContext, userSearch: string) {
@@ -87,17 +115,17 @@ export async function getUploadsByUser(context: AuthContext, userSearch: string)
   if (mustForceOwnerScope(context.profile.role)) {
     const own = await supabase.from("upload_batches").select("id, original_file_name, status, total_rows, error_count, data_quality_score, created_at").eq("uploaded_by", context.profile.id).order("created_at", { ascending: false }).limit(30);
     if (own.error) throw own.error;
-    return result("getUploadsByUser", own.data ?? [], `Tienes ${own.data?.length ?? 0} cargas recientes.`, !own.data?.length, (own.data?.length ?? 0) === 30);
+    return result(context, "getUploadsByUser", own.data ?? [], `Tienes ${own.data?.length ?? 0} cargas recientes.`, !own.data?.length, (own.data?.length ?? 0) === 30);
   }
 
   const term = cleanSearchTerm(userSearch, 80);
   const { data: profiles, error: profileError } = await supabase.from("profiles").select("id, full_name, email, department, region, role").or(`full_name.ilike.%${term}%,email.ilike.%${term}%`).limit(10);
   if (profileError) throw profileError;
   const ids = (profiles ?? []).map((profile) => profile.id);
-  if (!ids.length) return result("getUploadsByUser", { profiles: [], uploads: [] }, "No se encontro un usuario visible con ese nombre.", true);
+  if (!ids.length) return result(context, "getUploadsByUser", { profiles: [], uploads: [] }, "No se encontro un usuario visible con ese nombre.", true);
   const { data: uploads, error } = await supabase.from("upload_batches").select("id, uploaded_by, original_file_name, status, total_rows, error_count, data_quality_score, created_at").in("uploaded_by", ids).order("created_at", { ascending: false }).limit(50);
   if (error) throw error;
-  return result("getUploadsByUser", { profiles, uploads: uploads ?? [] }, `Se encontraron ${uploads?.length ?? 0} cargas para ${profiles?.map((item) => item.full_name).join(", ")}.`, !uploads?.length, (uploads?.length ?? 0) === 50);
+  return result(context, "getUploadsByUser", { profiles, uploads: uploads ?? [] }, `Se encontraron ${uploads?.length ?? 0} cargas para ${profiles?.map((item) => item.full_name).join(", ")}.`, !uploads?.length, (uploads?.length ?? 0) === 50);
 }
 
 export async function getImportErrors(context: AuthContext, uploadId?: string) {
@@ -106,7 +134,7 @@ export async function getImportErrors(context: AuthContext, uploadId?: string) {
   if (uploadId) query = query.eq("upload_batch_id", uploadId);
   const { data, error } = await query;
   if (error) throw error;
-  return result("getImportErrors", data ?? [], `Hay ${data?.length ?? 0} errores de importacion visibles en la consulta.`, !data?.length, (data?.length ?? 0) === 50);
+  return result(context, "getImportErrors", data ?? [], `Hay ${data?.length ?? 0} errores de importacion visibles en la consulta.`, !data?.length, (data?.length ?? 0) === 50);
 }
 
 export async function getDashboardSummary(context: AuthContext) {
@@ -124,7 +152,7 @@ export async function getDashboardSummary(context: AuthContext) {
   }
   const [records, uploads, errors, missingMpn, latest] = await Promise.all([recordsCount, uploadsCount, errorCount, missingMpnCount, getLatestUpload(context)]);
   const data = { totalRecords: records.count ?? 0, totalUploads: uploads.count ?? 0, recordsWithErrors: errors.count ?? 0, recordsMissingMpn: missingMpn.count ?? 0, latestUpload: latest.data, scope: getAiPermissionScope(context).mode };
-  return result("getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
+  return result(context, "getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
 }
 
 export async function getMpnPriceComparison(context: AuthContext, mpn: string) {
@@ -133,13 +161,13 @@ export async function getMpnPriceComparison(context: AuthContext, mpn: string) {
   const summary = summarizeMpnOffers(rows);
   const ranking = buildSupplierRanking(rows).slice(0, 10);
   const data = { mpn, summary, ranking, offers: rows.slice(0, 25) };
-  return result("getMpnPriceComparison", data, summary.recommendedSupplier ? `Mejor opcion para ${mpn}: ${summary.recommendedSupplier}. ${summary.recommendationReason}` : `No hay ofertas comparables para ${mpn}.`, !summary.recommendedSupplier, rows.length > 25);
+  return result(context, "getMpnPriceComparison", data, summary.recommendedSupplier ? `Mejor opcion para ${mpn}: ${summary.recommendedSupplier}. ${summary.recommendationReason}` : `No hay ofertas comparables para ${mpn}.`, !summary.recommendedSupplier, rows.length > 25);
 }
 
 export async function getEmployeeSummary(context: AuthContext, userSearch: string) {
   const uploads = await getUploadsByUser(context, userSearch);
   const data = uploads.data as { profiles?: Array<{ id: string; full_name: string }>; uploads?: Array<{ id: string }> } | Array<unknown>;
-  return result("getEmployeeSummary", data, uploads.summary, uploads.empty, uploads.truncated);
+  return result(context, "getEmployeeSummary", data, uploads.summary, uploads.empty, uploads.truncated);
 }
 
 export async function getLowGpRecords(context: AuthContext, threshold = 0.15) {
@@ -149,7 +177,7 @@ export async function getLowGpRecords(context: AuthContext, threshold = 0.15) {
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;
-  return result("getLowGpRecords", { threshold: safeThreshold, records: data ?? [] }, `Hay ${data?.length ?? 0} registros visibles con GP rate menor a ${(safeThreshold * 100).toFixed(1)}%.`, !data?.length, (data?.length ?? 0) === 50);
+  return result(context, "getLowGpRecords", { threshold: safeThreshold, records: data ?? [] }, `Hay ${data?.length ?? 0} registros visibles con GP rate menor a ${(safeThreshold * 100).toFixed(1)}%.`, !data?.length, (data?.length ?? 0) === 50);
 }
 
 export async function getMissingMpnRecords(context: AuthContext) {
@@ -158,5 +186,5 @@ export async function getMissingMpnRecords(context: AuthContext) {
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;
-  return result("getMissingMpnRecords", data ?? [], `Hay ${data?.length ?? 0} registros visibles sin MPN.`, !data?.length, (data?.length ?? 0) === 50);
+  return result(context, "getMissingMpnRecords", data ?? [], `Hay ${data?.length ?? 0} registros visibles sin MPN.`, !data?.length, (data?.length ?? 0) === 50);
 }

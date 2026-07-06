@@ -15,6 +15,7 @@ describe("AI database permissions", () => {
 
   it("detects explicit global questions", () => {
     expect(questionRequestsCompanyWideData("Resume todos los registros de la empresa")).toBe(true);
+    expect(questionRequestsCompanyWideData("显示所有记录")).toBe(true);
     expect(questionRequestsCompanyWideData("Resume mis registros")).toBe(false);
   });
 });

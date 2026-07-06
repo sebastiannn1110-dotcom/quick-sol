@@ -42,6 +42,19 @@ describe("email alerts", () => {
     expect(JSON.stringify(diagnostics)).not.toContain("secret-test-key");
   });
 
+  it("warns when resend sender uses placeholder domain", () => {
+    process.env.RESEND_API_KEY = "secret-test-key";
+    process.env.EMAIL_FROM = "Quiksol Alerts <alerts@tudominio.com>";
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    delete process.env.ENABLE_EMAIL_ALERTS;
+
+    const diagnostics = getEmailProviderDiagnostics();
+    expect(diagnostics.provider).toBe("resend");
+    expect(diagnostics.warnings.join(" ")).toContain("tudominio.com");
+  });
+
   it("logs real resend errors", async () => {
     process.env.RESEND_API_KEY = "secret-test-key";
     process.env.EMAIL_FROM = "Quiksol Alerts <onboarding@resend.dev>";

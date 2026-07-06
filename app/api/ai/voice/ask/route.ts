@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
+import type { AuthContext } from "@/lib/auth/context";
 import { getAuthContext } from "@/lib/auth/context";
-import { answerAssistantQuestion, AssistantConfigError, type AssistantLanguage } from "@/lib/ai/assistantCore";
+import { answerAssistantQuestion, AssistantConfigError } from "@/lib/ai/assistantCore";
+import type { AssistantLanguage } from "@/lib/ai/language-detection";
+import { detectAssistantLanguage } from "@/lib/ai/language-detection";
 import { logger } from "@/lib/logger/logger";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { synthesizeSpeech } from "@/lib/voice/elevenlabs";
 import {
-  detectLanguageFromTranscript,
   normalizeLanguage,
   transcribeAudio,
   VoiceConfigError,
@@ -16,6 +18,14 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+interface VoiceTimings {
+  transcriptionMs: number;
+  dataLookupMs: number;
+  llmMs: number;
+  ttsMs: number;
+  totalMs: number;
+}
+
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
@@ -24,6 +34,38 @@ function getString(formData: FormData, key: string) {
 function getAudio(formData: FormData) {
   const audio = formData.get("audio");
   return audio instanceof File ? audio : null;
+}
+
+async function logVoice(
+  context: AuthContext,
+  action: string,
+  message: string,
+  status: "started" | "completed" | "failed",
+  metadata?: Record<string, unknown>,
+  durationMs?: number,
+  error?: unknown
+) {
+  await logger[status === "failed" ? "warn" : "info"]({
+    traceId: context.requestMeta.traceId,
+    requestId: context.requestMeta.requestId,
+    userId: context.profile.id,
+    userEmail: context.profile.email,
+    userRole: context.profile.role,
+    route: context.requestMeta.route,
+    module: "voice",
+    action,
+    message,
+    status,
+    durationMs,
+    metadata,
+    error
+  });
+}
+
+function friendlyVoiceError(language: AssistantLanguage) {
+  if (language === "zh") return "语音生成失败了，但我已经用文字回答你。";
+  if (language === "en") return "I answered in text because voice generation failed.";
+  return "Te respondi por texto porque fallo la voz.";
 }
 
 export async function POST(request: Request) {
@@ -42,20 +84,18 @@ export async function POST(request: Request) {
     blockSeconds: 5 * 60
   });
   if (!rate.allowed) {
-    await logger.warn({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
-      action: "voice_rate_limit_exceeded",
-      message: "Voice rate limit exceeded.",
-      status: "failed"
-    });
+    await logVoice(context, "voice_rate_limit_exceeded", "Voice rate limit exceeded.", "failed");
     return rateLimitResponse(rate.resetAt);
   }
+
+  const totalStartedAt = performance.now();
+  const timings: VoiceTimings = {
+    transcriptionMs: 0,
+    dataLookupMs: 0,
+    llmMs: 0,
+    ttsMs: 0,
+    totalMs: 0
+  };
 
   try {
     const contentType = request.headers.get("content-type") ?? "";
@@ -70,100 +110,47 @@ export async function POST(request: Request) {
       const requestedLanguage = getString(formData, "language");
 
       if (audio) {
-        await logger.info({
-          traceId: context.requestMeta.traceId,
-          requestId: context.requestMeta.requestId,
-          userId: context.profile.id,
-          userEmail: context.profile.email,
-          userRole: context.profile.role,
-          route: context.requestMeta.route,
-          module: "voice",
-          action: "voice_upload_received",
-          message: "Voice upload received.",
-          status: "completed",
-          metadata: { fileSize: audio.size, fileType: audio.type }
+        await logVoice(context, "voice_upload_received", "Voice upload received.", "completed", {
+          fileSize: audio.size,
+          fileType: audio.type
         });
 
-        await logger.info({
-          traceId: context.requestMeta.traceId,
-          requestId: context.requestMeta.requestId,
-          userId: context.profile.id,
-          userEmail: context.profile.email,
-          userRole: context.profile.role,
-          route: context.requestMeta.route,
-          module: "voice",
-          action: "voice_transcription_started",
-          message: "Voice transcription started.",
-          status: "started",
-          metadata: { fileSize: audio.size, fileType: audio.type }
+        await logVoice(context, "ai_voice_transcription_started", "AI voice transcription started.", "started", {
+          fileSize: audio.size,
+          fileType: audio.type
         });
+        const transcriptionStartedAt = performance.now();
+        const transcription = await transcribeAudio(audio);
+        timings.transcriptionMs = Math.round(performance.now() - transcriptionStartedAt);
+        transcript = transcription.transcript;
+        detectedLanguage = transcription.detectedLanguage;
+        duration = transcription.duration;
 
-        try {
-          const transcription = await transcribeAudio(audio);
-          transcript = transcription.transcript;
-          detectedLanguage = transcription.detectedLanguage;
-          duration = transcription.duration;
-
-          await logger.info({
-            traceId: context.requestMeta.traceId,
-            requestId: context.requestMeta.requestId,
-            userId: context.profile.id,
-            userEmail: context.profile.email,
-            userRole: context.profile.role,
-            route: context.requestMeta.route,
-            module: "voice",
-            action: "voice_transcription_completed",
-            message: "Voice transcription completed.",
-            status: "completed",
-            metadata: { detectedLanguage, duration }
-          });
-        } catch (error) {
-          await logger.warn({
-            traceId: context.requestMeta.traceId,
-            requestId: context.requestMeta.requestId,
-            userId: context.profile.id,
-            userEmail: context.profile.email,
-            userRole: context.profile.role,
-            route: context.requestMeta.route,
-            module: "voice",
-            action: "voice_transcription_failed",
-            message: "Voice transcription failed.",
-            status: "failed",
-            error
-          });
-          throw error;
-        }
+        await logVoice(context, "ai_voice_transcription_done", "AI voice transcription completed.", "completed", {
+          detectedLanguage,
+          duration,
+          transcriptionMs: timings.transcriptionMs
+        }, timings.transcriptionMs);
       } else {
         transcript = textMessage;
-        detectedLanguage = requestedLanguage ? normalizeLanguage(requestedLanguage) : detectLanguageFromTranscript(transcript);
+        detectedLanguage = requestedLanguage ? normalizeLanguage(requestedLanguage) : detectAssistantLanguage(transcript);
       }
     } else {
       const body = (await request.json().catch(() => null)) as { message?: string; transcript?: string; language?: string } | null;
       transcript = body?.message?.trim() || body?.transcript?.trim() || "";
-      detectedLanguage = body?.language ? normalizeLanguage(body.language) : detectLanguageFromTranscript(transcript);
+      detectedLanguage = body?.language ? normalizeLanguage(body.language) : detectAssistantLanguage(transcript);
     }
 
     if (!transcript) return NextResponse.json({ error: "Audio or text message is required." }, { status: 400 });
 
-    await logger.info({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
-      action: "ai_voice_query_started",
-      message: "AI voice query started.",
-      status: "started",
-      metadata: { detectedLanguage }
-    });
-
     const answer = await answerAssistantQuestion({
       context,
       message: transcript,
-      language: detectedLanguage
+      language: detectedLanguage,
+      channel: "voice"
     });
+    timings.dataLookupMs = answer.timings.dataLookupMs;
+    timings.llmMs = answer.timings.llmMs;
 
     let audioBase64: string | null = null;
     let audioMimeType: string | null = null;
@@ -171,103 +158,66 @@ export async function POST(request: Request) {
     let audioError: string | null = null;
 
     try {
-      await logger.info({
-        traceId: context.requestMeta.traceId,
-        requestId: context.requestMeta.requestId,
-        userId: context.profile.id,
-        userEmail: context.profile.email,
-        userRole: context.profile.role,
-        route: context.requestMeta.route,
-        module: "voice",
-        action: "elevenlabs_tts_started",
-        message: "ElevenLabs TTS started.",
-        status: "started",
-        metadata: { detectedLanguage }
+      await logVoice(context, "ai_tts_started", "AI text-to-speech started.", "started", {
+        detectedLanguage,
+        textLength: answer.speechText.length
       });
+      const ttsStartedAt = performance.now();
       const speech = await synthesizeSpeech({
-        text: answer.answer,
+        text: answer.speechText,
         language: detectedLanguage,
         traceId: context.requestMeta.traceId
       });
+      timings.ttsMs = Math.round(performance.now() - ttsStartedAt);
       audioBase64 = speech.audioBase64;
       audioMimeType = speech.mimeType;
       voiceUsed = speech.voiceUsed;
 
-      await logger.info({
-        traceId: context.requestMeta.traceId,
-        requestId: context.requestMeta.requestId,
-        userId: context.profile.id,
-        userEmail: context.profile.email,
-        userRole: context.profile.role,
-        route: context.requestMeta.route,
-        module: "voice",
-        action: "elevenlabs_tts_completed",
-        message: "ElevenLabs TTS completed.",
-        status: "completed",
-        metadata: { detectedLanguage, voiceUsed }
-      });
+      await logVoice(context, "ai_tts_done", "AI text-to-speech completed.", "completed", {
+        detectedLanguage,
+        voiceUsed,
+        ttsMs: timings.ttsMs
+      }, timings.ttsMs);
     } catch (error) {
-      audioError = error instanceof Error ? error.message : "Voice generation failed.";
-      await logger.warn({
-        traceId: context.requestMeta.traceId,
-        requestId: context.requestMeta.requestId,
-        userId: context.profile.id,
-        userEmail: context.profile.email,
-        userRole: context.profile.role,
-        route: context.requestMeta.route,
-        module: "voice",
-        action: "elevenlabs_tts_failed",
-        message: "ElevenLabs TTS failed; returning text only.",
-        status: "failed",
-        metadata: { detectedLanguage },
-        error
-      });
+      timings.ttsMs = Math.round(performance.now() - totalStartedAt) - timings.transcriptionMs - timings.dataLookupMs - timings.llmMs;
+      audioError = friendlyVoiceError(detectedLanguage);
+      await logVoice(context, "ai_tts_failed", "AI text-to-speech failed; returning text only.", "failed", {
+        detectedLanguage,
+        ttsMs: Math.max(0, timings.ttsMs)
+      }, Math.max(0, timings.ttsMs), error);
     }
 
-    await logger.info({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
-      action: "ai_voice_query_completed",
-      message: "AI voice query completed.",
-      status: "completed",
-      metadata: { detectedLanguage, hasAudio: Boolean(audioBase64) }
-    });
+    timings.totalMs = Math.round(performance.now() - totalStartedAt);
+    await logVoice(context, "ai_voice_total_done", "AI voice request completed.", "completed", {
+      detectedLanguage,
+      hasAudio: Boolean(audioBase64),
+      tool: answer.tool,
+      timings
+    }, timings.totalMs);
 
     return NextResponse.json({
       transcript,
-      answerText: answer.answer,
+      answerText: answer.answerText,
+      speechText: answer.speechText,
       intent: answer.intent,
+      tool: answer.tool,
+      toolResult: answer.toolResult,
       detectedLanguage,
       duration,
       voiceUsed,
       audioBase64,
       audioMimeType,
       audioError,
+      timings,
       traceId: context.requestMeta.traceId
     });
   } catch (error) {
-    await logger.warn({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
-      action: "ai_voice_query_failed",
-      message: "AI voice query failed.",
-      status: "failed",
-      error
-    });
+    timings.totalMs = Math.round(performance.now() - totalStartedAt);
+    await logVoice(context, "ai_voice_failed", "AI voice request failed.", "failed", { timings }, timings.totalMs, error);
 
     if (error instanceof VoiceInputError || error instanceof VoiceConfigError || error instanceof AssistantConfigError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      return NextResponse.json({ error: error.message, timings }, { status: error.status });
     }
-    return NextResponse.json({ error: "Voice assistant failed. Please try again." }, { status: 502 });
+    return NextResponse.json({ error: "Voice assistant failed. Please try again.", timings }, { status: 502 });
   }
 }

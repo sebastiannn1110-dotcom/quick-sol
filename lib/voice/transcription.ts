@@ -1,5 +1,5 @@
 import OpenAI, { toFile } from "openai";
-import type { AssistantLanguage } from "@/lib/ai/assistantCore";
+import { detectAssistantLanguage, normalizeAssistantLanguage, type AssistantLanguage } from "@/lib/ai/language-detection";
 
 const ALLOWED_AUDIO_TYPES = new Set([
   "audio/webm",
@@ -43,25 +43,11 @@ export function getVoiceMaxAudioBytes() {
 }
 
 export function normalizeLanguage(language: unknown): AssistantLanguage {
-  if (language === "zh" || language === "zh-CN" || language === "chinese") return "zh";
-  if (language === "en" || language === "en-US" || language === "english") return "en";
-  if (language === "es" || language === "es-ES" || language === "spanish") return "es";
-  return "es";
+  return normalizeAssistantLanguage(language);
 }
 
 export function detectLanguageFromTranscript(text: string): AssistantLanguage {
-  if (/[\u4e00-\u9fff]/.test(text)) return "zh";
-
-  const normalized = text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-
-  const spanishHints = /\b(el|la|los|las|que|como|ultimo|subido|archivo|proveedor|cliente|errores|filas|muestrame|busca)\b/;
-  const englishHints = /\b(the|last|file|upload|show|find|supplier|customer|errors|rows|how|what)\b/;
-  if (spanishHints.test(normalized)) return "es";
-  if (englishHints.test(normalized)) return "en";
-  return "es";
+  return detectAssistantLanguage(text);
 }
 
 export function normalizeAudioMimeType(type: string) {

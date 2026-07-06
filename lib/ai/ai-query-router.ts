@@ -25,21 +25,21 @@ function normalized(question: string) {
 }
 
 function extractMpn(question: string) {
-  const explicit = question.match(/(?:mpn|part number|p\/n)\s*(?:es|:|=|de)?\s*([A-Za-z0-9._/-]{3,80})/i)?.[1];
+  const explicit = question.match(/(?:mpn|part number|p\/n|料号|型号)\s*(?:es|:|=|de|是)?\s*([A-Za-z0-9._/-]{3,80})/i)?.[1];
   if (explicit) return explicit;
   const candidates = question.match(/\b[A-Z0-9][A-Z0-9._/-]{4,30}\b/g);
   return candidates?.find((value) => /\d/.test(value)) ?? "";
 }
 
 function extractThreshold(question: string) {
-  const match = question.match(/(?:menor|debajo|less than|below)\s+(?:al?\s*)?(\d+(?:[.,]\d+)?)\s*%?/i);
+  const match = question.match(/(?:menor|debajo|less than|below|低于|小于)\s+(?:al?\s*)?(\d+(?:[.,]\d+)?)\s*%?/i);
   if (!match) return 0.15;
   const value = Number(match[1].replace(",", "."));
   return value > 1 ? value / 100 : value;
 }
 
 function extractPerson(question: string) {
-  return question.match(/(?:subio|subio el|empleado|employee|de|from)\s+([\p{L}][\p{L}\s]{1,50})/iu)?.[1]?.trim() ?? question;
+  return question.match(/(?:subio|subio el|empleado|employee|de|from|员工|用户)\s+([\p{L}][\p{L}\s]{1,50})/iu)?.[1]?.trim() ?? question;
 }
 
 export async function routeAssistantDatabaseQuery(context: AuthContext, question: string): Promise<AiRouterResult> {
@@ -64,13 +64,13 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
   const mpn = extractMpn(question);
   if (/mejor precio|best price|compare|comparar|比较|价格/.test(text) && mpn) toolResult = await getMpnPriceComparison(context, mpn);
   else if (/gp/.test(text) && /menor|bajo|debajo|less|low|低/.test(text)) toolResult = await getLowGpRecords(context, extractThreshold(question));
-  else if (/sin mpn|missing mpn|falta.*mpn|缺少.*mpn/.test(text)) toolResult = await getMissingMpnRecords(context);
-  else if (/mpn|part number|p\/n/.test(text) && mpn) toolResult = await getRecordsByMpn(context, mpn);
-  else if (/ultimo|ultima|last|recent|reciente|最新/.test(text) && /excel|upload|carga|archivo|文件/.test(text)) toolResult = await getLatestUpload(context);
+  else if (/sin mpn|missing mpn|falta.*mpn|缺少.*mpn|没有.*mpn/.test(text)) toolResult = await getMissingMpnRecords(context);
+  else if (/mpn|part number|p\/n|料号|型号/.test(text) && mpn) toolResult = await getRecordsByMpn(context, mpn);
+  else if (/ultimo|ultima|last|recent|reciente|最新/.test(text) && /excel|upload|carga|archivo|文件|上传/.test(text)) toolResult = await getLatestUpload(context);
   else if (/que subio|cargas de|uploads? (?:de|from)|employee|empleado|员工/.test(text)) toolResult = await getUploadsByUser(context, extractPerson(question));
   else if (/error|problema|fallo|commission|comision|错误|佣金/.test(text)) toolResult = await getImportErrors(context);
   else if (/resumen|summary|dashboard|panel|cuantos|cuantas|总览|汇总/.test(text)) toolResult = await getDashboardSummary(context);
-  else if (/empleado|employee|usuario|员工/.test(text)) toolResult = await getEmployeeSummary(context, extractPerson(question));
+  else if (/empleado|employee|usuario|员工|用户/.test(text)) toolResult = await getEmployeeSummary(context, extractPerson(question));
   else toolResult = await searchBusinessRecords(context, question);
 
   await logger.info({
@@ -84,7 +84,7 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
     message: "Controlled AI database tool completed.",
     status: "completed",
     durationMs: Math.round(performance.now() - startedAt),
-    metadata: { question: question.slice(0, 500), tool: toolResult.tool, summary: toolResult.summary, empty: toolResult.empty }
+    metadata: { question: question.slice(0, 500), tool: toolResult.tool, scope: toolResult.scope, summary: toolResult.summary, empty: toolResult.empty }
   });
 
   return { permissionDenied: false, toolResult };

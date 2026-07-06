@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "voice_transcription_started",
+      action: "ai_voice_transcription_started",
       message: "Voice transcription started.",
       status: "started",
       metadata: { fileSize: audio.size, fileType: audio.type }
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "voice_transcription_completed",
+      action: "ai_voice_transcription_done",
       message: "Voice transcription completed.",
       status: "completed",
       metadata: { detectedLanguage: result.detectedLanguage, duration: result.duration }
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "voice_transcription_failed",
+      action: "ai_voice_failed",
       message: "Voice transcription failed.",
       status: "failed",
       error

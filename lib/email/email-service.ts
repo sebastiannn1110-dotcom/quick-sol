@@ -37,6 +37,11 @@ function compactText(html: string) {
     .trim();
 }
 
+function senderDomainFromAddress(address: string) {
+  const match = address.match(/<[^@\s<>]+@([^>\s]+)>/) ?? address.match(/[^@\s<>]+@([^>\s<>]+)/);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
 export function getEmailProvider(): EmailProvider {
   if (process.env.ENABLE_EMAIL_ALERTS === "false") return "disabled";
   if (process.env.RESEND_API_KEY) return "resend";
@@ -51,6 +56,7 @@ export function getEmailFromAddress() {
 export function getEmailProviderDiagnostics(): EmailProviderDiagnostics {
   const provider = getEmailProvider();
   const emailFrom = getEmailFromAddress();
+  const senderDomain = senderDomainFromAddress(emailFrom);
   const hasResendApiKey = Boolean(process.env.RESEND_API_KEY);
   const hasSmtpConfig = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
   const warnings: string[] = [];
@@ -59,6 +65,12 @@ export function getEmailProviderDiagnostics(): EmailProviderDiagnostics {
   if (provider === "disabled") warnings.push("Email provider disabled; no real email was sent.");
   if (provider === "resend" && emailFrom.includes("onboarding@resend.dev")) {
     warnings.push("Using onboarding@resend.dev may be limited. Verify a custom domain in Resend for production delivery.");
+  }
+  if (provider === "resend" && senderDomain === "tudominio.com") {
+    warnings.push("EMAIL_FROM uses the placeholder domain tudominio.com. Replace it with a verified Resend domain before sending real email.");
+  }
+  if ((provider === "resend" || provider === "smtp") && senderDomain?.endsWith(".local")) {
+    warnings.push("EMAIL_FROM/SMTP_FROM uses a local sender domain. Use a real verified sender domain for production delivery.");
   }
   if ((provider === "resend" || provider === "smtp") && !emailFrom.includes("@")) {
     warnings.push("EMAIL_FROM/SMTP_FROM does not look like a valid email sender.");

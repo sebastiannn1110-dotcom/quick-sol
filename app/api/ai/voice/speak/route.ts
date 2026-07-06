@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { normalizeSpeechResponse } from "@/lib/ai/response-normalizer";
 import { ElevenLabsConfigError, ElevenLabsSynthesisError, synthesizeSpeech } from "@/lib/voice/elevenlabs";
 import { normalizeLanguage } from "@/lib/voice/transcription";
 
@@ -29,6 +30,7 @@ export async function POST(request: Request) {
     const language = normalizeLanguage(body?.language);
     if (!text) return NextResponse.json({ error: "Text is required." }, { status: 400 });
 
+    const speechText = normalizeSpeechResponse(text);
     await logger.info({
       traceId: context.requestMeta.traceId,
       requestId: context.requestMeta.requestId,
@@ -37,13 +39,13 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "elevenlabs_tts_started",
+      action: "ai_tts_started",
       message: "ElevenLabs TTS started.",
       status: "started",
-      metadata: { detectedLanguage: language }
+      metadata: { detectedLanguage: language, textLength: speechText.length }
     });
 
-    const speech = await synthesizeSpeech({ text, language, traceId: context.requestMeta.traceId });
+    const speech = await synthesizeSpeech({ text: speechText, language, traceId: context.requestMeta.traceId });
 
     await logger.info({
       traceId: context.requestMeta.traceId,
@@ -53,7 +55,7 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "elevenlabs_tts_completed",
+      action: "ai_tts_done",
       message: "ElevenLabs TTS completed.",
       status: "completed",
       metadata: { detectedLanguage: language, voiceUsed: speech.voiceUsed }
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
       userRole: context.profile.role,
       route: context.requestMeta.route,
       module: "voice",
-      action: "elevenlabs_tts_failed",
+      action: "ai_tts_failed",
       message: "ElevenLabs TTS failed.",
       status: "failed",
       error
