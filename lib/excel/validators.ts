@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { SECURITY_LIMITS } from "@/lib/security/env";
 
-const ALLOWED_EXTENSIONS = [".xlsx", ".xls", ".csv"];
+const ALLOWED_EXTENSIONS = [".xlsx", ".csv"];
 const BLOCKED_EXTENSIONS = [".xlsm", ".exe", ".bat", ".cmd", ".js", ".ps1", ".vbs", ".scr"];
 const ALLOWED_MIME_TYPES = new Set([
   "text/csv",
@@ -76,9 +76,33 @@ export function validateUploadFile(file: File) {
     errors.push("Macro, script or executable files are not allowed.");
   }
   if (!ALLOWED_EXTENSIONS.includes(extension)) {
-    errors.push("Only .xlsx, .xls or .csv files are allowed.");
+    errors.push("Only .xlsx or .csv files are allowed for streaming imports.");
   }
   if (file.type && !ALLOWED_MIME_TYPES.has(file.type)) {
+    errors.push("File MIME type is not allowed for Excel/CSV imports.");
+  }
+
+  return errors;
+}
+
+export function validateUploadMetadata(input: { fileName: string; fileSize: number; fileType?: string | null }) {
+  const extension = getFileExtension(input.fileName);
+  const errors: string[] = [];
+
+  if (!input.fileName.trim()) errors.push("File name is required.");
+  if (!input.fileSize) errors.push("File is empty.");
+  if (input.fileSize > SECURITY_LIMITS.maxUploadSizeBytes) {
+    errors.push(
+      `File exceeds the ${Math.round(SECURITY_LIMITS.maxUploadSizeBytes / 1024 / 1024)} MB limit.`
+    );
+  }
+  if (BLOCKED_EXTENSIONS.includes(extension)) {
+    errors.push("Macro, script or executable files are not allowed.");
+  }
+  if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    errors.push("Only .xlsx or .csv files are allowed for streaming imports.");
+  }
+  if (input.fileType && !ALLOWED_MIME_TYPES.has(input.fileType)) {
     errors.push("File MIME type is not allowed for Excel/CSV imports.");
   }
 

@@ -12,6 +12,8 @@ Latest correction report is documented in [CHANGELOG_QUIKSOL_CORRECTIONS.md](CHA
 
 Commercial valuation and full product scope are documented in [README_VALORACION_PRODUCTO.md](README_VALORACION_PRODUCTO.md).
 
+Large Excel/CSV uploads now use direct-to-storage upload plus a background worker. See [Large Upload Background Imports](docs/LARGE_UPLOAD_BACKGROUND_IMPORTS.md).
+
 ## Enterprise MVP
 
 - [Architecture review](docs/ENTERPRISE_MVP_ARCHITECTURE_REVIEW.md)

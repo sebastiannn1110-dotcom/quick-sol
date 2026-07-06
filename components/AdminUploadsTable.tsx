@@ -47,10 +47,14 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
 
   const translateStatus = (status: string) => {
     if (status === "pending") return t("history.status.pending");
+    if (status === "pending_upload") return t("history.status.pendingUpload");
     if (status === "uploading") return t("history.status.uploading");
+    if (status === "uploaded") return t("history.status.uploaded");
+    if (status === "queued") return t("history.status.queued");
     if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
     if (status === "failed") return t("history.status.failed");
+    if (status === "cancelled") return t("history.status.cancelled");
     if (status === "archived") return t("history.status.archived");
     return status;
   };
@@ -111,6 +115,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">Email</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.category")}</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.status")}</th>
+                <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.progress")}</th>
                 <th className="px-4 py-3 text-right font-semibold text-slate-600">{t("history.rows")}</th>
                 <th className="px-4 py-3 text-right font-semibold text-slate-600">{t("history.errors")}</th>
                 <th className="px-4 py-3 text-right font-semibold text-slate-600">Quality</th>
@@ -121,6 +126,11 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
             <tbody className="divide-y divide-slate-100">
               {uploads.map((upload) => {
                 const href = upload.stored_file_path ? `/api/admin/uploads/${upload.id}/download` : null;
+                const progress = upload.status === "completed"
+                  ? 100
+                  : upload.status === "pending_upload" || upload.status === "uploaded"
+                    ? upload.upload_progress_percent ?? 0
+                    : upload.processing_progress_percent ?? 0;
                 return (
                   <tr key={upload.id}>
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-950">{upload.original_file_name}</td>
@@ -132,8 +142,16 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                     <td className="whitespace-nowrap px-4 py-3">
                       <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{translateStatus(upload.status)}</span>
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.valid_rows}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.error_count}</td>
+                    <td className="min-w-40 px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-md bg-slate-200">
+                          <div className="h-full bg-brand-600" style={{ width: `${progress}%` }} />
+                        </div>
+                        <span className="text-xs font-medium text-slate-600">{progress}%</span>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.processed_rows ?? upload.valid_rows}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.failed_rows ?? upload.error_count}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.data_quality_score ?? "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{new Date(upload.created_at).toLocaleString(locale)}</td>
                     <td className="min-w-[360px] px-4 py-3">
@@ -166,7 +184,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
               })}
               {!uploads.length ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-slate-500" colSpan={10}>
+                  <td className="px-4 py-8 text-center text-slate-500" colSpan={11}>
                     {t("history.empty")}
                   </td>
                 </tr>

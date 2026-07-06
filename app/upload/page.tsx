@@ -39,6 +39,7 @@ export default function UploadPage() {
       </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
         <UploadExcelCard
+          onStatusChange={loadUploads}
           onUploaded={(uploadResult) => {
             setResult({
               detectedCategory: uploadResult.detectedCategory,

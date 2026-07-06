@@ -25,11 +25,11 @@ function employeeOf(upload: UploadLike) {
 }
 
 function rowsOf(upload: UploadLike) {
-  return isBatch(upload) ? upload.valid_rows : upload.validRows;
+  return isBatch(upload) ? upload.processed_rows ?? upload.valid_rows : upload.validRows;
 }
 
 function errorsOf(upload: UploadLike) {
-  return isBatch(upload) ? upload.error_count : upload.invalidRows;
+  return isBatch(upload) ? upload.failed_rows ?? upload.error_count : upload.invalidRows;
 }
 
 function dateOf(upload: UploadLike) {
@@ -38,6 +38,13 @@ function dateOf(upload: UploadLike) {
 
 function statusOf(upload: UploadLike) {
   return isBatch(upload) ? upload.status : "completed";
+}
+
+function progressOf(upload: UploadLike) {
+  if (!isBatch(upload)) return 100;
+  if (upload.status === "completed") return 100;
+  if (upload.status === "pending_upload" || upload.status === "uploaded") return upload.upload_progress_percent ?? 0;
+  return upload.processing_progress_percent ?? 0;
 }
 
 function downloadHref(upload: UploadLike) {
@@ -49,10 +56,14 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
   const { t, locale } = useLanguage();
   const translateStatus = (status: string) => {
     if (status === "pending") return t("history.status.pending");
+    if (status === "pending_upload") return t("history.status.pendingUpload");
     if (status === "uploading") return t("history.status.uploading");
+    if (status === "uploaded") return t("history.status.uploaded");
+    if (status === "queued") return t("history.status.queued");
     if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
     if (status === "failed") return t("history.status.failed");
+    if (status === "cancelled") return t("history.status.cancelled");
     if (status === "archived") return t("history.status.archived");
     return status;
   };
@@ -70,6 +81,7 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.uploadedBy")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.category")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.status")}</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.progress")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.rows")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.errors")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("history.uploaded")}</th>
@@ -79,6 +91,7 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
           <tbody className="divide-y divide-slate-100 bg-white">
             {uploads.map((upload) => {
               const href = downloadHref(upload);
+              const progress = progressOf(upload);
               return (
                 <tr key={upload.id}>
                   <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
@@ -92,6 +105,14 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
                     <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
                       {translateStatus(statusOf(upload))}
                     </span>
+                  </td>
+                  <td className="min-w-40 px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-24 overflow-hidden rounded-md bg-slate-200">
+                        <div className="h-full bg-brand-600" style={{ width: `${progress}%` }} />
+                      </div>
+                      <span className="text-xs font-medium text-slate-600">{progress}%</span>
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{rowsOf(upload)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{errorsOf(upload)}</td>
@@ -119,7 +140,7 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
             })}
             {!uploads.length ? (
               <tr>
-                <td className="px-4 py-8 text-center text-slate-500" colSpan={showDownload ? 8 : 7}>
+                <td className="px-4 py-8 text-center text-slate-500" colSpan={showDownload ? 9 : 8}>
                   {t("history.empty")}
                 </td>
               </tr>

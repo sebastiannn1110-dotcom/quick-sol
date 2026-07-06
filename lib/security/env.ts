@@ -47,7 +47,12 @@ export function getNumberEnv(name: string, fallback: number) {
 
 export const SECURITY_LIMITS = {
   maxUploadSizeBytes: getNumberEnv("MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024,
-  maxExcelRows: getNumberEnv("MAX_EXCEL_ROWS", 20000),
+  uploadChunkSizeBytes: getNumberEnv("UPLOAD_CHUNK_SIZE_MB", 8) * 1024 * 1024,
+  uploadTimeoutSeconds: getNumberEnv("UPLOAD_TIMEOUT_SECONDS", 60),
+  maxExcelRows: getNumberEnv("MAX_ROWS_PER_FILE", getNumberEnv("MAX_EXCEL_ROWS", 20000)),
   maxExcelSheets: getNumberEnv("MAX_EXCEL_SHEETS", 30),
-  uploadChunkSize: getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500)
+  uploadChunkSize: getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500),
+  importBatchSize: getNumberEnv("IMPORT_BATCH_SIZE", getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500)),
+  workerConcurrency: getNumberEnv("WORKER_CONCURRENCY", 1),
+  workerPollIntervalMs: getNumberEnv("WORKER_POLL_INTERVAL_MS", 5000)
 };

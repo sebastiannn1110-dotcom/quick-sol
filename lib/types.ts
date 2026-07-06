@@ -41,10 +41,14 @@ export type UploadCategory = (typeof SELECTABLE_UPLOAD_CATEGORIES)[number];
 export type UserRole = "admin" | "manager" | "employee";
 export type UploadStatus =
   | "pending"
+  | "pending_upload"
   | "uploading"
+  | "uploaded"
+  | "queued"
   | "processing"
   | "completed"
   | "failed"
+  | "cancelled"
   | "archived";
 export type ImportSeverity = "low" | "medium" | "high" | "critical";
 
@@ -92,11 +96,51 @@ export interface UploadBatch {
   invalid_rows: number;
   error_count: number;
   data_quality_score: number | null;
+  storage_bucket?: string | null;
+  upload_progress_percent?: number | null;
+  processing_progress_percent?: number | null;
+  processed_rows?: number | null;
+  successful_rows?: number | null;
+  failed_rows?: number | null;
+  error_message?: string | null;
+  queued_at?: string | null;
+  processing_started_at?: string | null;
+  cancelled_at?: string | null;
+  idempotency_key?: string | null;
   notes: string | null;
   created_at: string;
   completed_at: string | null;
   archived_at: string | null;
   profiles?: Pick<Profile, "full_name" | "email" | "department" | "region" | "role"> | null;
+}
+
+export interface ImportJob {
+  id: string;
+  upload_batch_id: string;
+  uploaded_by: string;
+  status: Exclude<UploadStatus, "pending" | "uploading" | "archived">;
+  storage_bucket: string;
+  storage_path: string;
+  original_file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  selected_category: string | null;
+  department: string | null;
+  region: string | null;
+  notes: string | null;
+  total_rows: number;
+  processed_rows: number;
+  successful_rows: number;
+  failed_rows: number;
+  progress_percent: number;
+  error_message: string | null;
+  attempts: number;
+  max_attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UploadSheet {
