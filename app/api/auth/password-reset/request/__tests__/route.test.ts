@@ -28,6 +28,43 @@ function createMissingPasswordResetTableService() {
   return { from: vi.fn(() => builder) };
 }
 
+function createPasswordResetService(profile: { id: string; email: string; full_name: string; is_active: boolean } | null) {
+  const insert = vi.fn();
+  const tables: string[] = [];
+  const codeBuilder = {
+    error: null,
+    select: vi.fn(() => codeBuilder),
+    ilike: vi.fn(() => codeBuilder),
+    gte: vi.fn(() => codeBuilder),
+    is: vi.fn(() => codeBuilder),
+    limit: vi.fn(() => codeBuilder),
+    maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+    update: vi.fn(() => codeBuilder),
+    eq: vi.fn(() => codeBuilder),
+    insert: vi.fn((payload) => {
+      insert(payload);
+      return codeBuilder;
+    }),
+    single: vi.fn(async () => ({ data: { id: "reset-row-1" }, error: null }))
+  };
+  const profileBuilder = {
+    select: vi.fn(() => profileBuilder),
+    ilike: vi.fn(() => profileBuilder),
+    eq: vi.fn(() => profileBuilder),
+    limit: vi.fn(() => profileBuilder),
+    maybeSingle: vi.fn(async () => ({ data: profile, error: null }))
+  };
+
+  return {
+    insert,
+    from: vi.fn((table: string) => {
+      tables.push(table);
+      return table === "profiles" ? profileBuilder : codeBuilder;
+    }),
+    tables
+  };
+}
+
 describe("POST /api/auth/password-reset/request", () => {
   const logger = createLoggerMock();
   const checkPersistentRateLimit = vi.fn();
@@ -45,11 +82,22 @@ describe("POST /api/auth/password-reset/request", () => {
     });
     sendEmail.mockResolvedValue({ provider: "mock", status: "skipped" });
     createSupabaseServiceRoleClient.mockReturnValue(createMissingPasswordResetTableService());
+    process.env.PASSWORD_RESET_SECRET = "unit-test-password-reset-secret";
 
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
     vi.doMock("@/lib/security/persistent-rate-limit", () => ({ checkPersistentRateLimit }));
     vi.doMock("@/lib/supabase/server", () => ({ createSupabaseServiceRoleClient }));
-    vi.doMock("@/lib/email/email-service", () => ({ sendEmail }));
+    vi.doMock("@/lib/email/email-service", () => ({
+      sendEmail,
+      getEmailProviderDiagnostics: vi.fn(() => ({
+        provider: "mock",
+        hasResendApiKey: false,
+        hasSmtpConfig: false,
+        emailFrom: "Quiksol Alerts <alerts@quiksol.local>",
+        canSendRealEmail: false,
+        warnings: ["Email provider is mock; no real email was sent."]
+      }))
+    }));
   });
 
   it("returns validation JSON for invalid email", async () => {
@@ -81,5 +129,82 @@ describe("POST /api/auth/password-reset/request", () => {
       metadata: expect.objectContaining({ requiredMigration: "20260629000000_enterprise_mvp.sql" })
     }));
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("creates a reset code and calls email service for an existing user", async () => {
+    const service = createPasswordResetService({
+      id: "00000000-0000-4000-8000-000000000001",
+      email: "user@example.com",
+      full_name: "User",
+      is_active: true
+    });
+    createSupabaseServiceRoleClient.mockReturnValue(service);
+    sendEmail.mockResolvedValue({ provider: "resend", status: "sent", messageId: "email-1" });
+
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "user@example.com" })
+    }));
+
+    await expect(response.json()).resolves.toEqual({
+      message: "Si el correo esta registrado, enviaremos un codigo de recuperacion.",
+      cooldownSeconds: expect.any(Number)
+    });
+    expect(response.status).toBe(202);
+    expect(service.insert).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: "00000000-0000-4000-8000-000000000001",
+      email: "user@example.com"
+    }));
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: ["user@example.com"],
+      subject: "[Quiksol] Codigo de recuperacion de contrasena"
+    }));
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "password_reset_code_created" }));
+  });
+
+  it("returns a generic response and does not create a code for an unknown user", async () => {
+    const service = createPasswordResetService(null);
+    createSupabaseServiceRoleClient.mockReturnValue(service);
+
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "missing@example.com" })
+    }));
+
+    expect(response.status).toBe(202);
+    expect(service.insert).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "password_reset_user_not_found" }));
+  });
+
+  it("logs when the email provider does not send a real message", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const service = createPasswordResetService({
+      id: "00000000-0000-4000-8000-000000000001",
+      email: "user@example.com",
+      full_name: "User",
+      is_active: true
+    });
+    createSupabaseServiceRoleClient.mockReturnValue(service);
+    sendEmail.mockResolvedValue({ provider: "mock", status: "skipped", errorMessage: "Email provider is mock; no real email was sent." });
+
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "user@example.com" })
+    }));
+
+    expect(response.status).toBe(202);
+    expect(consoleError).toHaveBeenCalledWith("password_reset_email_failed", expect.objectContaining({
+      provider: "mock",
+      status: "skipped",
+      errorMessage: "Email provider is mock; no real email was sent."
+    }));
+    consoleError.mockRestore();
   });
 });

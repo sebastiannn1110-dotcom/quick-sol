@@ -20,6 +20,15 @@ export interface SendEmailResult {
   errorMessage?: string;
 }
 
+export interface EmailProviderDiagnostics {
+  provider: EmailProvider;
+  hasResendApiKey: boolean;
+  hasSmtpConfig: boolean;
+  emailFrom: string;
+  canSendRealEmail: boolean;
+  warnings: string[];
+}
+
 function compactText(html: string) {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
@@ -37,6 +46,32 @@ export function getEmailProvider(): EmailProvider {
 
 export function getEmailFromAddress() {
   return process.env.EMAIL_FROM || process.env.SMTP_FROM || "Quiksol Alerts <alerts@quiksol.local>";
+}
+
+export function getEmailProviderDiagnostics(): EmailProviderDiagnostics {
+  const provider = getEmailProvider();
+  const emailFrom = getEmailFromAddress();
+  const hasResendApiKey = Boolean(process.env.RESEND_API_KEY);
+  const hasSmtpConfig = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const warnings: string[] = [];
+
+  if (provider === "mock") warnings.push("Email provider is mock; no real email was sent.");
+  if (provider === "disabled") warnings.push("Email provider disabled; no real email was sent.");
+  if (provider === "resend" && emailFrom.includes("onboarding@resend.dev")) {
+    warnings.push("Using onboarding@resend.dev may be limited. Verify a custom domain in Resend for production delivery.");
+  }
+  if ((provider === "resend" || provider === "smtp") && !emailFrom.includes("@")) {
+    warnings.push("EMAIL_FROM/SMTP_FROM does not look like a valid email sender.");
+  }
+
+  return {
+    provider,
+    hasResendApiKey,
+    hasSmtpConfig,
+    emailFrom,
+    canSendRealEmail: provider === "resend" || provider === "smtp",
+    warnings
+  };
 }
 
 async function sendWithResend(input: SendEmailInput): Promise<SendEmailResult> {
@@ -105,21 +140,47 @@ async function sendWithSmtp(input: SendEmailInput): Promise<SendEmailResult> {
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const provider = getEmailProvider();
-  if (provider === "disabled") return { provider, status: "skipped", errorMessage: "Email alerts are disabled." };
-  if (!input.to.length) return { provider, status: "skipped", errorMessage: "No email recipients were provided." };
+  const diagnostics = getEmailProviderDiagnostics();
+  console.info("email_provider_selected", {
+    provider,
+    emailFrom: diagnostics.emailFrom,
+    recipientCount: input.to.length,
+    canSendRealEmail: diagnostics.canSendRealEmail,
+    warnings: diagnostics.warnings
+  });
+  if (provider === "disabled") {
+    console.warn("email_send_skipped", { provider, reason: "Email provider disabled; no real email was sent." });
+    return { provider, status: "skipped", errorMessage: "Email provider disabled; no real email was sent." };
+  }
+  if (!input.to.length) {
+    console.warn("email_send_skipped", { provider, reason: "No email recipients were provided." });
+    return { provider, status: "skipped", errorMessage: "No email recipients were provided." };
+  }
   if (provider === "mock") {
+    console.warn("email_send_skipped", { provider, reason: "Email provider is mock; no real email was sent." });
     return {
       provider,
       status: "skipped",
       messageId: `mock-${Date.now()}`,
-      errorMessage: "No email provider configured; email was logged as mock."
+      errorMessage: "Email provider is mock; no real email was sent."
     };
   }
 
   try {
-    if (provider === "resend") return await sendWithResend(input);
-    return await sendWithSmtp(input);
+    console.info("email_send_started", { provider, emailFrom: diagnostics.emailFrom, recipientCount: input.to.length });
+    const result = provider === "resend" ? await sendWithResend(input) : await sendWithSmtp(input);
+    if (result.status === "sent") {
+      console.info("email_sent", { provider, messageId: result.messageId, recipientCount: input.to.length });
+    } else {
+      console.error("email_failed", { provider, errorMessage: result.errorMessage, recipientCount: input.to.length });
+    }
+    return result;
   } catch (error) {
+    console.error("email_failed", {
+      provider,
+      errorMessage: error instanceof Error ? error.message : "Email provider failed.",
+      recipientCount: input.to.length
+    });
     return {
       provider,
       status: "failed",

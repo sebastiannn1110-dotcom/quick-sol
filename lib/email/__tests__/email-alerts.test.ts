@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { getEmailProvider, sendEmail } from "@/lib/email/email-service";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { getEmailProvider, getEmailProviderDiagnostics, sendEmail } from "@/lib/email/email-service";
 import { shouldSendAlert } from "@/lib/email/evaluate-alert-rules";
 
 describe("email alerts", () => {
@@ -23,6 +23,42 @@ describe("email alerts", () => {
       html: "<p>Hello</p>"
     });
     expect(result.status).toBe("skipped");
+    expect(result.errorMessage).toContain("mock");
+  });
+
+  it("reports resend diagnostics without exposing secrets", () => {
+    process.env.RESEND_API_KEY = "secret-test-key";
+    process.env.EMAIL_FROM = "Quiksol Alerts <onboarding@resend.dev>";
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    delete process.env.ENABLE_EMAIL_ALERTS;
+
+    const diagnostics = getEmailProviderDiagnostics();
+    expect(diagnostics.provider).toBe("resend");
+    expect(diagnostics.hasResendApiKey).toBe(true);
+    expect(diagnostics.emailFrom).toBe("Quiksol Alerts <onboarding@resend.dev>");
+    expect(diagnostics.warnings.join(" ")).toContain("onboarding@resend.dev");
+    expect(JSON.stringify(diagnostics)).not.toContain("secret-test-key");
+  });
+
+  it("logs real resend errors", async () => {
+    process.env.RESEND_API_KEY = "secret-test-key";
+    process.env.EMAIL_FROM = "Quiksol Alerts <onboarding@resend.dev>";
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      name: "validation_error",
+      message: "You can only send testing emails to your own email address"
+    }), { status: 403 }));
+
+    const result = await sendEmail({
+      to: ["person@example.com"],
+      subject: "Test",
+      html: "<p>Hello</p>"
+    });
+    expect(result.provider).toBe("resend");
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("testing emails");
+    vi.restoreAllMocks();
   });
 
   it("sends upload_has_many_errors when threshold is exceeded", () => {

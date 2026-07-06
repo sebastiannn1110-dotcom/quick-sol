@@ -4,17 +4,25 @@ import { adminMessageHtml } from "@/lib/email/content";
 import { sendEmail, type SendEmailResult } from "@/lib/email/email-service";
 import type { EmailAttachmentPayload } from "@/lib/email/attachments";
 
-export const adminEmailSendSchema = z.object({
+export const adminEmailSendSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const payload = value as Record<string, unknown>;
+  return {
+    ...payload,
+    manualEmails: payload.manualEmails ?? payload.recipients
+  };
+}, z.object({
   subject: z.string().trim().min(3).max(180),
   body: z.string().trim().min(2).max(10_000),
   userIds: z.array(z.string().uuid()).max(250).default([]),
   manualEmails: z.array(z.string().email()).max(250).default([]),
+  recipients: z.array(z.string().email()).max(250).optional(),
   allEmployees: z.boolean().default(false),
   roles: z.array(z.enum(["admin", "manager", "employee"])).max(3).default([]),
   department: z.string().trim().max(100).optional().nullable(),
   region: z.string().trim().max(100).optional().nullable(),
   templateId: z.string().trim().max(80).optional().nullable()
-}).refine(
+})).refine(
   (value) => value.allEmployees || value.userIds.length > 0 || value.manualEmails.length > 0 || value.roles.length > 0 || Boolean(value.department) || Boolean(value.region),
   { message: "Selecciona al menos un destinatario." }
 );

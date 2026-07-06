@@ -18,9 +18,33 @@ const clientLogSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 
+const PUBLIC_LOG_ROUTES = new Set(["/forgot-password", "/reset-password", "/login"]);
+
 export async function POST(request: Request) {
+  const rawPayload = await request.json().catch(() => null);
+  const parsed = clientLogSchema.safeParse(rawPayload);
+  const requestedRoute = parsed.success ? parsed.data.route : undefined;
   const context = await getAuthContext(request);
-  if (context instanceof NextResponse) return context;
+  if (context instanceof NextResponse) {
+    if (parsed.success && requestedRoute && PUBLIC_LOG_ROUTES.has(requestedRoute)) {
+      const baseContext = getLoggerContextFromRequest(request);
+      const metadata = sanitizeForLog({
+        ...((parsed.data.metadata ?? {}) as Record<string, unknown>),
+        publicLog: true
+      }) as Record<string, unknown>;
+      await logger[parsed.data.level]({
+        ...baseContext,
+        route: requestedRoute,
+        module: "frontend",
+        action: parsed.data.action,
+        message: parsed.data.message,
+        status: "completed",
+        metadata
+      });
+      return new NextResponse(null, { status: 204 });
+    }
+    return context;
+  }
 
   const rate = checkRateLimit({
     key: `client-log:${context.profile.id}`,
@@ -43,7 +67,6 @@ export async function POST(request: Request) {
     });
     return rateLimitResponse(rate.resetAt);
   }
-  const parsed = clientLogSchema.safeParse(await request.json());
   if (!parsed.success) {
     await logger.warn({
       ...baseContext,

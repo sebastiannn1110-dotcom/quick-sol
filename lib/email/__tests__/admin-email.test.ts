@@ -23,6 +23,17 @@ describe("admin email center", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts simple console payload recipients alias", () => {
+    const result = adminEmailSendSchema.safeParse({
+      recipients: ["sebastiannn1110@gmail.com"],
+      subject: "Prueba Quiksol Email Center",
+      body: "Correo de prueba enviado desde consola.",
+      attachments: []
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.manualEmails).toEqual(["sebastiannn1110@gmail.com"]);
+  });
+
   it("validates safe email attachments", () => {
     const file = new File(["hello"], "report.csv", { type: "text/csv" });
     const blocked = new File(["x"], "script.exe", { type: "application/x-msdownload" });

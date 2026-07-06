@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getLoggerContextFromRequest } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
-import { sendEmail } from "@/lib/email/email-service";
+import { getEmailProviderDiagnostics, sendEmail } from "@/lib/email/email-service";
 import { requestIp, rateLimitResponse } from "@/lib/security/rateLimit";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { isMissingSchemaError, missingMigrationMessage, schemaErrorMetadata } from "@/lib/supabase/schema-errors";
@@ -23,6 +23,16 @@ const requestSchema = z.object({ email: z.string().trim().email().max(254) });
 const GENERIC_MESSAGE = "Si el correo esta registrado, enviaremos un codigo de recuperacion.";
 const REQUIRED_MIGRATION = "20260629000000_enterprise_mvp.sql";
 
+function maskEmail(email: string) {
+  const [name, domain] = email.split("@");
+  if (!name || !domain) return "invalid-email";
+  return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function resetConsoleLog(level: "info" | "warn" | "error", action: string, metadata: Record<string, unknown>) {
+  console[level](action, metadata);
+}
+
 function resetEmailHtml(code: string, expiresAt: Date) {
   return `
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.6;max-width:560px">
@@ -41,6 +51,11 @@ export async function POST(request: Request) {
   const route = "/api/auth/password-reset/request";
   const ipAddress = requestIp(request);
   const userAgent = request.headers.get("user-agent") ?? "unknown";
+  resetConsoleLog("info", "password_reset_request_started", {
+    traceId: loggerContext.traceId,
+    route,
+    ipAddress
+  });
   await logger.info({
     ...loggerContext,
     route,
@@ -55,6 +70,10 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null);
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) {
+      resetConsoleLog("warn", "password_reset_request_validation_failed", {
+        traceId: loggerContext.traceId,
+        issues: parsed.error.flatten()
+      });
       await logger.warn({
         ...loggerContext,
         route,
@@ -69,11 +88,20 @@ export async function POST(request: Request) {
 
     const email = normalizeResetEmail(parsed.data.email);
     const emailDomain = email.split("@")[1] ?? "unknown";
+    resetConsoleLog("info", "password_reset_email_normalized", {
+      traceId: loggerContext.traceId,
+      email: maskEmail(email),
+      emailDomain
+    });
     const [ipRate, emailRate] = await Promise.all([
       checkPersistentRateLimit({ action: "password_reset_request_ip", identifier: ipAddress, limit: 8, windowSeconds: 15 * 60, blockSeconds: 15 * 60 }),
       checkPersistentRateLimit({ action: "password_reset_request_email", identifier: email, limit: 4, windowSeconds: 15 * 60, blockSeconds: 15 * 60 })
     ]);
     if (!ipRate.allowed) {
+      resetConsoleLog("warn", "password_reset_ip_rate_limited", {
+        traceId: loggerContext.traceId,
+        resetAt: ipRate.resetAt
+      });
       await logger.security({
         ...loggerContext,
         route,
@@ -86,6 +114,12 @@ export async function POST(request: Request) {
       return rateLimitResponse(ipRate.resetAt);
     }
     if (!emailRate.allowed) {
+      resetConsoleLog("warn", "password_reset_email_rate_limited", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(email),
+        emailDomain,
+        resetAt: emailRate.resetAt
+      });
       await logger.warn({
         ...loggerContext,
         route,
@@ -100,6 +134,7 @@ export async function POST(request: Request) {
 
     const service = createSupabaseServiceRoleClient();
     if (!service) {
+      resetConsoleLog("error", "password_reset_service_unconfigured", { traceId: loggerContext.traceId });
       await logger.error({
         ...loggerContext,
         route,
@@ -123,6 +158,11 @@ export async function POST(request: Request) {
       .maybeSingle();
     if (recentResult.error) {
       if (isMissingSchemaError(recentResult.error)) {
+        resetConsoleLog("error", "password_reset_schema_missing", {
+          traceId: loggerContext.traceId,
+          requiredMigration: REQUIRED_MIGRATION,
+          errorMessage: recentResult.error.message
+        });
         await logger.error({
           ...loggerContext,
           route,
@@ -138,6 +178,12 @@ export async function POST(request: Request) {
       throw recentResult.error;
     }
     if (recentResult.data) {
+      resetConsoleLog("info", "password_reset_cooldown_active", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(email),
+        emailDomain,
+        cooldownSeconds
+      });
       await logger.info({
         ...loggerContext,
         route,
@@ -158,6 +204,13 @@ export async function POST(request: Request) {
       .limit(1)
       .maybeSingle();
     if (profileResult.error) throw profileResult.error;
+    resetConsoleLog("info", "password_reset_user_lookup_done", {
+      traceId: loggerContext.traceId,
+      email: maskEmail(email),
+      emailDomain,
+      found: Boolean(profileResult.data),
+      activeOnly: true
+    });
 
     if (profileResult.data) {
       const profile = profileResult.data;
@@ -169,6 +222,12 @@ export async function POST(request: Request) {
         .eq("user_id", profile.id)
         .is("used_at", null);
       if (closeOpenCodesResult.error) {
+        resetConsoleLog("warn", "password_reset_previous_codes_close_failed", {
+          traceId: loggerContext.traceId,
+          email: maskEmail(email),
+          emailDomain,
+          errorMessage: closeOpenCodesResult.error.message
+        });
         await logger.warn({
           ...loggerContext,
           route,
@@ -196,6 +255,12 @@ export async function POST(request: Request) {
         .single();
 
       if (insertError || !resetRow) {
+        resetConsoleLog("error", "password_reset_code_insert_failed", {
+          traceId: loggerContext.traceId,
+          email: maskEmail(email),
+          emailDomain,
+          errorMessage: insertError?.message
+        });
         await logger.error({
           ...loggerContext,
           route,
@@ -209,10 +274,68 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "No se pudo preparar el codigo de recuperacion." }, { status: 500 });
       }
 
+      resetConsoleLog("info", "password_reset_code_created", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(email),
+        emailDomain,
+        resetId: resetRow.id,
+        expiresAt: expiresAt.toISOString()
+      });
+      await logger.info({
+        ...loggerContext,
+        route,
+        module: "auth",
+        action: "password_reset_code_created",
+        message: "Password reset code was created.",
+        status: "completed",
+        metadata: { email: maskEmail(email), emailDomain, resetId: resetRow.id, expiresAt: expiresAt.toISOString() }
+      });
+
+      const emailDiagnostics = getEmailProviderDiagnostics();
+      resetConsoleLog("info", "password_reset_email_provider_selected", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(email),
+        provider: emailDiagnostics.provider,
+        emailFrom: emailDiagnostics.emailFrom,
+        canSendRealEmail: emailDiagnostics.canSendRealEmail,
+        warnings: emailDiagnostics.warnings
+      });
+      await logger.info({
+        ...loggerContext,
+        route,
+        module: "auth",
+        action: "password_reset_email_provider_selected",
+        message: "Password reset email provider selected.",
+        status: "completed",
+        metadata: {
+          email: maskEmail(email),
+          emailDomain,
+          provider: emailDiagnostics.provider,
+          emailFrom: emailDiagnostics.emailFrom,
+          canSendRealEmail: emailDiagnostics.canSendRealEmail,
+          warnings: emailDiagnostics.warnings
+        }
+      });
+
+      resetConsoleLog("info", "password_reset_email_send_started", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(profile.email),
+        provider: emailDiagnostics.provider,
+        emailFrom: emailDiagnostics.emailFrom
+      });
       const result = await sendEmail({
         to: [profile.email],
         subject: "[Quiksol] Codigo de recuperacion de contrasena",
         html: resetEmailHtml(code, expiresAt)
+      });
+      resetConsoleLog(result.status === "sent" ? "info" : "error", result.status === "sent" ? "password_reset_email_sent" : "password_reset_email_failed", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(profile.email),
+        provider: result.provider,
+        status: result.status,
+        emailFrom: emailDiagnostics.emailFrom,
+        resetId: resetRow.id,
+        errorMessage: result.errorMessage
       });
       await logger.info({
         ...loggerContext,
@@ -230,11 +353,16 @@ export async function POST(request: Request) {
         }
       });
     } else {
+      resetConsoleLog("info", "password_reset_user_not_found", {
+        traceId: loggerContext.traceId,
+        email: maskEmail(email),
+        emailDomain
+      });
       await logger.info({
         ...loggerContext,
         route,
         module: "auth",
-        action: "password_reset_profile_not_found",
+        action: "password_reset_user_not_found",
         message: "Password reset request completed with generic response.",
         status: "completed",
         metadata: { emailDomain }
@@ -244,6 +372,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: GENERIC_MESSAGE, cooldownSeconds }, { status: 202 });
   } catch (error) {
     const missingSecret = error instanceof Error && error.message.includes("PASSWORD_RESET_SECRET");
+    resetConsoleLog("error", "password_reset_request_failed", {
+      traceId: loggerContext.traceId,
+      errorMessage: error instanceof Error ? error.message : "Unknown password reset error."
+    });
     await logger.error({
       ...loggerContext,
       route,
