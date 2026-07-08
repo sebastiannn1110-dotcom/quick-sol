@@ -45,6 +45,7 @@ export type UploadStatus =
   | "uploading"
   | "uploaded"
   | "queued"
+  | "retrying"
   | "processing"
   | "completed"
   | "failed"
@@ -107,6 +108,10 @@ export interface UploadBatch {
   processing_started_at?: string | null;
   cancelled_at?: string | null;
   idempotency_key?: string | null;
+  upload_strategy?: "standard" | "resumable" | null;
+  upload_speed_bps?: number | null;
+  upload_eta_seconds?: number | null;
+  worker_last_heartbeat_at?: string | null;
   notes: string | null;
   created_at: string;
   completed_at: string | null;
@@ -136,6 +141,15 @@ export interface ImportJob {
   error_message: string | null;
   attempts: number;
   max_attempts: number;
+  locked_by?: string | null;
+  locked_at?: string | null;
+  heartbeat_at?: string | null;
+  next_retry_at?: string | null;
+  last_error?: string | null;
+  worker_id?: string | null;
+  cancel_requested?: boolean | null;
+  upload_strategy?: "standard" | "resumable" | null;
+  duration_ms?: number | null;
   started_at: string | null;
   finished_at: string | null;
   cancelled_at: string | null;

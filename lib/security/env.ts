@@ -45,24 +45,59 @@ export function getNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+export function getOptionalNumberEnv(name: string) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 export function getRowsPerFileLimit() {
   const explicit = Number(process.env.MAX_ROWS_PER_FILE);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
 
   const legacy = Number(process.env.MAX_EXCEL_ROWS);
-  if (Number.isFinite(legacy) && legacy > 0 && legacy <= 1_000_000) return legacy;
+  if (Number.isFinite(legacy) && legacy > 0) return legacy;
 
   return 100_000;
 }
 
 export const SECURITY_LIMITS = {
-  maxUploadSizeBytes: getNumberEnv("MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024,
-  uploadChunkSizeBytes: getNumberEnv("UPLOAD_CHUNK_SIZE_MB", 8) * 1024 * 1024,
-  uploadTimeoutSeconds: getNumberEnv("UPLOAD_TIMEOUT_SECONDS", 60),
-  maxExcelRows: getRowsPerFileLimit(),
-  maxExcelSheets: getNumberEnv("MAX_EXCEL_SHEETS", 30),
-  uploadChunkSize: getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500),
-  importBatchSize: getNumberEnv("IMPORT_BATCH_SIZE", getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500)),
-  workerConcurrency: getNumberEnv("WORKER_CONCURRENCY", 1),
-  workerPollIntervalMs: getNumberEnv("WORKER_POLL_INTERVAL_MS", 5000)
+  get maxUploadSizeBytes() {
+    return getNumberEnv("MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024;
+  },
+  get uploadChunkSizeBytes() {
+    return getNumberEnv("UPLOAD_CHUNK_SIZE_MB", 8) * 1024 * 1024;
+  },
+  get uploadTimeoutSeconds() {
+    return getNumberEnv("UPLOAD_TIMEOUT_SECONDS", 60);
+  },
+  get resumableThresholdBytes() {
+    return getNumberEnv("LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB", 100) * 1024 * 1024;
+  },
+  get maxExcelRows() {
+    return getRowsPerFileLimit();
+  },
+  get maxExcelSheets() {
+    return getNumberEnv("MAX_EXCEL_SHEETS", 30);
+  },
+  get uploadChunkSize() {
+    return getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500);
+  },
+  get importBatchSize() {
+    return getNumberEnv("IMPORT_BATCH_SIZE", getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500));
+  },
+  get workerConcurrency() {
+    return getNumberEnv("WORKER_CONCURRENCY", 1);
+  },
+  get workerPollIntervalMs() {
+    return getNumberEnv("WORKER_POLL_INTERVAL_MS", 5000);
+  },
+  get workerStaleAfterMinutes() {
+    return getNumberEnv("WORKER_STALE_AFTER_MINUTES", 30);
+  },
+  get workerMaxAttempts() {
+    return getNumberEnv("WORKER_MAX_ATTEMPTS", 3);
+  },
+  get workerHeartbeatIntervalMs() {
+    return getNumberEnv("WORKER_HEARTBEAT_INTERVAL_MS", 15000);
+  }
 };

@@ -11,7 +11,10 @@
     "test": "vitest run",
     "worker:imports": "tsx scripts/import-worker.ts",
     "worker:imports:once": "tsx scripts/import-worker.ts --once",
+    "provision:admins": "tsx scripts/provision-admin-users.ts",
     "diagnose:uploads": "tsx scripts/diagnose-uploads.ts",
+    "diagnose:worker": "tsx scripts/diagnose-production-imports.ts --worker",
+    "diagnose:production-imports": "tsx scripts/diagnose-production-imports.ts",
     "test:large-imports": "tsx scripts/large-import-stress.ts"
   },
   "dependencies": {
@@ -21,6 +24,7 @@
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/tus-js-client": "^1.8.0",
     "autoprefixer": "^10.4.20",
     "csv-parse": "^7.0.1",
     "exceljs": "^4.4.0",
@@ -34,6 +38,7 @@
     "recharts": "^3.9.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.23.0",
+    "tus-js-client": "^4.3.1",
     "typescript": "^5.7.2",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"

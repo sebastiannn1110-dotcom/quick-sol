@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError } from "@/lib/errors/AppError";
-import { getSupabasePublishableKey, getSupabaseServiceRoleKey, getRowsPerFileLimit, SECURITY_LIMITS } from "@/lib/security/env";
+import { getOptionalNumberEnv, getSupabasePublishableKey, getSupabaseServiceRoleKey, getRowsPerFileLimit, SECURITY_LIMITS } from "@/lib/security/env";
 import type { LogContext } from "@/lib/logger/types";
 import { logger } from "@/lib/logger/logger";
 import { isMissingSchemaError, type SupabaseErrorLike } from "@/lib/supabase/schema-errors";
@@ -18,12 +18,18 @@ export interface UploadRuntimeDiagnostics {
   maxUploadSizeMb: number;
   maxRowsPerFile: number;
   maxExcelRowsEnv: number | null;
+  maxUploadSizeMbEnv: number | null;
   maxRowsPerFileEnv: number | null;
   maxExcelSheets: number;
+  resumableThresholdMb: number;
   importBatchSize: number;
+  insertChunkSize: number;
   uploadTempDir: string;
   workerConcurrency: number;
   workerPollIntervalMs: number;
+  workerStaleAfterMinutes: number;
+  workerMaxAttempts: number;
+  workerHeartbeatIntervalMs: number;
   hasSupabaseUrl: boolean;
   hasPublishableKey: boolean;
   hasServiceRoleKey: boolean;
@@ -32,8 +38,7 @@ export interface UploadRuntimeDiagnostics {
 }
 
 function envNumber(name: string) {
-  const value = Number(process.env[name]);
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return getOptionalNumberEnv(name);
 }
 
 function supabaseErrorMetadata(error: unknown) {
@@ -65,42 +70,58 @@ export function getUploadRuntimeDiagnostics(): UploadRuntimeDiagnostics {
   const provider = (process.env.UPLOAD_STORAGE_PROVIDER || DEFAULT_UPLOAD_PROVIDER).trim().toLowerCase();
   const storageBucket = (process.env.SUPABASE_STORAGE_BUCKET || DEFAULT_UPLOAD_BUCKET).trim();
   const backgroundValue = process.env.ENABLE_BACKGROUND_IMPORTS;
+  const maxUploadSizeMbEnv = envNumber("MAX_UPLOAD_SIZE_MB");
   const maxRowsPerFileEnv = envNumber("MAX_ROWS_PER_FILE");
   const maxExcelRowsEnv = envNumber("MAX_EXCEL_ROWS");
   const maxRowsPerFile = getRowsPerFileLimit();
+  const insertChunkSize = envNumber("SUPABASE_INSERT_CHUNK_SIZE");
+  const importBatchSize = envNumber("IMPORT_BATCH_SIZE");
+  const resumableThresholdMb = Math.round(SECURITY_LIMITS.resumableThresholdBytes / 1024 / 1024);
   const warnings: string[] = [];
   const errors: string[] = [];
 
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL) errors.push("Missing NEXT_PUBLIC_SUPABASE_URL.");
   if (!getSupabasePublishableKey()) errors.push("Missing NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   if (!getSupabaseServiceRoleKey()) errors.push("Missing SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY for upload initiation.");
+  if (process.env.MAX_UPLOAD_SIZE_GB) warnings.push("MAX_UPLOAD_SIZE_GB is not used. Use MAX_UPLOAD_SIZE_MB instead.");
+  if (!maxUploadSizeMbEnv) errors.push("Missing MAX_UPLOAD_SIZE_MB. Set an explicit production file-size limit.");
+  if (!maxRowsPerFileEnv) errors.push("Missing MAX_ROWS_PER_FILE. It has priority over MAX_EXCEL_ROWS and must be explicit in production.");
+  if (!maxExcelRowsEnv) warnings.push("MAX_EXCEL_ROWS is not set. MAX_ROWS_PER_FILE is still the effective row limit.");
+  if (!envNumber("MAX_EXCEL_SHEETS")) errors.push("Missing MAX_EXCEL_SHEETS.");
+  if (!envNumber("LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB")) errors.push("Missing LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB.");
+  if (!importBatchSize) errors.push("Missing IMPORT_BATCH_SIZE.");
+  if (!insertChunkSize) errors.push("Missing SUPABASE_INSERT_CHUNK_SIZE.");
   if (!process.env.SUPABASE_STORAGE_BUCKET) warnings.push(`SUPABASE_STORAGE_BUCKET is not set. Using default ${DEFAULT_UPLOAD_BUCKET}.`);
   if (!process.env.UPLOAD_STORAGE_PROVIDER) warnings.push(`UPLOAD_STORAGE_PROVIDER is not set. Using default ${DEFAULT_UPLOAD_PROVIDER}.`);
   if (provider !== DEFAULT_UPLOAD_PROVIDER) errors.push(`Unsupported UPLOAD_STORAGE_PROVIDER=${provider}. Only supabase is supported.`);
   if (!backgroundValue) warnings.push("ENABLE_BACKGROUND_IMPORTS is not set. Background imports are treated as enabled by default.");
   if (backgroundValue && backgroundValue.toLowerCase() !== "true") errors.push("ENABLE_BACKGROUND_IMPORTS is not true. The background import flow is disabled.");
-  if (!maxRowsPerFileEnv) warnings.push(`MAX_ROWS_PER_FILE is not set. Using safe row limit ${maxRowsPerFile}. MAX_ROWS_PER_FILE has priority over MAX_EXCEL_ROWS.`);
-  if (!maxRowsPerFileEnv && maxExcelRowsEnv && maxExcelRowsEnv > ADVANCED_MAX_ROWS_PER_FILE) {
-    warnings.push(`MAX_EXCEL_ROWS=${maxExcelRowsEnv} is too high without MAX_ROWS_PER_FILE. Effective limit is ${SAFE_DEFAULT_ROWS_PER_FILE}.`);
-  }
+  if (maxRowsPerFileEnv && maxExcelRowsEnv && maxRowsPerFileEnv !== maxExcelRowsEnv) warnings.push(`MAX_ROWS_PER_FILE=${maxRowsPerFileEnv} has priority over MAX_EXCEL_ROWS=${maxExcelRowsEnv}.`);
   if (maxRowsPerFile > ADVANCED_MAX_ROWS_PER_FILE) {
     warnings.push(`MAX_ROWS_PER_FILE=${maxRowsPerFile} is above the advanced tested recommendation ${ADVANCED_MAX_ROWS_PER_FILE}.`);
   }
-  if (SECURITY_LIMITS.maxUploadSizeBytes / 1024 / 1024 > 500) warnings.push("MAX_UPLOAD_SIZE_MB is above 500 MB. Validate Render, Supabase and worker memory before production use.");
+  if (SECURITY_LIMITS.maxUploadSizeBytes / 1024 / 1024 > 500) warnings.push("MAX_UPLOAD_SIZE_MB is above 500 MB. Validate Render, Supabase Storage file limit and worker memory before production use.");
+  if (resumableThresholdMb < 6) warnings.push("LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB is below Supabase's recommended TUS threshold; 100 MB is recommended for this app.");
 
   return {
     provider,
     storageBucket,
     backgroundImportsEnabled: !backgroundValue || backgroundValue.toLowerCase() === "true",
     maxUploadSizeMb: Math.round(SECURITY_LIMITS.maxUploadSizeBytes / 1024 / 1024),
+    maxUploadSizeMbEnv,
     maxRowsPerFile,
     maxExcelRowsEnv,
     maxRowsPerFileEnv,
     maxExcelSheets: SECURITY_LIMITS.maxExcelSheets,
+    resumableThresholdMb,
     importBatchSize: SECURITY_LIMITS.importBatchSize,
+    insertChunkSize: SECURITY_LIMITS.uploadChunkSize,
     uploadTempDir: process.env.UPLOAD_TEMP_DIR || ".tmp/imports",
     workerConcurrency: SECURITY_LIMITS.workerConcurrency,
     workerPollIntervalMs: SECURITY_LIMITS.workerPollIntervalMs,
+    workerStaleAfterMinutes: SECURITY_LIMITS.workerStaleAfterMinutes,
+    workerMaxAttempts: SECURITY_LIMITS.workerMaxAttempts,
+    workerHeartbeatIntervalMs: SECURITY_LIMITS.workerHeartbeatIntervalMs,
     hasSupabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
     hasPublishableKey: Boolean(getSupabasePublishableKey()),
     hasServiceRoleKey: Boolean(getSupabaseServiceRoleKey()),

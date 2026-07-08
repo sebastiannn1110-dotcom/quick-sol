@@ -58,9 +58,10 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
     if (status === "pending") return t("history.status.pending");
     if (status === "pending_upload") return t("history.status.pendingUpload");
     if (status === "uploading") return t("history.status.uploading");
-    if (status === "uploaded") return t("history.status.uploaded");
-    if (status === "queued") return t("history.status.queued");
-    if (status === "processing") return t("history.status.processing");
+  if (status === "uploaded") return t("history.status.uploaded");
+  if (status === "queued") return t("history.status.queued");
+  if (status === "retrying") return t("history.status.retrying");
+  if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
     if (status === "failed") return t("history.status.failed");
     if (status === "cancelled") return t("history.status.cancelled");

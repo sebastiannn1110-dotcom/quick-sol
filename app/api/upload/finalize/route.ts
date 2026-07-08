@@ -11,7 +11,9 @@ export const dynamic = "force-dynamic";
 const finalizeSchema = z.object({
   uploadId: z.string().uuid(),
   jobId: z.string().uuid(),
-  uploadProgressPercent: z.number().min(0).max(100).default(100)
+  uploadProgressPercent: z.number().min(0).max(100).default(100),
+  uploadSpeedBps: z.number().int().nonnegative().optional().nullable(),
+  uploadEtaSeconds: z.number().int().nonnegative().optional().nullable()
 });
 
 export async function POST(request: Request) {
@@ -29,6 +31,13 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json().catch(() => null);
+    await logger.info({
+      ...logContext,
+      module: "upload",
+      action: "upload_finalize_received",
+      message: "Upload finalize request received.",
+      status: "started"
+    });
     const parsed = finalizeSchema.safeParse(body);
     if (!parsed.success) throw new ValidationError("Upload finalize validation failed.", { issues: parsed.error.issues });
     if (context.isDemoMode || !context.supabase) return NextResponse.json({ error: "Background uploads require Supabase." }, { status: 503 });
@@ -39,6 +48,8 @@ export async function POST(request: Request) {
       .update({
         status: "queued",
         upload_progress_percent: parsed.data.uploadProgressPercent,
+        upload_speed_bps: parsed.data.uploadSpeedBps ?? null,
+        upload_eta_seconds: parsed.data.uploadEtaSeconds ?? null,
         processing_progress_percent: 0,
         queued_at: queuedAt,
         error_message: null
@@ -49,7 +60,7 @@ export async function POST(request: Request) {
 
     const { data: job, error: jobError } = await context.supabase
       .from("import_jobs")
-      .update({ status: "queued", progress_percent: 0, error_message: null, updated_at: queuedAt })
+      .update({ status: "queued", progress_percent: 0, error_message: null, next_retry_at: null, updated_at: queuedAt })
       .eq("id", parsed.data.jobId)
       .eq("upload_batch_id", parsed.data.uploadId)
       .eq("uploaded_by", context.profile.id)

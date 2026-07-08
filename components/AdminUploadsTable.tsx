@@ -51,6 +51,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
     if (status === "uploading") return t("history.status.uploading");
     if (status === "uploaded") return t("history.status.uploaded");
     if (status === "queued") return t("history.status.queued");
+    if (status === "retrying") return t("history.status.retrying");
     if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
     if (status === "failed") return t("history.status.failed");

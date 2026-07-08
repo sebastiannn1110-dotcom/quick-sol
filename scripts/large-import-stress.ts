@@ -9,7 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 
 type FileKind = "csv" | "xlsx" | "bad";
 type ExpectedFinalState = "completed" | "failed" | "cancelled" | "duplicate";
-type PlanName = "smoke" | "standard" | "full" | "bad-cases" | "generate";
+type PlanName = "smoke" | "standard" | "production" | "full" | "bad-cases" | "generate";
 
 interface GeneratedFile {
   name: string;
@@ -266,15 +266,15 @@ async function generatePlanFiles(plan: PlanName) {
   await ensureOutputDir();
   const files: GeneratedFile[] = [];
 
-  if (plan === "smoke" || plan === "standard" || plan === "full" || plan === "generate") {
-    const selectedCsvSizes = plan === "full" || plan === "generate" ? csvSizes : plan === "standard" ? [10_000, 100_000] : [10_000];
+  if (plan === "smoke" || plan === "standard" || plan === "production" || plan === "full" || plan === "generate") {
+    const selectedCsvSizes = plan === "production" || plan === "full" || plan === "generate" ? csvSizes : plan === "standard" ? [10_000, 100_000] : [10_000];
     for (const rows of selectedCsvSizes) {
       const filePath = path.join(outputRoot, "csv", `quiksol-stress-${rows}.csv`);
       await generateCsv(filePath, rows);
       files.push({ name: `csv-${rows}`, kind: "csv", filePath, rows, mimeType: "text/csv", expectedFinalState: "completed" });
     }
 
-    const selectedXlsxSizes = plan === "full" || plan === "generate" ? xlsxSizes : plan === "standard" ? [10_000, 50_000] : [10_000];
+    const selectedXlsxSizes = plan === "production" || plan === "full" || plan === "generate" ? xlsxSizes : plan === "standard" ? [10_000, 50_000] : [10_000];
     for (const rows of selectedXlsxSizes) {
       const filePath = path.join(outputRoot, "xlsx", `quiksol-stress-${rows}.xlsx`);
       await generateXlsx(filePath, rows);
@@ -282,7 +282,7 @@ async function generatePlanFiles(plan: PlanName) {
     }
   }
 
-  if (plan === "bad-cases" || plan === "standard" || plan === "full") {
+  if (plan === "bad-cases" || plan === "standard" || plan === "production" || plan === "full") {
     files.push(...await generateBadCases());
   }
 
@@ -459,7 +459,7 @@ async function countBatchLogs(uploadId: string) {
     .from("system_logs")
     .select("id", { count: "exact", head: true })
     .eq("upload_batch_id", uploadId)
-    .eq("action", "import_batch_inserted");
+    .eq("action", "batch_insert_completed");
   if (error) return { count: null, source: "unavailable" as const };
   return { count: count ?? 0, source: "system_logs" as const };
 }
@@ -733,8 +733,8 @@ function printReport(results: StressResult[]) {
 async function main() {
   const plan = (argValue("plan") || process.env.LARGE_IMPORT_PLAN || "smoke") as PlanName;
   const generateOnly = argFlag("generate-only") || process.env.LARGE_IMPORT_GENERATE_ONLY === "1" || plan === "generate";
-  if (!["smoke", "standard", "full", "bad-cases", "generate"].includes(plan)) {
-    throw new Error(`Unknown plan "${plan}". Use smoke, standard, full, bad-cases or generate.`);
+  if (!["smoke", "standard", "production", "full", "bad-cases", "generate"].includes(plan)) {
+    throw new Error(`Unknown plan "${plan}". Use smoke, standard, production, full, bad-cases or generate.`);
   }
 
   console.log(`Generating large import stress files in ${outputRoot}`);

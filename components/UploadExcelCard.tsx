@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useRef, useState } from "react";
+import * as tus from "tus-js-client";
 import { useLanguage } from "@/components/LanguageProvider";
 import { clientLogger } from "@/lib/logger/clientLogger";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import type { ImportJob, UploadBatch } from "@/lib/types";
+import type { ImportJob, UploadBatch, UploadStatus } from "@/lib/types";
 
 interface UploadResult {
   message: string;
@@ -27,6 +28,13 @@ interface InitiateResponse {
   signedUrl: string;
   token: string;
   path: string;
+  uploadStrategy: "standard" | "resumable";
+  resumable: {
+    enabled: boolean;
+    thresholdMb: number;
+    endpoint: string;
+    chunkSizeBytes: number;
+  };
   error?: string;
   message?: string;
 }
@@ -41,13 +49,17 @@ interface ActiveJobState {
   uploadId: string;
   jobId: string;
   fileName: string;
-  status: ImportJob["status"];
+  status: UploadStatus;
   uploadProgress: number;
   processingProgress: number;
   processedRows: number;
   totalRows: number;
   successfulRows: number;
   failedRows: number;
+  uploadSpeedBps: number | null;
+  uploadEtaSeconds: number | null;
+  queuedAt: string | null;
+  workerLastHeartbeatAt: string | null;
   errorMessage: string | null;
 }
 
@@ -136,14 +148,35 @@ function buildIdempotencyKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function formatBytesPerSecond(value: number | null) {
+  if (!value || value <= 0) return "n/a";
+  const mb = value / 1024 / 1024;
+  if (mb >= 1) return `${mb.toFixed(1)} MB/s`;
+  return `${Math.max(1, Math.round(value / 1024))} KB/s`;
+}
+
+function formatDuration(seconds: number | null) {
+  if (!seconds || seconds <= 0 || !Number.isFinite(seconds)) return "n/a";
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes <= 0) return `${remainingSeconds}s`;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function queuedForMoreThanTwoMinutes(queuedAt: string | null) {
+  if (!queuedAt) return false;
+  return Date.now() - new Date(queuedAt).getTime() > 2 * 60 * 1000;
+}
+
 function uploadToSignedUrlWithProgress(
   signedUrl: string,
   file: File,
-  onProgress: (progress: number) => void,
+  onProgress: (progress: number, speedBps: number | null, etaSeconds: number | null) => void,
   signal: AbortSignal
 ) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    const startedAt = performance.now();
     const cleanup = () => signal.removeEventListener("abort", abortUpload);
     const abortUpload = () => {
       xhr.abort();
@@ -153,12 +186,16 @@ function uploadToSignedUrlWithProgress(
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
-      onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
+      const speedBps = Math.round(event.loaded / elapsedSeconds);
+      const remainingBytes = Math.max(event.total - event.loaded, 0);
+      const etaSeconds = speedBps > 0 ? Math.round(remainingBytes / speedBps) : null;
+      onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)), speedBps, etaSeconds);
     };
     xhr.onload = () => {
       cleanup();
       if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress(100);
+        onProgress(100, null, 0);
         resolve();
         return;
       }
@@ -182,7 +219,102 @@ function uploadToSignedUrlWithProgress(
   });
 }
 
-async function uploadDirectlyToStorage(initiate: InitiateResponse, file: File, onProgress: (progress: number) => void, signal: AbortSignal) {
+async function uploadWithTusResumable(
+  initiate: InitiateResponse,
+  file: File,
+  onProgress: (progress: number, speedBps: number | null, etaSeconds: number | null) => void,
+  signal: AbortSignal
+) {
+  const supabase = createSupabaseBrowserClient();
+  if (!supabase) throw new Error("Supabase browser client is not configured.");
+  const {
+    data: { session },
+    error: sessionError
+  } = await supabase.auth.getSession();
+  if (sessionError || !session?.access_token) throw new Error("Supabase session is required for resumable upload.");
+
+  clientLogger.uploadResumableStarted({
+    uploadId: initiate.uploadId,
+    jobId: initiate.jobId,
+    fileName: file.name,
+    fileSizeBytes: file.size
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const startedAt = performance.now();
+    let lastLoggedProgress = -10;
+    const upload = new tus.Upload(file, {
+      endpoint: initiate.resumable.endpoint,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      headers: {
+        authorization: `Bearer ${session.access_token}`
+      },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: initiate.resumable.chunkSizeBytes,
+      metadata: {
+        bucketName: initiate.bucket,
+        objectName: initiate.storagePath,
+        contentType: file.type || "application/octet-stream",
+        cacheControl: "3600",
+        metadata: JSON.stringify({ uploadId: initiate.uploadId, jobId: initiate.jobId })
+      },
+      onError(error) {
+        reject(error);
+      },
+      onProgress(bytesUploaded, bytesTotal) {
+        const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
+        const speedBps = Math.round(bytesUploaded / elapsedSeconds);
+        const etaSeconds = speedBps > 0 ? Math.round(Math.max(bytesTotal - bytesUploaded, 0) / speedBps) : null;
+        const progress = Math.min(99, Math.round((bytesUploaded / bytesTotal) * 100));
+        if (progress - lastLoggedProgress >= 10) {
+          lastLoggedProgress = progress;
+          clientLogger.uploadResumableProgress({
+            uploadId: initiate.uploadId,
+            jobId: initiate.jobId,
+            fileName: file.name,
+            fileSizeBytes: file.size,
+            progress,
+            speedBps,
+            etaSeconds
+          });
+        }
+        onProgress(progress, speedBps, etaSeconds);
+      },
+      onSuccess() {
+        clientLogger.uploadResumableCompleted({
+          uploadId: initiate.uploadId,
+          jobId: initiate.jobId,
+          fileName: file.name,
+          fileSizeBytes: file.size
+        });
+        onProgress(100, null, 0);
+        resolve();
+      }
+    });
+
+    const abortUpload = () => {
+      upload.abort(true).finally(() => reject(new DOMException("Upload cancelled.", "AbortError")));
+    };
+    signal.addEventListener("abort", abortUpload, { once: true });
+    upload.findPreviousUploads().then((previousUploads) => {
+      if (previousUploads.length) upload.resumeFromPreviousUpload(previousUploads[0]);
+      upload.start();
+    }).catch(reject);
+  });
+}
+
+async function uploadDirectlyToStorage(
+  initiate: InitiateResponse,
+  file: File,
+  onProgress: (progress: number, speedBps: number | null, etaSeconds: number | null) => void,
+  signal: AbortSignal
+) {
+  if (initiate.uploadStrategy === "resumable") {
+    await uploadWithTusResumable(initiate, file, onProgress, signal);
+    return;
+  }
+
   try {
     await uploadToSignedUrlWithProgress(initiate.signedUrl, file, onProgress, signal);
     return;
@@ -203,7 +335,7 @@ async function uploadDirectlyToStorage(initiate: InitiateResponse, file: File, o
       contentType: file.type || "application/octet-stream"
     });
   if (error) throw new Error(error.message);
-  onProgress(100);
+  onProgress(100, null, 0);
 }
 
 function uploadResultFromJob(job: ImportJob, upload: UploadBatch | null): UploadResult {
@@ -229,6 +361,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
+  const uploadMetricsRef = useRef<{ speedBps: number | null; etaSeconds: number | null }>({ speedBps: null, etaSeconds: null });
 
   function updateField(key: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -246,6 +379,10 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       totalRows: job.total_rows ?? upload?.total_rows ?? 0,
       successfulRows: job.successful_rows ?? upload?.successful_rows ?? upload?.valid_rows ?? 0,
       failedRows: job.failed_rows ?? upload?.failed_rows ?? upload?.invalid_rows ?? 0,
+      uploadSpeedBps: upload?.upload_speed_bps ?? current?.uploadSpeedBps ?? null,
+      uploadEtaSeconds: upload?.upload_eta_seconds ?? current?.uploadEtaSeconds ?? null,
+      queuedAt: upload?.queued_at ?? current?.queuedAt ?? null,
+      workerLastHeartbeatAt: job.heartbeat_at ?? upload?.worker_last_heartbeat_at ?? current?.workerLastHeartbeatAt ?? null,
       errorMessage: job.error_message ?? upload?.error_message ?? null
     }));
   }
@@ -276,6 +413,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
     }
 
     cancelRequestedRef.current = false;
+    uploadMetricsRef.current = { speedBps: null, etaSeconds: null };
     const abortController = new AbortController();
     abortRef.current = abortController;
     setLoading(true);
@@ -315,14 +453,27 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         totalRows: 0,
         successfulRows: 0,
         failedRows: 0,
+        uploadSpeedBps: null,
+        uploadEtaSeconds: null,
+        queuedAt: null,
+        workerLastHeartbeatAt: null,
         errorMessage: null
       });
 
       await uploadDirectlyToStorage(
         initiate,
         file,
-        (uploadProgress) =>
-          setActiveJob((current) => current ? { ...current, uploadProgress, status: uploadProgress >= 100 ? "uploaded" : current.status } : current),
+        (uploadProgress, uploadSpeedBps, uploadEtaSeconds) =>
+          {
+            uploadMetricsRef.current = { speedBps: uploadSpeedBps, etaSeconds: uploadEtaSeconds };
+            return setActiveJob((current) => current ? {
+              ...current,
+              uploadProgress,
+              uploadSpeedBps,
+              uploadEtaSeconds,
+              status: uploadProgress >= 100 ? "uploaded" : "uploading"
+            } : current);
+          },
         abortController.signal
       );
 
@@ -332,7 +483,9 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         body: JSON.stringify({
           uploadId: initiate.uploadId,
           jobId: initiate.jobId,
-          uploadProgressPercent: 100
+          uploadProgressPercent: 100,
+          uploadSpeedBps: uploadMetricsRef.current.speedBps,
+          uploadEtaSeconds: 0
         })
       });
       await readJsonResponse(finalizeResponse);
@@ -409,10 +562,11 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
     }
   }
 
-  const canCancel = Boolean(activeJob && ["pending_upload", "uploaded", "queued", "processing"].includes(activeJob.status));
+  const canCancel = Boolean(activeJob && ["pending_upload", "uploading", "uploaded", "queued", "processing"].includes(activeJob.status));
   const canRetry = Boolean(activeJob && ["failed", "cancelled"].includes(activeJob.status));
   const uploadProgress = activeJob?.uploadProgress ?? 0;
   const processingProgress = activeJob?.processingProgress ?? 0;
+  const queueLooksStale = Boolean(activeJob?.status === "queued" && queuedForMoreThanTwoMinutes(activeJob.queuedAt));
 
   return (
     <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -511,7 +665,10 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
               <span>{t("upload.rowsProcessed")}: {activeJob.processedRows}</span>
               <span>{t("history.rows")}: {activeJob.totalRows}</span>
               <span>{t("history.errors")}: {activeJob.failedRows}</span>
+              <span>{t("upload.speed")}: {formatBytesPerSecond(activeJob.uploadSpeedBps)}</span>
+              <span>{t("upload.eta")}: {formatDuration(activeJob.uploadEtaSeconds)}</span>
             </div>
+            {activeJob.status === "queued" ? <p className="mt-2 text-xs font-medium text-slate-600">{queueLooksStale ? t("upload.workerNotResponding") : t("upload.waitingForWorker")}</p> : null}
             {activeJob.errorMessage ? <p className="mt-2 text-xs font-medium text-red-700">{activeJob.errorMessage}</p> : null}
           </div>
         ) : null}

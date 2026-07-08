@@ -20,8 +20,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       successful_rows: 0,
       failed_rows: 0,
       error_message: null,
+      last_error: null,
       locked_at: null,
       locked_by: null,
+      heartbeat_at: null,
+      next_retry_at: null,
+      worker_id: null,
+      cancel_requested: false,
       started_at: null,
       finished_at: null,
       cancelled_at: null,
@@ -45,6 +50,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     queued_at: new Date().toISOString(),
     processing_started_at: null,
     cancelled_at: null,
+    worker_last_heartbeat_at: null,
     completed_at: null
   }).eq("id", job.upload_batch_id);
   await logAuditEvent(context, "import_job_retry", "upload_batch", job.upload_batch_id, { jobId: id });

@@ -21,7 +21,7 @@ export interface ImportJobRow {
   id: string;
   upload_batch_id: string;
   uploaded_by: string;
-  status: "pending_upload" | "uploaded" | "queued" | "processing" | "completed" | "failed" | "cancelled";
+  status: "pending_upload" | "uploaded" | "queued" | "retrying" | "processing" | "completed" | "failed" | "cancelled";
   storage_bucket: string;
   storage_path: string;
   original_file_name: string;
@@ -37,6 +37,13 @@ export interface ImportJobRow {
   failed_rows: number;
   attempts: number;
   max_attempts: number;
+  locked_by: string | null;
+  locked_at: string | null;
+  heartbeat_at: string | null;
+  next_retry_at: string | null;
+  last_error: string | null;
+  worker_id: string | null;
+  cancel_requested: boolean;
 }
 
 interface WorkerContext {
@@ -142,6 +149,39 @@ function memoryUsageMb() {
   };
 }
 
+async function tempDiskUsageMb(filePath: string | null) {
+  if (!filePath) return 0;
+  const stat = await fs.promises.stat(filePath).catch(() => null);
+  return stat ? Math.round(stat.size / 1024 / 1024) : 0;
+}
+
+async function updateHeartbeat(supabase: SupabaseClient, job: ImportJobRow, workerId: string) {
+  const heartbeatAt = nowIso();
+  await Promise.all([
+    supabase.from("import_jobs").update({
+      heartbeat_at: heartbeatAt,
+      worker_id: workerId,
+      updated_at: heartbeatAt
+    }).eq("id", job.id).eq("status", "processing"),
+    supabase.from("upload_batches").update({
+      worker_last_heartbeat_at: heartbeatAt
+    }).eq("id", job.upload_batch_id)
+  ]);
+  await logger.info({
+    traceId: crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    route: "import-worker",
+    method: "WORKER",
+    module: "upload",
+    action: "heartbeat_updated",
+    message: "Import worker heartbeat updated.",
+    status: "completed",
+    uploadBatchId: job.upload_batch_id,
+    fileName: job.original_file_name,
+    metadata: { jobId: job.id, workerId, memoryUsage: memoryUsageMb() }
+  });
+}
+
 async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, status = "processing") {
   const estimatedProgress = status === "completed" ? 100 : Math.min(95, Math.max(5, Math.round(state.totalRows / Math.max(state.totalRows + 2000, 1) * 100)));
   await Promise.all([
@@ -152,6 +192,7 @@ async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state
       successful_rows: state.validRows,
       failed_rows: state.invalidRows,
       progress_percent: estimatedProgress,
+      heartbeat_at: nowIso(),
       updated_at: nowIso()
     }).eq("id", job.id),
     supabase.from("upload_batches").update({
@@ -173,12 +214,12 @@ async function ensureJobNotCancelled(supabase: SupabaseClient, job: ImportJobRow
 
   const { data, error } = await supabase
     .from("import_jobs")
-    .select("status")
+    .select("status,cancel_requested")
     .eq("id", job.id)
     .maybeSingle();
 
   if (error) throw error;
-  if (data?.status === "cancelled") throw new ImportCancelledError();
+  if (data?.status === "cancelled" || data?.cancel_requested) throw new ImportCancelledError();
 }
 
 async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, context: WorkerContext, force = false) {
@@ -190,25 +231,51 @@ async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: 
   const flushIndex = state.flushCount;
   state.flushCount += 1;
 
+  async function insertRecordChunk(chunk: Array<Record<string, unknown>>, flushIndexValue: number, chunkIndex: number, depth = 0): Promise<void> {
+    const minAdaptiveChunk = 50;
+    try {
+      await logger.info({
+        ...context,
+        module: "upload",
+        action: "batch_insert_started",
+        message: "Import batch insert started.",
+        status: "started",
+        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, insertChunkSize: SECURITY_LIMITS.uploadChunkSize, depth, memory: memoryUsageMb() }
+      });
+      const { error } = await supabase.from("business_records").insert(chunk);
+      if (error) throw error;
+      await logger.info({
+        ...context,
+        module: "upload",
+        action: "batch_insert_completed",
+        message: "Import batch inserted.",
+        status: "completed",
+        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, insertChunkSize: SECURITY_LIMITS.uploadChunkSize, depth, memory: memoryUsageMb() }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      if (chunk.length <= minAdaptiveChunk || !/57014|statement timeout/i.test(message)) throw error;
+      const middle = Math.ceil(chunk.length / 2);
+      await logger.warn({
+        ...context,
+        module: "upload",
+        action: "batch_insert_adaptive_split",
+        message: "Import batch insert timed out; splitting chunk.",
+        status: "started",
+        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, nextChunkSize: middle, depth },
+        error
+      });
+      await insertRecordChunk(chunk.slice(0, middle), flushIndexValue, chunkIndex * 2, depth + 1);
+      await insertRecordChunk(chunk.slice(middle), flushIndexValue, chunkIndex * 2 + 1, depth + 1);
+    }
+  }
+
   if (records.length) {
-    await logger.info({
-      ...context,
-      module: "upload",
-      action: "import_batch_insert_started",
-      message: "Import batch insert started.",
-      status: "started",
-      metadata: { flushIndex, rowCount: records.length, memory: memoryUsageMb() }
-    });
-    const { error } = await supabase.from("business_records").insert(records);
-    if (error) throw error;
-    await logger.info({
-      ...context,
-      module: "upload",
-      action: "import_batch_inserted",
-      message: "Import batch inserted.",
-      status: "completed",
-      metadata: { flushIndex, rowCount: records.length, memory: memoryUsageMb() }
-    });
+    const insertChunkSize = Math.max(1, SECURITY_LIMITS.uploadChunkSize);
+    for (let index = 0; index < records.length; index += insertChunkSize) {
+      const chunk = records.slice(index, index + insertChunkSize);
+      await insertRecordChunk(chunk, flushIndex, index / insertChunkSize);
+    }
   }
 
   if (errors.length) {
@@ -238,6 +305,53 @@ async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: 
       memory: memoryUsageMb()
     }
   });
+}
+
+export async function recoverStaleImportJobs(supabase: SupabaseClient, workerId: string) {
+  const staleCutoff = new Date(Date.now() - SECURITY_LIMITS.workerStaleAfterMinutes * 60 * 1000).toISOString();
+  const { data: staleJobs, error } = await supabase
+    .from("import_jobs")
+    .select("id,upload_batch_id,attempts,max_attempts,error_message")
+    .eq("status", "processing")
+    .lt("heartbeat_at", staleCutoff)
+    .limit(25);
+  if (error) throw error;
+
+  for (const stale of staleJobs ?? []) {
+    const attempts = Number(stale.attempts ?? 0);
+    const maxAttempts = Number(stale.max_attempts ?? SECURITY_LIMITS.workerMaxAttempts);
+    const nextStatus = attempts >= maxAttempts ? "failed" : "retrying";
+    const message = "Worker heartbeat expired; job recovered by worker.";
+    await Promise.all([
+      supabase.from("import_jobs").update({
+        status: nextStatus,
+        locked_at: null,
+        locked_by: null,
+        worker_id: null,
+        next_retry_at: nextStatus === "retrying" ? nowIso() : null,
+        last_error: stale.error_message ?? message,
+        error_message: nextStatus === "failed" ? message : null,
+        finished_at: nextStatus === "failed" ? nowIso() : null,
+        updated_at: nowIso()
+      }).eq("id", stale.id).eq("status", "processing"),
+      supabase.from("upload_batches").update({
+        status: nextStatus,
+        error_message: nextStatus === "failed" ? message : null
+      }).eq("id", stale.upload_batch_id)
+    ]);
+    await logger.warn({
+      traceId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      route: "import-worker",
+      method: "WORKER",
+      module: "upload",
+      action: "stale_job_recovered",
+      message,
+      status: "completed",
+      uploadBatchId: stale.upload_batch_id,
+      metadata: { jobId: stale.id, workerId, nextStatus }
+    });
+  }
 }
 
 async function createSheetState(supabase: SupabaseClient, job: ImportJobRow, sheetIndex: number, sheetName: string, bufferedRows: RawCell[][], context: WorkerContext) {
@@ -468,11 +582,22 @@ async function downloadStorageObjectToTemp(supabase: SupabaseClient, job: Import
 }
 
 export async function claimNextImportJob(supabase: SupabaseClient, workerId: string) {
+  const rpcClaim = await supabase
+    .rpc("claim_import_job", {
+      worker_id_input: workerId,
+      stale_after: `${SECURITY_LIMITS.workerStaleAfterMinutes} minutes`
+    })
+    .limit(1);
+  if (!rpcClaim.error && rpcClaim.data?.[0]) return rpcClaim.data[0] as ImportJobRow;
+  if (rpcClaim.error && !/claim_import_job|function/i.test(rpcClaim.error.message ?? "")) throw rpcClaim.error;
+
+  await recoverStaleImportJobs(supabase, workerId);
   const { data: jobs, error } = await supabase
     .from("import_jobs")
     .select("*")
-    .eq("status", "queued")
-    .lt("attempts", 3)
+    .in("status", ["queued", "retrying"])
+    .lt("attempts", SECURITY_LIMITS.workerMaxAttempts)
+    .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso()}`)
     .order("created_at", { ascending: true })
     .limit(1);
   if (error) throw error;
@@ -486,11 +611,13 @@ export async function claimNextImportJob(supabase: SupabaseClient, workerId: str
       attempts: job.attempts + 1,
       locked_at: nowIso(),
       locked_by: workerId,
+      worker_id: workerId,
+      heartbeat_at: nowIso(),
       started_at: nowIso(),
       updated_at: nowIso()
     })
     .eq("id", job.id)
-    .eq("status", "queued")
+    .in("status", ["queued", "retrying"])
     .select("*")
     .maybeSingle();
   if (claimError) throw claimError;
@@ -524,7 +651,11 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
   };
 
   let localPath: string | null = null;
+  const heartbeatTimer = setInterval(() => {
+    void updateHeartbeat(supabase, job, workerId).catch(() => undefined);
+  }, SECURITY_LIMITS.workerHeartbeatIntervalMs);
   try {
+    await updateHeartbeat(supabase, job, workerId);
     await Promise.all([
       supabase.from("upload_batches").update({ status: "processing", processing_started_at: nowIso(), error_message: null }).eq("id", job.upload_batch_id),
       supabase.from("business_records").delete().eq("upload_batch_id", job.upload_batch_id),
@@ -535,12 +666,12 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
 
     await logger.info({
       ...context,
-      module: "upload",
-      action: "processing_started",
+        module: "upload",
+        action: "processing_started",
       message: "Background import processing started.",
       status: "started",
-      metadata: { workerId, sizeBytes: job.size_bytes, memory: memoryUsageMb() }
-    });
+        metadata: { workerId, sizeBytes: job.size_bytes, memoryUsage: memoryUsageMb() }
+      });
 
     localPath = await downloadStorageObjectToTemp(supabase, job, context);
     const extension = getFileExtension(job.original_file_name);
@@ -563,6 +694,9 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
         progress_percent: 100,
         error_message: null,
         finished_at: finishedAt,
+        duration_ms: Math.round(performance.now() - startedAt),
+        locked_at: null,
+        locked_by: null,
         updated_at: finishedAt
       }).eq("id", job.id),
       supabase.from("upload_batches").update({
@@ -622,6 +756,10 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
           error_message: "Cancelled by user.",
           cancelled_at: cancelledAt,
           finished_at: cancelledAt,
+          duration_ms: Math.round(performance.now() - startedAt),
+          locked_at: null,
+          locked_by: null,
+          worker_id: null,
           updated_at: cancelledAt
         }).eq("id", job.id),
         supabase.from("upload_batches").update({
@@ -643,9 +781,26 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       return;
     }
     const message = error instanceof Error ? error.message : "Unknown import worker error.";
+    const canRetry = job.attempts < job.max_attempts;
+    const nextRetryAt = new Date(Date.now() + Math.min(60_000 * job.attempts, 5 * 60_000)).toISOString();
     await Promise.all([
-      supabase.from("import_jobs").update({ status: "failed", error_message: message, finished_at: nowIso(), updated_at: nowIso() }).eq("id", job.id),
-      supabase.from("upload_batches").update({ status: "failed", error_message: message, completed_at: nowIso() }).eq("id", job.upload_batch_id)
+      supabase.from("import_jobs").update({
+        status: canRetry ? "retrying" : "failed",
+        error_message: canRetry ? null : message,
+        last_error: message,
+        next_retry_at: canRetry ? nextRetryAt : null,
+        finished_at: canRetry ? null : nowIso(),
+        duration_ms: Math.round(performance.now() - startedAt),
+        locked_at: null,
+        locked_by: null,
+        worker_id: null,
+        updated_at: nowIso()
+      }).eq("id", job.id),
+      supabase.from("upload_batches").update({
+        status: canRetry ? "retrying" : "failed",
+        error_message: canRetry ? "Processing failed and will be retried by the worker." : message,
+        completed_at: canRetry ? null : nowIso()
+      }).eq("id", job.upload_batch_id)
     ]);
     await logger.error({
       ...context,
@@ -654,7 +809,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       message: "Background import processing failed.",
       status: "failed",
       durationMs: Math.round(performance.now() - startedAt),
-      metadata: { memory: memoryUsageMb() },
+      metadata: { memoryUsage: memoryUsageMb(), tempDiskUsageMb: await tempDiskUsageMb(localPath), workerId, retryScheduled: canRetry, nextRetryAt },
       error
     });
     await evaluateEmailAlertRules({
@@ -668,6 +823,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
     });
     throw error;
   } finally {
+    clearInterval(heartbeatTimer);
     if (localPath) await fs.promises.unlink(localPath).catch(() => undefined);
   }
 }

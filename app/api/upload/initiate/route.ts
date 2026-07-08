@@ -35,6 +35,14 @@ const initiateSchema = z.object({
   idempotencyKey: z.string().trim().max(200).optional().nullable()
 });
 
+function supabaseResumableEndpoint(supabaseUrl: string) {
+  const url = new URL(supabaseUrl);
+  const host = url.hostname.endsWith(".supabase.co")
+    ? url.hostname.replace(".supabase.co", ".storage.supabase.co")
+    : url.hostname;
+  return `${url.protocol}//${host}/storage/v1/upload/resumable`;
+}
+
 export async function POST(request: Request) {
   const requestLoggerContext = getLoggerContextFromRequest(request);
   const preAuthLogContext = {
@@ -44,7 +52,7 @@ export async function POST(request: Request) {
     method: request.method
   };
 
-  await logUploadDiagnostic(preAuthLogContext, "request_received", "Upload initiate request received.", "started");
+    await logUploadDiagnostic(preAuthLogContext, "upload_initiate_received", "Upload initiate request received.", "started");
   await logUploadDiagnostic(preAuthLogContext, "auth_check_started", "Upload initiate auth check started.", "started");
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) {
@@ -181,8 +189,10 @@ export async function POST(request: Request) {
       jobId,
       storageBucket: bucket,
       maxUploadSizeMb: diagnostics.maxUploadSizeMb,
-      maxRowsPerFile: diagnostics.maxRowsPerFile
+      maxRowsPerFile: diagnostics.maxRowsPerFile,
+      resumableThresholdMb: diagnostics.resumableThresholdMb
     };
+    const uploadStrategy = parsed.data.fileSize >= diagnostics.resumableThresholdMb * 1024 * 1024 ? "resumable" : "standard";
 
     await logUploadDiagnostic(logContext, "upload_batch_create_started", "Upload batch create started.", "started", uploadMetadata);
     const { error: batchError } = await context.supabase.from("upload_batches").insert({
@@ -201,6 +211,7 @@ export async function POST(request: Request) {
       error_count: 0,
       upload_progress_percent: 0,
       processing_progress_percent: 0,
+      upload_strategy: uploadStrategy,
       idempotency_key: parsed.data.idempotencyKey || null,
       notes: parsed.data.notes || null
     });
@@ -221,7 +232,9 @@ export async function POST(request: Request) {
       selected_category: parsed.data.selectedCategory,
       department: parsed.data.department,
       region: parsed.data.region,
-      notes: parsed.data.notes || null
+      notes: parsed.data.notes || null,
+      upload_strategy: uploadStrategy,
+      max_attempts: diagnostics.workerMaxAttempts
     });
     if (jobError) throw uploadDatabaseError("Unable to create import job.", jobError, { ...uploadMetadata, table: "import_jobs" });
     await logUploadDiagnostic(logContext, "import_job_create_completed", "Import job create completed.", "completed", uploadMetadata);
@@ -245,9 +258,10 @@ export async function POST(request: Request) {
       status: "completed",
       uploadBatchId,
       fileName: originalFileName,
-      metadata: { jobId, bucket, storagePath, sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile }
+      metadata: { jobId, bucket, storagePath, sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile, uploadStrategy }
     });
     await logAuditEvent(context, "upload_initialized", "upload_batch", uploadBatchId, { jobId, fileName: originalFileName });
+    await logUploadDiagnostic(logContext, "upload_initiate_completed", "Upload initiate completed.", "completed", uploadMetadata);
 
     return NextResponse.json({
       uploadId: uploadBatchId,
@@ -257,6 +271,13 @@ export async function POST(request: Request) {
       signedUrl: signedUpload.signedUrl,
       token: signedUpload.token,
       path: signedUpload.path,
+      uploadStrategy,
+      resumable: {
+        enabled: uploadStrategy === "resumable",
+        thresholdMb: diagnostics.resumableThresholdMb,
+        endpoint: supabaseResumableEndpoint(process.env.NEXT_PUBLIC_SUPABASE_URL!),
+        chunkSizeBytes: 6 * 1024 * 1024
+      },
       upload: {
         id: uploadBatchId,
         original_file_name: originalFileName,

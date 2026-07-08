@@ -42,10 +42,10 @@ Standard plan:
 npm run test:large-imports -- --plan=standard
 ```
 
-Full plan:
+Production plan:
 
 ```bash
-npm run test:large-imports -- --plan=full
+npm run test:large-imports -- --plan=production
 ```
 
 Generate files only:
@@ -68,6 +68,7 @@ CSV:
 - 100,000 rows
 - 500,000 rows
 - 1,000,000 rows
+- optional 5 GB CSV generation when machine capacity allows
 
 XLSX:
 
@@ -107,7 +108,7 @@ Worker restart mid-process:
 LARGE_IMPORT_INCLUDE_RESTART=1 LARGE_IMPORT_RESTART_KILL_AFTER_MS=2500 npm run test:large-imports -- --plan=standard
 ```
 
-This can leave a job in `processing` if stale-lock recovery is not implemented. The harness attempts to cancel it after the check.
+The production worker now recovers stale `processing` jobs through heartbeat timeout. The harness still attempts to cancel the job if a local destructive test leaves it processing.
 
 ## Useful Tuning
 
@@ -136,4 +137,3 @@ The same data is saved to:
 ```text
 outputs/large-import-stress/latest-report.json
 ```
-

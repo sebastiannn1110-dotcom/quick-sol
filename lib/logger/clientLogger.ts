@@ -43,6 +43,12 @@ export const clientLogger = {
     sendClientLog("info", "button_clicked", action, metadata),
   uploadStarted: (metadata?: Record<string, unknown>) =>
     sendClientLog("info", "upload_ui_started", "Upload UI started", metadata),
+  uploadResumableStarted: (metadata?: Record<string, unknown>) =>
+    sendClientLog("info", "upload_resumable_started", "Resumable upload started", metadata),
+  uploadResumableProgress: (metadata?: Record<string, unknown>) =>
+    sendClientLog("info", "upload_resumable_progress", "Resumable upload progress", metadata),
+  uploadResumableCompleted: (metadata?: Record<string, unknown>) =>
+    sendClientLog("info", "upload_resumable_completed", "Resumable upload completed", metadata),
   uploadCompleted: (metadata?: Record<string, unknown>) =>
     sendClientLog("info", "upload_ui_completed", "Upload UI completed", metadata),
   uploadFailed: (metadata?: Record<string, unknown>) =>

@@ -16,6 +16,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .from("import_jobs")
     .update({
       status: "cancelled",
+      cancel_requested: true,
       error_message: "Cancelled by user.",
       cancelled_at: cancelledAt,
       finished_at: cancelledAt,
