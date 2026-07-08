@@ -43,8 +43,10 @@ The migration adds job progress columns to `upload_batches`, creates `import_job
 
 ## Environment Variables
 
+For initial tests:
+
 ```env
-MAX_UPLOAD_SIZE_MB=25
+MAX_UPLOAD_SIZE_MB=100
 UPLOAD_CHUNK_SIZE_MB=8
 UPLOAD_TIMEOUT_SECONDS=60
 UPLOAD_STORAGE_PROVIDER=supabase
@@ -54,12 +56,30 @@ ENABLE_BACKGROUND_IMPORTS=true
 IMPORT_BATCH_SIZE=1000
 WORKER_CONCURRENCY=1
 WORKER_POLL_INTERVAL_MS=5000
-MAX_ROWS_PER_FILE=20000
-MAX_EXCEL_ROWS=20000
+MAX_ROWS_PER_FILE=100000
+MAX_EXCEL_ROWS=100000
 MAX_EXCEL_SHEETS=30
 ```
 
-`MAX_ROWS_PER_FILE` has priority. `MAX_EXCEL_ROWS` remains as a legacy alias.
+For initial production:
+
+```env
+MAX_UPLOAD_SIZE_MB=250
+MAX_ROWS_PER_FILE=500000
+MAX_EXCEL_ROWS=500000
+MAX_EXCEL_SHEETS=30
+```
+
+For advanced production, only after `npm run test:large-imports` passes against the target Render/Supabase environment:
+
+```env
+MAX_UPLOAD_SIZE_MB=500
+MAX_ROWS_PER_FILE=1000000
+MAX_EXCEL_ROWS=1000000
+MAX_EXCEL_SHEETS=30
+```
+
+`MAX_ROWS_PER_FILE` has priority. `MAX_EXCEL_ROWS` remains as a legacy alias. If `MAX_ROWS_PER_FILE` is missing and `MAX_EXCEL_ROWS` is dangerously high, the code falls back to the safe default `100000` rows and logs a warning.
 
 ## Render Services
 
@@ -85,6 +105,13 @@ Small validation:
 ```bash
 npm run typecheck
 npm run test
+npm run build
+```
+
+Upload environment diagnostics:
+
+```bash
+npm run diagnose:uploads
 ```
 
 One-shot worker smoke test:
@@ -92,6 +119,14 @@ One-shot worker smoke test:
 ```bash
 npm run worker:imports:once
 ```
+
+Stress/load harness:
+
+```bash
+npm run test:large-imports
+```
+
+See [Large Import Stress Tests](LARGE_IMPORT_STRESS_TESTS.md) for plans, auth cookie setup, bad cases and report format.
 
 Manual large-file test:
 

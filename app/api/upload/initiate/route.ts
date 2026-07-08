@@ -1,13 +1,25 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
-import { FileValidationError, SupabaseError, ValidationError } from "@/lib/errors/AppError";
+import { AppError, FileValidationError, ValidationError } from "@/lib/errors/AppError";
 import { handleRouteError } from "@/lib/errors/errorHandler";
 import { safeStoragePath, sanitizeFileName, uploadFormSchema, validateUploadMetadata } from "@/lib/excel/validators";
+import { getLoggerContextFromRequest } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import {
+  assertUploadRuntimeReady,
+  checkStorageBucket,
+  checkUploadSchema,
+  getSupabaseErrorMetadata,
+  getUploadRuntimeDiagnostics,
+  logUploadDiagnostic,
+  uploadDatabaseError,
+  uploadFileTooLargeError,
+  uploadStorageError
+} from "@/lib/upload/diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,8 +36,21 @@ const initiateSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const requestLoggerContext = getLoggerContextFromRequest(request);
+  const preAuthLogContext = {
+    traceId: requestLoggerContext.traceId,
+    requestId: requestLoggerContext.requestId,
+    route: new URL(request.url).pathname,
+    method: request.method
+  };
+
+  await logUploadDiagnostic(preAuthLogContext, "request_received", "Upload initiate request received.", "started");
+  await logUploadDiagnostic(preAuthLogContext, "auth_check_started", "Upload initiate auth check started.", "started");
   const context = await getAuthContext(request);
-  if (context instanceof NextResponse) return context;
+  if (context instanceof NextResponse) {
+    await logUploadDiagnostic(preAuthLogContext, "auth_check_failed", "Upload initiate auth check failed.", "failed", { responseStatus: context.status });
+    return context;
+  }
   const logContext = {
     traceId: context.requestMeta.traceId,
     requestId: context.requestMeta.requestId,
@@ -36,17 +61,11 @@ export async function POST(request: Request) {
     method: request.method
   };
 
-  const rate = await checkPersistentRateLimit({
-    action: "upload_initiate",
-    identifier: context.profile.id,
-    limit: 20,
-    windowSeconds: 15 * 60,
-    blockSeconds: 15 * 60
-  });
-  if (!rate.allowed) return rateLimitResponse(rate.resetAt);
-
   try {
+    await logUploadDiagnostic(logContext, "auth_check_completed", "Upload initiate auth check completed.", "completed", { userId: context.profile.id });
+
     const body = await request.json().catch(() => null);
+    await logUploadDiagnostic(logContext, "metadata_validation_started", "Upload metadata validation started.", "started");
     const parsed = initiateSchema.safeParse(body);
     if (!parsed.success) throw new ValidationError("Upload initiate validation failed.", { issues: parsed.error.issues });
     const formParsed = uploadFormSchema.safeParse(parsed.data);
@@ -57,14 +76,65 @@ export async function POST(request: Request) {
       fileSize: parsed.data.fileSize,
       fileType: parsed.data.fileType
     });
-    if (fileErrors.length) throw new FileValidationError(fileErrors.join(" "), { fileName: parsed.data.fileName, fileSize: parsed.data.fileSize });
+    const originalFileName = sanitizeFileName(parsed.data.fileName);
+    const baseMetadata = {
+      fileName: originalFileName,
+      sizeBytes: parsed.data.fileSize
+    };
+    if (fileErrors.length) {
+      const message = fileErrors.join(" ");
+      if (/exceeds/i.test(message)) {
+        throw uploadFileTooLargeError(message, baseMetadata);
+      }
+      throw new FileValidationError(message, baseMetadata);
+    }
+    await logUploadDiagnostic(logContext, "metadata_validation_completed", "Upload metadata validation completed.", "completed", baseMetadata);
 
     if (context.isDemoMode || !context.supabase) {
-      return NextResponse.json({ error: "Background uploads require Supabase Storage." }, { status: 503 });
+      throw new AppError({
+        code: "UPLOAD_ENV_ERROR",
+        message: "Background uploads require Supabase Storage.",
+        statusCode: 503,
+        severity: "high",
+        safeMessage: "Falta configuracion del servidor para cargas grandes.",
+        details: baseMetadata
+      });
     }
 
+    await logUploadDiagnostic(logContext, "env_validation_started", "Upload runtime environment validation started.", "started", baseMetadata);
+    const diagnostics = getUploadRuntimeDiagnostics();
+    assertUploadRuntimeReady(diagnostics);
+    await logUploadDiagnostic(logContext, "env_validation_completed", "Upload runtime environment validation completed.", "completed", {
+      ...baseMetadata,
+      maxUploadSizeMb: diagnostics.maxUploadSizeMb,
+      maxRowsPerFile: diagnostics.maxRowsPerFile,
+      storageBucket: diagnostics.storageBucket,
+      warnings: diagnostics.warnings
+    });
+
+    const rate = await checkPersistentRateLimit({
+      action: "upload_initiate",
+      identifier: context.profile.id,
+      limit: 20,
+      windowSeconds: 15 * 60,
+      blockSeconds: 15 * 60
+    });
+    if (!rate.allowed) return rateLimitResponse(rate.resetAt);
+
     const service = createSupabaseServiceRoleClient();
-    if (!service) return NextResponse.json({ error: "Storage service role is not configured." }, { status: 503 });
+    if (!service) {
+      throw new AppError({
+        code: "UPLOAD_ENV_ERROR",
+        message: "Missing SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY for upload initiation.",
+        statusCode: 500,
+        severity: "critical",
+        safeMessage: "Falta configuracion del servidor para cargas grandes.",
+        details: { ...baseMetadata, diagnostics }
+      });
+    }
+
+    await checkUploadSchema(context.supabase, logContext);
+    await checkStorageBucket(service, diagnostics.storageBucket, logContext);
 
     if (parsed.data.idempotencyKey) {
       const { data: existingUpload, error: existingError } = await context.supabase
@@ -74,7 +144,7 @@ export async function POST(request: Request) {
         .eq("idempotency_key", parsed.data.idempotencyKey)
         .is("archived_at", null)
         .maybeSingle();
-      if (existingError) throw new SupabaseError("Unable to check duplicate upload.", { table: "upload_batches", existingError });
+      if (existingError) throw uploadDatabaseError("Unable to check duplicate upload.", existingError, { ...baseMetadata, table: "upload_batches" });
       if (existingUpload) {
         const { data: existingJob } = await context.supabase
           .from("import_jobs")
@@ -103,13 +173,18 @@ export async function POST(request: Request) {
 
     const uploadBatchId = crypto.randomUUID();
     const jobId = crypto.randomUUID();
-    const originalFileName = sanitizeFileName(parsed.data.fileName);
-    const bucket = process.env.SUPABASE_STORAGE_BUCKET || "excel-uploads";
+    const bucket = diagnostics.storageBucket;
     const storagePath = safeStoragePath(context.profile.id, uploadBatchId, originalFileName);
+    const uploadMetadata = {
+      ...baseMetadata,
+      uploadBatchId,
+      jobId,
+      storageBucket: bucket,
+      maxUploadSizeMb: diagnostics.maxUploadSizeMb,
+      maxRowsPerFile: diagnostics.maxRowsPerFile
+    };
 
-    const { data: signedUpload, error: signedError } = await service.storage.from(bucket).createSignedUploadUrl(storagePath);
-    if (signedError || !signedUpload) throw new SupabaseError("Unable to create signed upload URL.", { signedError });
-
+    await logUploadDiagnostic(logContext, "upload_batch_create_started", "Upload batch create started.", "started", uploadMetadata);
     const { error: batchError } = await context.supabase.from("upload_batches").insert({
       id: uploadBatchId,
       uploaded_by: context.profile.id,
@@ -129,8 +204,10 @@ export async function POST(request: Request) {
       idempotency_key: parsed.data.idempotencyKey || null,
       notes: parsed.data.notes || null
     });
-    if (batchError) throw new SupabaseError("Unable to create upload batch.", { table: "upload_batches", batchError });
+    if (batchError) throw uploadDatabaseError("Unable to create upload batch.", batchError, { ...uploadMetadata, table: "upload_batches" });
+    await logUploadDiagnostic(logContext, "upload_batch_create_completed", "Upload batch create completed.", "completed", uploadMetadata);
 
+    await logUploadDiagnostic(logContext, "import_job_create_started", "Import job create started.", "started", uploadMetadata);
     const { error: jobError } = await context.supabase.from("import_jobs").insert({
       id: jobId,
       upload_batch_id: uploadBatchId,
@@ -146,7 +223,19 @@ export async function POST(request: Request) {
       region: parsed.data.region,
       notes: parsed.data.notes || null
     });
-    if (jobError) throw new SupabaseError("Unable to create import job.", { table: "import_jobs", jobError });
+    if (jobError) throw uploadDatabaseError("Unable to create import job.", jobError, { ...uploadMetadata, table: "import_jobs" });
+    await logUploadDiagnostic(logContext, "import_job_create_completed", "Import job create completed.", "completed", uploadMetadata);
+
+    await logUploadDiagnostic(logContext, "signed_upload_url_create_started", "Signed upload URL create started.", "started", uploadMetadata);
+    const { data: signedUpload, error: signedError } = await service.storage.from(bucket).createSignedUploadUrl(storagePath);
+    if (signedError || !signedUpload) {
+      await Promise.all([
+        context.supabase.from("upload_batches").update({ status: "failed", error_message: "Unable to create signed upload URL." }).eq("id", uploadBatchId),
+        context.supabase.from("import_jobs").update({ status: "failed", error_message: "Unable to create signed upload URL.", updated_at: new Date().toISOString() }).eq("id", jobId)
+      ]);
+      throw uploadStorageError("Unable to create signed upload URL.", signedError, uploadMetadata);
+    }
+    await logUploadDiagnostic(logContext, "signed_upload_url_create_completed", "Signed upload URL create completed.", "completed", uploadMetadata);
 
     await logger.info({
       ...logContext,
@@ -156,7 +245,7 @@ export async function POST(request: Request) {
       status: "completed",
       uploadBatchId,
       fileName: originalFileName,
-      metadata: { jobId, bucket, storagePath, sizeBytes: parsed.data.fileSize }
+      metadata: { jobId, bucket, storagePath, sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile }
     });
     await logAuditEvent(context, "upload_initialized", "upload_batch", uploadBatchId, { jobId, fileName: originalFileName });
 
@@ -175,6 +264,12 @@ export async function POST(request: Request) {
       }
     });
   } catch (error) {
+    await logUploadDiagnostic(logContext, "initiate_failed", "Upload initiate failed.", "failed", {
+      errorCode: error instanceof AppError ? error.code : "UNKNOWN_ERROR",
+      caughtMessage: error instanceof Error ? error.message : "Unknown upload initiate error",
+      ...getSupabaseErrorMetadata(error),
+      ...(error instanceof AppError ? error.details : {})
+    }, error);
     return handleRouteError(error, logContext, {
       module: "upload",
       action: "upload_initiate_failed",

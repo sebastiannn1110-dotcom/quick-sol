@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "worker:imports": "tsx scripts/import-worker.ts",
-    "worker:imports:once": "tsx scripts/import-worker.ts --once"
+    "worker:imports:once": "tsx scripts/import-worker.ts --once",
+    "diagnose:uploads": "tsx scripts/diagnose-uploads.ts",
+    "test:large-imports": "tsx scripts/large-import-stress.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

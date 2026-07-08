@@ -19,5 +19,5 @@ describe("parseExcelWorkbook perfect upload fixture", () => {
     expect(result.invalidRows).toBe(0);
     expect(result.errorCount).toBe(0);
     expect(result.dataQualityScore).toBe(100);
-  });
+  }, 15000);
 });

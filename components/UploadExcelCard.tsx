@@ -51,6 +51,22 @@ interface ActiveJobState {
   errorMessage: string | null;
 }
 
+class UploadApiError extends Error {
+  status: number;
+  code?: string;
+  traceId?: string;
+  payload: unknown;
+
+  constructor(message: string, input: { status: number; code?: string; traceId?: string; payload: unknown }) {
+    super(message);
+    this.name = "UploadApiError";
+    this.status = input.status;
+    this.code = input.code;
+    this.traceId = input.traceId;
+    this.payload = input.payload;
+  }
+}
+
 const UPLOAD_CATEGORIES = [
   "Auto Detect",
   "Quotation",
@@ -82,9 +98,38 @@ async function readJsonResponse<T>(response: Response): Promise<T & { error?: st
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof payload?.error === "string" ? payload.error : typeof payload?.message === "string" ? payload.message : "Request failed.";
-    throw new Error(message);
+    console.error("[upload] API request failed", {
+      status: response.status,
+      code: typeof payload?.code === "string" ? payload.code : undefined,
+      traceId: typeof payload?.traceId === "string" ? payload.traceId : undefined,
+      payload
+    });
+    throw new UploadApiError(message, {
+      status: response.status,
+      code: typeof payload?.code === "string" ? payload.code : undefined,
+      traceId: typeof payload?.traceId === "string" ? payload.traceId : undefined,
+      payload
+    });
   }
   return payload as T & { error?: string; message?: string };
+}
+
+function userFacingUploadError(error: unknown, t: ReturnType<typeof useLanguage>["t"]) {
+  if (error instanceof UploadApiError) {
+    if (error.status === 401) return t("upload.error.sessionExpired");
+    if (error.status === 413) return t("upload.error.fileTooLarge");
+    if (error.code === "UPLOAD_ENV_ERROR") return t("upload.error.env");
+    if (error.code === "UPLOAD_STORAGE_ERROR" || error.code === "UPLOAD_STORAGE_BUCKET_MISSING") return t("upload.error.storage");
+    if (
+      error.code === "UPLOAD_DATABASE_ERROR" ||
+      error.code === "UPLOAD_MIGRATION_MISSING" ||
+      error.code === "UPLOAD_RLS_BLOCKED" ||
+      error.code === "SUPABASE_ERROR"
+    ) {
+      return t("upload.error.database");
+    }
+  }
+  return error instanceof Error ? error.message : t("upload.failed");
 }
 
 function buildIdempotencyKey(file: File) {
@@ -312,8 +357,11 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         setMessage(t("upload.cancelled"));
         setError(null);
       } else {
-        const uploadMessage = uploadError instanceof Error ? uploadError.message : t("upload.failed");
-        clientLogger.uploadFailed({ message: uploadMessage });
+        const uploadMessage = userFacingUploadError(uploadError, t);
+        clientLogger.uploadFailed({
+          message: uploadMessage,
+          technicalMessage: uploadError instanceof Error ? uploadError.message : String(uploadError)
+        });
         setError(uploadMessage);
       }
     } finally {

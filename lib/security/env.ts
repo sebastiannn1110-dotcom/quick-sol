@@ -45,11 +45,21 @@ export function getNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+export function getRowsPerFileLimit() {
+  const explicit = Number(process.env.MAX_ROWS_PER_FILE);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+  const legacy = Number(process.env.MAX_EXCEL_ROWS);
+  if (Number.isFinite(legacy) && legacy > 0 && legacy <= 1_000_000) return legacy;
+
+  return 100_000;
+}
+
 export const SECURITY_LIMITS = {
   maxUploadSizeBytes: getNumberEnv("MAX_UPLOAD_SIZE_MB", 25) * 1024 * 1024,
   uploadChunkSizeBytes: getNumberEnv("UPLOAD_CHUNK_SIZE_MB", 8) * 1024 * 1024,
   uploadTimeoutSeconds: getNumberEnv("UPLOAD_TIMEOUT_SECONDS", 60),
-  maxExcelRows: getNumberEnv("MAX_ROWS_PER_FILE", getNumberEnv("MAX_EXCEL_ROWS", 20000)),
+  maxExcelRows: getRowsPerFileLimit(),
   maxExcelSheets: getNumberEnv("MAX_EXCEL_SHEETS", 30),
   uploadChunkSize: getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500),
   importBatchSize: getNumberEnv("IMPORT_BATCH_SIZE", getNumberEnv("SUPABASE_INSERT_CHUNK_SIZE", 500)),

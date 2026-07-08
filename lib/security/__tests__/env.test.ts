@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getSupabaseServiceRoleKey, isServiceRoleConfigured } from "@/lib/security/env";
+import { getRowsPerFileLimit, getSupabaseServiceRoleKey, isServiceRoleConfigured } from "@/lib/security/env";
 
 const originalEnv = { ...process.env };
 
@@ -24,5 +24,21 @@ describe("service role environment", () => {
 
     expect(getSupabaseServiceRoleKey()).toBe("secret");
     expect(isServiceRoleConfigured()).toBe(true);
+  });
+});
+
+describe("row limit environment", () => {
+  it("uses MAX_ROWS_PER_FILE before MAX_EXCEL_ROWS", () => {
+    process.env.MAX_ROWS_PER_FILE = "500000";
+    process.env.MAX_EXCEL_ROWS = "100000";
+
+    expect(getRowsPerFileLimit()).toBe(500000);
+  });
+
+  it("does not trust a dangerous legacy MAX_EXCEL_ROWS when MAX_ROWS_PER_FILE is missing", () => {
+    delete process.env.MAX_ROWS_PER_FILE;
+    process.env.MAX_EXCEL_ROWS = "200000000";
+
+    expect(getRowsPerFileLimit()).toBe(100000);
   });
 });
