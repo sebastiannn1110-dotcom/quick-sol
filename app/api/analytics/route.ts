@@ -124,14 +124,24 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ analytics });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     await logger.error({
       ...logContext,
       module: "analytics",
-      action: "analytics_query_failed",
-      message: "Unable to load employee analytics.",
+      action: "analytics_failed",
+      message: "Unable to load analytics; returning degraded analytics payload.",
       status: "failed",
+      metadata: {
+        errorMessage,
+        errorStack: error instanceof Error ? error.stack : undefined
+      },
       error
     });
-    return NextResponse.json({ error: "Unable to load analytics." }, { status: 500 });
+    const analytics = buildPlatformAnalytics({ records: [], uploads: [], profiles: [] });
+    return NextResponse.json({
+      analytics,
+      warning: "Analytics could not be loaded. Uploads are not affected.",
+      error: "Unable to load analytics."
+    });
   }
 }

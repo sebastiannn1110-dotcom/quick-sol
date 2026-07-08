@@ -36,6 +36,8 @@ const initiateSchema = z.object({
 });
 
 function supabaseResumableEndpoint(supabaseUrl: string) {
+  const storageUrl = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_URL;
+  if (storageUrl) return `${new URL(storageUrl).origin}/storage/v1/upload/resumable`;
   const url = new URL(supabaseUrl);
   const host = url.hostname.endsWith(".supabase.co")
     ? url.hostname.replace(".supabase.co", ".storage.supabase.co")

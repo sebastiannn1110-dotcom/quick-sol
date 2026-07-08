@@ -4,9 +4,15 @@ const nextConfig = {
   reactStrictMode: true,
   async headers() {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : "";
-    const supabaseWebSocket = supabaseUrl ? `wss://${new URL(supabaseUrl).host}` : "";
-    const connectSources = ["'self'", supabaseOrigin, supabaseWebSocket, "https://api.openai.com", "https://api.elevenlabs.io"].filter(Boolean).join(" ");
+    const supabaseStorageUrl = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_URL;
+    const parsedSupabaseUrl = supabaseUrl ? new URL(supabaseUrl) : null;
+    const supabaseOrigin = parsedSupabaseUrl?.origin ?? "";
+    const supabaseWebSocket = parsedSupabaseUrl ? `wss://${parsedSupabaseUrl.host}` : "";
+    const derivedStorageOrigin = parsedSupabaseUrl?.hostname.endsWith(".supabase.co")
+      ? `${parsedSupabaseUrl.protocol}//${parsedSupabaseUrl.hostname.replace(".supabase.co", ".storage.supabase.co")}`
+      : "";
+    const storageOrigin = supabaseStorageUrl ? new URL(supabaseStorageUrl).origin : derivedStorageOrigin;
+    const connectSources = ["'self'", supabaseOrigin, supabaseWebSocket, storageOrigin, "https://api.openai.com", "https://api.elevenlabs.io"].filter(Boolean).join(" ");
     const imgSources = ["'self'", "data:", "blob:", supabaseOrigin].filter(Boolean).join(" ");
     const mediaSources = ["'self'", "data:", "blob:", "https:"].join(" ");
 

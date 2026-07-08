@@ -102,6 +102,16 @@ class UploadApiError extends Error {
   }
 }
 
+class ResumableUploadError extends Error {
+  storageUploadUrl: string;
+
+  constructor(message: string, storageUploadUrl: string) {
+    super(message);
+    this.name = "ResumableUploadError";
+    this.storageUploadUrl = storageUploadUrl;
+  }
+}
+
 const UPLOAD_CATEGORIES = [
   "Auto Detect",
   "Quotation",
@@ -150,6 +160,7 @@ async function readJsonResponse<T>(response: Response): Promise<T & { error?: st
 }
 
 function userFacingUploadError(error: unknown, t: ReturnType<typeof useLanguage>["t"]) {
+  if (error instanceof ResumableUploadError) return t("upload.error.resumableBlocked");
   if (error instanceof UploadApiError) {
     if (error.status === 401) return t("upload.error.sessionExpired");
     if (error.status === 413) return t("upload.error.fileTooLarge");
@@ -353,7 +364,27 @@ async function uploadDirectlyToStorage(
   signal: AbortSignal
 ) {
   if (initiate.uploadStrategy === "resumable") {
-    await uploadWithTusResumable(initiate, file, onProgress, signal);
+    try {
+      await uploadWithTusResumable(initiate, file, onProgress, signal);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("resumable_upload_blocked_or_failed", {
+        storageUploadUrl: initiate.resumable.endpoint,
+        fileName: file.name,
+        fileSizeBytes: file.size,
+        errorMessage
+      });
+      clientLogger.uploadResumableBlockedOrFailed({
+        storageUploadUrl: initiate.resumable.endpoint,
+        fileName: file.name,
+        fileSizeBytes: file.size,
+        errorMessage
+      });
+      throw new ResumableUploadError(
+        "Resumable upload failed or was blocked before the file reached Supabase Storage.",
+        initiate.resumable.endpoint
+      );
+    }
     return;
   }
 
