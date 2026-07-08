@@ -22,6 +22,29 @@ function normalizeEvent(event: LogEvent): PersistableLogEvent {
   };
 }
 
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  audit: 25,
+  warn: 30,
+  security: 35,
+  error: 40,
+  fatal: 50
+};
+
+function configuredLogLevel() {
+  const raw = (process.env.LOG_LEVEL || "info").toLowerCase();
+  if (raw in LOG_LEVEL_PRIORITY) return raw as LogLevel;
+  return "info";
+}
+
+function shouldLog(event: PersistableLogEvent) {
+  if (event.level === "debug" && process.env.ENABLE_VERBOSE_IMPORT_LOGS !== "true" && process.env.ENABLE_WORKER_DEBUG_LOGS !== "true" && configuredLogLevel() !== "debug") {
+    return false;
+  }
+  return LOG_LEVEL_PRIORITY[event.level] >= LOG_LEVEL_PRIORITY[configuredLogLevel()];
+}
+
 async function persistSystemLog(event: PersistableLogEvent) {
   if (typeof window !== "undefined") return;
   if ("EdgeRuntime" in globalThis) return;
@@ -66,6 +89,7 @@ async function persistSystemLog(event: PersistableLogEvent) {
 
 export async function logEvent(event: LogEvent) {
   const normalized = normalizeEvent(event);
+  if (!shouldLog(normalized)) return normalized;
   const line = JSON.stringify(normalized);
 
   if (process.env.NODE_ENV === "development") {

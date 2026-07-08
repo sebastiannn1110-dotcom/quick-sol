@@ -15,3 +15,5 @@ supabase/.temp/
 excel de test/
 outputs/quiksol_ai_test/
 outputs/large-import-stress/
+outputs/
+.env.local

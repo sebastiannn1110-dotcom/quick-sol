@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import * as tus from "tus-js-client";
 import { useLanguage } from "@/components/LanguageProvider";
 import { clientLogger } from "@/lib/logger/clientLogger";
@@ -42,6 +42,22 @@ interface InitiateResponse {
 interface JobResponse {
   job: ImportJob;
   upload: UploadBatch | null;
+  queue?: {
+    position: number | null;
+    queuedCount: number | null;
+    currentProcessingJob: {
+      jobId: string;
+      uploadBatchId: string;
+      fileName: string;
+      workerId: string | null;
+      heartbeatAt: string | null;
+      processingStartedAt: string | null;
+    } | null;
+    workerConcurrency: number;
+    queuedForSeconds: number | null;
+    processingForSeconds: number | null;
+    lastHeartbeatAt: string | null;
+  };
   error?: string;
 }
 
@@ -60,6 +76,13 @@ interface ActiveJobState {
   uploadEtaSeconds: number | null;
   queuedAt: string | null;
   workerLastHeartbeatAt: string | null;
+  queuePosition: number | null;
+  queuedCount: number | null;
+  currentProcessingFileName: string | null;
+  currentProcessingJobId: string | null;
+  currentWorkerId: string | null;
+  queuedForSeconds: number | null;
+  processingForSeconds: number | null;
   errorMessage: string | null;
 }
 
@@ -161,6 +184,25 @@ function formatDuration(seconds: number | null) {
   const remainingSeconds = seconds % 60;
   if (minutes <= 0) return `${remainingSeconds}s`;
   return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatTimestamp(value: string | null) {
+  if (!value) return "n/a";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "n/a";
+  return date.toLocaleString();
+}
+
+function statusCopy(status: UploadStatus, queueLooksStale: boolean, t: ReturnType<typeof useLanguage>["t"]) {
+  if (status === "uploaded") return t("upload.statusUploadedDetail");
+  if (status === "queued") return queueLooksStale ? t("upload.workerNotResponding") : t("upload.waitingForWorker");
+  if (status === "retrying") return t("upload.statusRetryingDetail");
+  if (status === "processing") return t("upload.statusProcessingDetail");
+  if (status === "completed") return t("upload.statusCompletedDetail");
+  if (status === "failed") return t("upload.statusFailedDetail");
+  if (status === "cancelled") return t("upload.cancelled");
+  if (status === "uploading") return t("upload.statusUploadingDetail");
+  return t("upload.statusPendingDetail");
 }
 
 function queuedForMoreThanTwoMinutes(queuedAt: string | null) {
@@ -362,12 +404,23 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
   const abortRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
   const uploadMetricsRef = useRef<{ speedBps: number | null; etaSeconds: number | null }>({ speedBps: null, etaSeconds: null });
+  const mountedRef = useRef(true);
+  const pollGenerationRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      pollGenerationRef.current += 1;
+      abortRef.current?.abort();
+    };
+  }, []);
 
   function updateField(key: keyof typeof form, value: string) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function updateActiveJob(job: ImportJob, upload: UploadBatch | null) {
+  function updateActiveJob(job: ImportJob, upload: UploadBatch | null, queue?: JobResponse["queue"]) {
+    if (!mountedRef.current) return;
     setActiveJob((current) => ({
       uploadId: job.upload_batch_id,
       jobId: job.id,
@@ -383,6 +436,13 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       uploadEtaSeconds: upload?.upload_eta_seconds ?? current?.uploadEtaSeconds ?? null,
       queuedAt: upload?.queued_at ?? current?.queuedAt ?? null,
       workerLastHeartbeatAt: job.heartbeat_at ?? upload?.worker_last_heartbeat_at ?? current?.workerLastHeartbeatAt ?? null,
+      queuePosition: queue?.position ?? current?.queuePosition ?? null,
+      queuedCount: queue?.queuedCount ?? current?.queuedCount ?? null,
+      currentProcessingFileName: queue?.currentProcessingJob?.fileName ?? current?.currentProcessingFileName ?? null,
+      currentProcessingJobId: queue?.currentProcessingJob?.jobId ?? current?.currentProcessingJobId ?? null,
+      currentWorkerId: job.worker_id ?? queue?.currentProcessingJob?.workerId ?? current?.currentWorkerId ?? null,
+      queuedForSeconds: queue?.queuedForSeconds ?? current?.queuedForSeconds ?? null,
+      processingForSeconds: queue?.processingForSeconds ?? current?.processingForSeconds ?? null,
       errorMessage: job.error_message ?? upload?.error_message ?? null
     }));
   }
@@ -390,13 +450,15 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
   async function loadJob(jobId: string) {
     const response = await fetch(`/api/upload/jobs/${jobId}`, { cache: "no-store" });
     const payload = await readJsonResponse<JobResponse>(response);
-    updateActiveJob(payload.job, payload.upload);
+    updateActiveJob(payload.job, payload.upload, payload.queue);
     onStatusChange?.();
     return payload;
   }
 
   async function waitForJob(jobId: string) {
+    const pollGeneration = ++pollGenerationRef.current;
     while (true) {
+      if (!mountedRef.current || pollGeneration !== pollGenerationRef.current) throw new DOMException("Polling stopped.", "AbortError");
       const payload = await loadJob(jobId);
       if (payload.job.status === "completed") return payload;
       if (payload.job.status === "failed") throw new Error(payload.job.error_message ?? t("upload.jobFailed"));
@@ -457,6 +519,13 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         uploadEtaSeconds: null,
         queuedAt: null,
         workerLastHeartbeatAt: null,
+        queuePosition: null,
+        queuedCount: null,
+        currentProcessingFileName: null,
+        currentProcessingJobId: null,
+        currentWorkerId: null,
+        queuedForSeconds: null,
+        processingForSeconds: null,
         errorMessage: null
       });
 
@@ -567,6 +636,13 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
   const uploadProgress = activeJob?.uploadProgress ?? 0;
   const processingProgress = activeJob?.processingProgress ?? 0;
   const queueLooksStale = Boolean(activeJob?.status === "queued" && queuedForMoreThanTwoMinutes(activeJob.queuedAt));
+  const submitLabel = loading && activeJob?.status === "queued"
+    ? t("history.status.queued")
+    : loading && activeJob?.status === "processing"
+      ? t("upload.processing")
+      : loading && activeJob?.status === "uploading"
+        ? t("history.status.uploading")
+        : t("upload.submit");
 
   return (
     <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -634,13 +710,16 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         </label>
 
         {activeJob ? (
-          <div className="rounded-md bg-slate-50 p-3">
+          <div className="min-h-[260px] rounded-md bg-slate-50 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="font-semibold text-slate-800">{activeJob.fileName}</span>
               <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
                 {t("upload.status")}: {activeJob.status}
               </span>
             </div>
+            <p className="mt-2 min-h-5 text-sm font-medium text-slate-700">
+              {statusCopy(activeJob.status, queueLooksStale, t)}
+            </p>
             <div className="mt-3 grid gap-3">
               <div>
                 <div className="mb-1 flex justify-between text-xs font-medium text-slate-600">
@@ -651,7 +730,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
                   <div className="h-full bg-brand-600 transition-all" style={{ width: `${uploadProgress}%` }} />
                 </div>
               </div>
-              <div>
+              <div className={activeJob.status === "queued" ? "opacity-50" : ""}>
                 <div className="mb-1 flex justify-between text-xs font-medium text-slate-600">
                   <span>{t("upload.processingProgress")}</span>
                   <span>{processingProgress}%</span>
@@ -662,13 +741,26 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-600">
+              <span>jobId: {activeJob.jobId}</span>
               <span>{t("upload.rowsProcessed")}: {activeJob.processedRows}</span>
               <span>{t("history.rows")}: {activeJob.totalRows}</span>
               <span>{t("history.errors")}: {activeJob.failedRows}</span>
               <span>{t("upload.speed")}: {formatBytesPerSecond(activeJob.uploadSpeedBps)}</span>
               <span>{t("upload.eta")}: {formatDuration(activeJob.uploadEtaSeconds)}</span>
             </div>
-            {activeJob.status === "queued" ? <p className="mt-2 text-xs font-medium text-slate-600">{queueLooksStale ? t("upload.workerNotResponding") : t("upload.waitingForWorker")}</p> : null}
+            <div className="mt-3 grid min-h-[72px] gap-1 text-xs text-slate-600 sm:grid-cols-2">
+              <span>{t("upload.queuePosition")}: {activeJob.queuePosition ?? "n/a"}{activeJob.queuedCount ? ` / ${activeJob.queuedCount}` : ""}</span>
+              <span>{t("upload.queuedFor")}: {formatDuration(activeJob.queuedForSeconds)}</span>
+              <span>{t("upload.workerHeartbeat")}: {formatTimestamp(activeJob.workerLastHeartbeatAt)}</span>
+              <span>{t("upload.workerId")}: {activeJob.currentWorkerId ?? "n/a"}</span>
+              <span className="sm:col-span-2">
+                {t("upload.currentProcessingFile")}: {activeJob.currentProcessingFileName ?? "n/a"}
+                {activeJob.currentProcessingJobId ? ` (${activeJob.currentProcessingJobId})` : ""}
+              </span>
+            </div>
+            {activeJob.status === "queued" && activeJob.currentProcessingFileName ? (
+              <p className="mt-2 text-xs font-medium text-amber-700">{t("upload.workerBusy")}</p>
+            ) : null}
             {activeJob.errorMessage ? <p className="mt-2 text-xs font-medium text-red-700">{activeJob.errorMessage}</p> : null}
           </div>
         ) : null}
@@ -706,7 +798,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
             className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
           >
-            {loading ? t("upload.processing") : t("upload.submit")}
+            {submitLabel}
           </button>
         </div>
       </form>
