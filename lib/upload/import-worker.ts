@@ -14,14 +14,14 @@ import { getFileExtension, sanitizeFileName } from "@/lib/excel/validators";
 import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
 import { logger } from "@/lib/logger/logger";
 import { SECURITY_LIMITS } from "@/lib/security/env";
-import type { HeaderDetectionResult, RawCell } from "@/lib/excel/types";
+import type { HeaderDetectionResult, ImportIssue, RawCell } from "@/lib/excel/types";
 import type { JsonRecord } from "@/lib/types";
 
 export interface ImportJobRow {
   id: string;
   upload_batch_id: string;
   uploaded_by: string;
-  status: "pending_upload" | "uploaded" | "queued" | "retrying" | "processing" | "completed" | "failed" | "cancelled";
+  status: "pending_upload" | "uploaded" | "queued" | "retrying" | "processing" | "completed" | "completed_with_warnings" | "failed" | "cancelled";
   storage_bucket: string;
   storage_path: string;
   original_file_name: string;
@@ -73,15 +73,31 @@ interface SheetState {
 interface ProcessState {
   batch: Array<Record<string, unknown>>;
   importErrors: Array<Record<string, unknown>>;
+  errorSummary: Map<string, ErrorSummaryEntry>;
   sheetRows: SheetState[];
   categoryVotes: string[];
   totalRows: number;
   validRows: number;
   invalidRows: number;
   errorCount: number;
+  warningCount: number;
+  rowsWithWarnings: number;
+  technicalErrorCount: number;
+  suppressedErrorCount: number;
   missingMpnCount: number;
   lowGpRate: number | null;
   flushCount: number;
+}
+
+interface ErrorSummaryEntry {
+  job_id: string;
+  upload_batch_id: string;
+  error_type: string;
+  severity: string;
+  message: string;
+  occurrence_count: number;
+  sample_row_number: number;
+  sample_raw_data: JsonRecord;
 }
 
 class ImportCancelledError extends Error {
@@ -100,6 +116,45 @@ function selectedCategory(selected: string | null | undefined, detected: string)
   if (selected === "Supplier Offer") return "Supplier Offers";
   if (selected === "Quotation") return "RFQ";
   return selected;
+}
+
+function finalImportStatus(state: ProcessState) {
+  return state.warningCount > 0 || state.technicalErrorCount > 0 || state.suppressedErrorCount > 0 || state.invalidRows > 0
+    ? "completed_with_warnings"
+    : "completed";
+}
+
+function issueKey(issue: ImportIssue) {
+  return [issue.errorType, issue.severity, issue.columnName ?? "", issue.message].join("|");
+}
+
+function recordIssue(state: ProcessState, job: ImportJobRow, issue: ImportIssue, rawData: JsonRecord, rowIndex: number) {
+  state.errorCount += 1;
+  if (issue.errorType === "technical_error" || issue.severity === "critical") state.technicalErrorCount += 1;
+  else state.warningCount += 1;
+
+  const key = issueKey(issue);
+  const existing = state.errorSummary.get(key);
+  if (existing) {
+    existing.occurrence_count += 1;
+    return;
+  }
+  state.errorSummary.set(key, {
+    job_id: job.id,
+    upload_batch_id: job.upload_batch_id,
+    error_type: issue.errorType,
+    severity: issue.severity,
+    message: issue.message,
+    occurrence_count: 1,
+    sample_row_number: rowIndex,
+    sample_raw_data: rawData
+  });
+}
+
+function shouldImportRow(issues: ImportIssue[]) {
+  if (SECURITY_LIMITS.allowPartialRows) return true;
+  if (SECURITY_LIMITS.treatValidationAsWarnings) return issues.every((issue) => issue.errorType === "technical_error" || issue.severity !== "critical");
+  return !issues.some((issue) => issue.severity === "high" || issue.severity === "critical");
 }
 
 function isEmptyCell(value: unknown) {
@@ -183,7 +238,7 @@ async function updateHeartbeat(supabase: SupabaseClient, job: ImportJobRow, work
 }
 
 async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, status = "processing") {
-  const estimatedProgress = status === "completed" ? 100 : Math.min(95, Math.max(5, Math.round(state.totalRows / Math.max(state.totalRows + 2000, 1) * 100)));
+  const estimatedProgress = status === "completed" || status === "completed_with_warnings" ? 100 : Math.min(95, Math.max(5, Math.round(state.totalRows / Math.max(state.totalRows + 2000, 1) * 100)));
   await Promise.all([
     supabase.from("import_jobs").update({
       status,
@@ -191,6 +246,10 @@ async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state
       processed_rows: state.totalRows,
       successful_rows: state.validRows,
       failed_rows: state.invalidRows,
+      warning_count: state.warningCount,
+      rows_with_warnings: state.rowsWithWarnings,
+      technical_error_count: state.technicalErrorCount,
+      suppressed_error_count: state.suppressedErrorCount,
       progress_percent: estimatedProgress,
       heartbeat_at: nowIso(),
       updated_at: nowIso()
@@ -204,6 +263,10 @@ async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state
       successful_rows: state.validRows,
       failed_rows: state.invalidRows,
       error_count: state.errorCount,
+      warning_count: state.warningCount,
+      rows_with_warnings: state.rowsWithWarnings,
+      technical_error_count: state.technicalErrorCount,
+      suppressed_error_count: state.suppressedErrorCount,
       processing_progress_percent: estimatedProgress
     }).eq("id", job.upload_batch_id)
   ]);
@@ -301,6 +364,10 @@ async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: 
       processedRows: state.totalRows,
       successfulRows: state.validRows,
       failedRows: state.invalidRows,
+      warningCount: state.warningCount,
+      rowsWithWarnings: state.rowsWithWarnings,
+      technicalErrorCount: state.technicalErrorCount,
+      suppressedErrorCount: state.suppressedErrorCount,
       errorCount: state.errorCount,
       memory: memoryUsageMb()
     }
@@ -398,7 +465,8 @@ async function processDataRow(
   const categoryDetection = detectCategory(sheet.header.headers, normalized.columns);
   const qualityIssues = detectRowQualityIssues(categoryDetection.category, normalized.columns);
   const errors = [...normalized.issues, ...qualityIssues];
-  const hasErrors = errors.some((issue) => issue.severity !== "low");
+  const hasWarnings = errors.length > 0;
+  const importRow = shouldImportRow(errors);
   const category = selectedCategory(job.selected_category, categoryDetection.category);
   const businessRecordId = crypto.randomUUID();
 
@@ -406,48 +474,56 @@ async function processDataRow(
   sheet.totalRows += 1;
   sheet.categories.push(categoryDetection.category);
   state.categoryVotes.push(categoryDetection.category);
-  if (hasErrors) {
+  if (!importRow) {
     state.invalidRows += 1;
     sheet.invalidRows += 1;
   } else {
     state.validRows += 1;
     sheet.validRows += 1;
   }
-  state.errorCount += errors.length;
+  if (hasWarnings) state.rowsWithWarnings += 1;
+  errors.forEach((issue) => recordIssue(state, job, issue, rawData, rowIndex));
   if (!normalized.columns.mpn) state.missingMpnCount += 1;
   const gpRate = Number(normalized.columns.gp_rate);
   if (Number.isFinite(gpRate)) state.lowGpRate = state.lowGpRate === null ? gpRate : Math.min(state.lowGpRate, gpRate);
   await ensureJobNotCancelled(supabase, job, state);
 
-  state.batch.push({
-    id: businessRecordId,
-    upload_batch_id: job.upload_batch_id,
-    upload_sheet_id: sheet.sheetId,
-    uploaded_by: job.uploaded_by,
-    category,
-    row_index: rowIndex,
-    raw_data: rawData,
-    normalized_data: {
-      ...normalized.normalizedData,
-      department: job.department,
-      region: job.region
-    },
-    searchable_text: buildSearchableText({
-      rawData,
-      normalizedData: normalized.normalizedData,
-      category
-    }).slice(0, 8000),
-    has_errors: hasErrors,
-    errors,
-    ...normalized.columns
-  });
+  if (importRow) {
+    state.batch.push({
+      id: businessRecordId,
+      upload_batch_id: job.upload_batch_id,
+      upload_sheet_id: sheet.sheetId,
+      uploaded_by: job.uploaded_by,
+      category,
+      row_index: rowIndex,
+      raw_data: rawData,
+      normalized_data: {
+        ...normalized.normalizedData,
+        department: job.department,
+        region: job.region
+      },
+      searchable_text: buildSearchableText({
+        rawData,
+        normalizedData: normalized.normalizedData,
+        category
+      }).slice(0, 8000),
+      has_errors: hasWarnings,
+      errors,
+      ...normalized.columns
+    });
+  }
 
-  for (const issue of errors) {
+  const rowErrorLimit = Math.max(0, SECURITY_LIMITS.importMaxErrorsPerRow);
+  for (const issue of errors.slice(0, rowErrorLimit)) {
+    if (state.importErrors.length >= SECURITY_LIMITS.importMaxErrorsPerJob) {
+      state.suppressedErrorCount += 1;
+      continue;
+    }
     state.importErrors.push({
       trace_id: context.traceId,
       upload_batch_id: job.upload_batch_id,
       upload_sheet_id: sheet.sheetId,
-      business_record_id: businessRecordId,
+      business_record_id: importRow ? businessRecordId : null,
       row_index: rowIndex,
       column_name: issue.columnName ?? null,
       error_type: issue.errorType,
@@ -458,6 +534,7 @@ async function processDataRow(
       job_id: job.id
     });
   }
+  if (errors.length > rowErrorLimit) state.suppressedErrorCount += errors.length - rowErrorLimit;
 
   await flushBatches(supabase, job, state, context);
 }
@@ -471,6 +548,14 @@ async function finalizeSheets(supabase: SupabaseClient, state: ProcessState) {
       detected_category: detectDominantCategory(sheet.categories)
     }).eq("id", sheet.sheetId);
   }
+}
+
+async function persistErrorSummary(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState) {
+  const summaryRows = Array.from(state.errorSummary.values());
+  await supabase.from("import_job_error_summary").delete().eq("job_id", job.id);
+  if (!summaryRows.length) return;
+  const { error } = await supabase.from("import_job_error_summary").insert(summaryRows);
+  if (error) throw error;
 }
 
 async function processXlsxFile(supabase: SupabaseClient, job: ImportJobRow, filePath: string, state: ProcessState, context: WorkerContext) {
@@ -639,12 +724,17 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
   const state: ProcessState = {
     batch: [],
     importErrors: [],
+    errorSummary: new Map(),
     sheetRows: [],
     categoryVotes: [],
     totalRows: 0,
     validRows: 0,
     invalidRows: 0,
     errorCount: 0,
+    warningCount: 0,
+    rowsWithWarnings: 0,
+    technicalErrorCount: 0,
+    suppressedErrorCount: 0,
     missingMpnCount: 0,
     lowGpRate: null,
     flushCount: 0
@@ -661,6 +751,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       supabase.from("business_records").delete().eq("upload_batch_id", job.upload_batch_id),
       supabase.from("import_errors").delete().eq("upload_batch_id", job.upload_batch_id),
       supabase.from("import_job_errors").delete().eq("job_id", job.id),
+      supabase.from("import_job_error_summary").delete().eq("job_id", job.id),
       supabase.from("upload_sheets").delete().eq("upload_batch_id", job.upload_batch_id)
     ]);
 
@@ -681,16 +772,22 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
     await flushBatches(supabase, job, state, context, true);
     await ensureJobNotCancelled(supabase, job, state, true);
     await finalizeSheets(supabase, state);
+    await persistErrorSummary(supabase, job, state);
     const detectedCategory = detectDominantCategory(state.categoryVotes);
-    const dataQualityScore = state.totalRows ? Math.round((state.validRows / state.totalRows) * 1000) / 10 : 0;
+    const dataQualityScore = state.totalRows ? Math.round(((state.totalRows - state.rowsWithWarnings) / state.totalRows) * 1000) / 10 : 0;
+    const finishedStatus = finalImportStatus(state);
     const finishedAt = nowIso();
     await Promise.all([
       supabase.from("import_jobs").update({
-        status: "completed",
+        status: finishedStatus,
         total_rows: state.totalRows,
         processed_rows: state.totalRows,
         successful_rows: state.validRows,
         failed_rows: state.invalidRows,
+        warning_count: state.warningCount,
+        rows_with_warnings: state.rowsWithWarnings,
+        technical_error_count: state.technicalErrorCount,
+        suppressed_error_count: state.suppressedErrorCount,
         progress_percent: 100,
         error_message: null,
         finished_at: finishedAt,
@@ -700,7 +797,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
         updated_at: finishedAt
       }).eq("id", job.id),
       supabase.from("upload_batches").update({
-        status: "completed",
+        status: finishedStatus,
         detected_category: detectedCategory,
         total_sheets: state.sheetRows.length,
         total_rows: state.totalRows,
@@ -710,6 +807,10 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
         successful_rows: state.validRows,
         failed_rows: state.invalidRows,
         error_count: state.errorCount,
+        warning_count: state.warningCount,
+        rows_with_warnings: state.rowsWithWarnings,
+        technical_error_count: state.technicalErrorCount,
+        suppressed_error_count: state.suppressedErrorCount,
         data_quality_score: dataQualityScore,
         processing_progress_percent: 100,
         completed_at: finishedAt,
@@ -721,11 +822,11 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       ...context,
       module: "upload",
       action: "processing_completed",
-      message: "Background import processing completed.",
+      message: finishedStatus === "completed_with_warnings" ? "Background import processing completed with warnings." : "Background import processing completed.",
       status: "completed",
       durationMs: Math.round(performance.now() - startedAt),
       category: detectedCategory,
-      metadata: { totalRows: state.totalRows, validRows: state.validRows, invalidRows: state.invalidRows, errorCount: state.errorCount, memory: memoryUsageMb() }
+      metadata: { totalRows: state.totalRows, validRows: state.validRows, invalidRows: state.invalidRows, warningCount: state.warningCount, rowsWithWarnings: state.rowsWithWarnings, technicalErrorCount: state.technicalErrorCount, suppressedErrorCount: state.suppressedErrorCount, errorCount: state.errorCount, memory: memoryUsageMb() }
     });
 
     await Promise.all([

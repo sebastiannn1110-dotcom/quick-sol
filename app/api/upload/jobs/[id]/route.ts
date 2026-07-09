@@ -6,7 +6,7 @@ import { SECURITY_LIMITS } from "@/lib/security/env";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ImportJobStatus = "queued" | "retrying" | "processing" | "completed" | "failed" | "cancelled" | "pending_upload" | "uploaded";
+type ImportJobStatus = "queued" | "retrying" | "processing" | "completed" | "completed_with_warnings" | "failed" | "cancelled" | "pending_upload" | "uploaded";
 
 function elapsedSeconds(date: string | null | undefined) {
   if (!date) return null;

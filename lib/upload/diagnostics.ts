@@ -5,7 +5,7 @@ import type { LogContext } from "@/lib/logger/types";
 import { logger } from "@/lib/logger/logger";
 import { isMissingSchemaError, type SupabaseErrorLike } from "@/lib/supabase/schema-errors";
 
-export const BACKGROUND_IMPORT_MIGRATION = "20260706000000_background_import_jobs.sql";
+export const BACKGROUND_IMPORT_MIGRATION = "20260709000000_non_blocking_import_warnings.sql";
 export const DEFAULT_UPLOAD_BUCKET = "excel-uploads";
 export const DEFAULT_UPLOAD_PROVIDER = "supabase";
 export const SAFE_DEFAULT_ROWS_PER_FILE = 100_000;
@@ -24,6 +24,10 @@ export interface UploadRuntimeDiagnostics {
   resumableThresholdMb: number;
   importBatchSize: number;
   insertChunkSize: number;
+  importMaxErrorsPerJob: number;
+  importMaxErrorsPerRow: number;
+  treatValidationAsWarnings: boolean;
+  allowPartialRows: boolean;
   uploadTempDir: string;
   workerConcurrency: number;
   workerPollIntervalMs: number;
@@ -91,6 +95,10 @@ export function getUploadRuntimeDiagnostics(): UploadRuntimeDiagnostics {
   if (!envNumber("LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB")) errors.push("Missing LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB.");
   if (!importBatchSize) errors.push("Missing IMPORT_BATCH_SIZE.");
   if (!insertChunkSize) errors.push("Missing SUPABASE_INSERT_CHUNK_SIZE.");
+  if (!envNumber("IMPORT_MAX_ERRORS_PER_JOB")) warnings.push("IMPORT_MAX_ERRORS_PER_JOB is not set. Using default 5000.");
+  if (!envNumber("IMPORT_MAX_ERRORS_PER_ROW")) warnings.push("IMPORT_MAX_ERRORS_PER_ROW is not set. Using default 5.");
+  if (process.env.IMPORT_TREAT_VALIDATION_AS_WARNINGS === "false") warnings.push("IMPORT_TREAT_VALIDATION_AS_WARNINGS=false will make row validation stricter.");
+  if (process.env.IMPORT_ALLOW_PARTIAL_ROWS === "false") warnings.push("IMPORT_ALLOW_PARTIAL_ROWS=false can block imperfect rows.");
   if (!process.env.SUPABASE_STORAGE_BUCKET) warnings.push(`SUPABASE_STORAGE_BUCKET is not set. Using default ${DEFAULT_UPLOAD_BUCKET}.`);
   if (!process.env.UPLOAD_STORAGE_PROVIDER) warnings.push(`UPLOAD_STORAGE_PROVIDER is not set. Using default ${DEFAULT_UPLOAD_PROVIDER}.`);
   if (provider !== DEFAULT_UPLOAD_PROVIDER) errors.push(`Unsupported UPLOAD_STORAGE_PROVIDER=${provider}. Only supabase is supported.`);
@@ -116,6 +124,10 @@ export function getUploadRuntimeDiagnostics(): UploadRuntimeDiagnostics {
     resumableThresholdMb,
     importBatchSize: SECURITY_LIMITS.importBatchSize,
     insertChunkSize: SECURITY_LIMITS.uploadChunkSize,
+    importMaxErrorsPerJob: SECURITY_LIMITS.importMaxErrorsPerJob,
+    importMaxErrorsPerRow: SECURITY_LIMITS.importMaxErrorsPerRow,
+    treatValidationAsWarnings: SECURITY_LIMITS.treatValidationAsWarnings,
+    allowPartialRows: SECURITY_LIMITS.allowPartialRows,
     uploadTempDir: process.env.UPLOAD_TEMP_DIR || ".tmp/imports",
     workerConcurrency: SECURITY_LIMITS.workerConcurrency,
     workerPollIntervalMs: SECURITY_LIMITS.workerPollIntervalMs,
@@ -216,14 +228,21 @@ export async function checkUploadSchema(supabase: SupabaseClient, context?: LogC
       table: "upload_batches",
       query: supabase
         .from("upload_batches")
-        .select("id,storage_bucket,upload_progress_percent,processing_progress_percent,idempotency_key")
+        .select("id,storage_bucket,upload_progress_percent,processing_progress_percent,idempotency_key,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count")
         .limit(1)
     },
     {
       table: "import_jobs",
       query: supabase
         .from("import_jobs")
-        .select("id,status,storage_bucket,storage_path,original_file_name,progress_percent")
+        .select("id,status,storage_bucket,storage_path,original_file_name,progress_percent,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count")
+        .limit(1)
+    },
+    {
+      table: "import_job_error_summary",
+      query: supabase
+        .from("import_job_error_summary")
+        .select("id,job_id,upload_batch_id,error_type,severity,message,occurrence_count,sample_row_number")
         .limit(1)
     },
     {

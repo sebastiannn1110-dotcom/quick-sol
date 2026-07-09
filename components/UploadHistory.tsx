@@ -29,7 +29,7 @@ function rowsOf(upload: UploadLike) {
 }
 
 function errorsOf(upload: UploadLike) {
-  return isBatch(upload) ? upload.failed_rows ?? upload.error_count : upload.invalidRows;
+  return isBatch(upload) ? upload.technical_error_count ?? upload.failed_rows ?? upload.rows_with_warnings ?? upload.error_count : upload.invalidRows;
 }
 
 function dateOf(upload: UploadLike) {
@@ -42,7 +42,7 @@ function statusOf(upload: UploadLike) {
 
 function progressOf(upload: UploadLike) {
   if (!isBatch(upload)) return 100;
-  if (upload.status === "completed") return 100;
+  if (upload.status === "completed" || upload.status === "completed_with_warnings") return 100;
   if (upload.status === "pending_upload" || upload.status === "uploaded") return upload.upload_progress_percent ?? 0;
   return upload.processing_progress_percent ?? 0;
 }
@@ -61,8 +61,9 @@ export default function UploadHistory({ uploads, showDownload = false }: { uploa
   if (status === "uploaded") return t("history.status.uploaded");
   if (status === "queued") return t("history.status.queued");
   if (status === "retrying") return t("history.status.retrying");
-  if (status === "processing") return t("history.status.processing");
+    if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
+    if (status === "completed_with_warnings") return t("history.status.completedWithWarnings");
     if (status === "failed") return t("history.status.failed");
     if (status === "cancelled") return t("history.status.cancelled");
     if (status === "archived") return t("history.status.archived");

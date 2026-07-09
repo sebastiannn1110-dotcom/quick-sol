@@ -72,6 +72,10 @@ interface ActiveJobState {
   totalRows: number;
   successfulRows: number;
   failedRows: number;
+  warningCount: number;
+  rowsWithWarnings: number;
+  technicalErrorCount: number;
+  suppressedErrorCount: number;
   uploadSpeedBps: number | null;
   uploadEtaSeconds: number | null;
   queuedAt: string | null;
@@ -210,6 +214,7 @@ function statusCopy(status: UploadStatus, queueLooksStale: boolean, t: ReturnTyp
   if (status === "retrying") return t("upload.statusRetryingDetail");
   if (status === "processing") return t("upload.statusProcessingDetail");
   if (status === "completed") return t("upload.statusCompletedDetail");
+  if (status === "completed_with_warnings") return t("upload.statusCompletedWithWarningsDetail");
   if (status === "failed") return t("upload.statusFailedDetail");
   if (status === "cancelled") return t("upload.cancelled");
   if (status === "uploading") return t("upload.statusUploadingDetail");
@@ -463,6 +468,10 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       totalRows: job.total_rows ?? upload?.total_rows ?? 0,
       successfulRows: job.successful_rows ?? upload?.successful_rows ?? upload?.valid_rows ?? 0,
       failedRows: job.failed_rows ?? upload?.failed_rows ?? upload?.invalid_rows ?? 0,
+      warningCount: job.warning_count ?? upload?.warning_count ?? 0,
+      rowsWithWarnings: job.rows_with_warnings ?? upload?.rows_with_warnings ?? 0,
+      technicalErrorCount: job.technical_error_count ?? upload?.technical_error_count ?? 0,
+      suppressedErrorCount: job.suppressed_error_count ?? upload?.suppressed_error_count ?? 0,
       uploadSpeedBps: upload?.upload_speed_bps ?? current?.uploadSpeedBps ?? null,
       uploadEtaSeconds: upload?.upload_eta_seconds ?? current?.uploadEtaSeconds ?? null,
       queuedAt: upload?.queued_at ?? current?.queuedAt ?? null,
@@ -491,7 +500,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
     while (true) {
       if (!mountedRef.current || pollGeneration !== pollGenerationRef.current) throw new DOMException("Polling stopped.", "AbortError");
       const payload = await loadJob(jobId);
-      if (payload.job.status === "completed") return payload;
+      if (payload.job.status === "completed" || payload.job.status === "completed_with_warnings") return payload;
       if (payload.job.status === "failed") throw new Error(payload.job.error_message ?? t("upload.jobFailed"));
       if (payload.job.status === "cancelled") throw new DOMException(t("upload.cancelled"), "AbortError");
       await sleep(POLL_INTERVAL_MS);
@@ -546,6 +555,10 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         totalRows: 0,
         successfulRows: 0,
         failedRows: 0,
+        warningCount: 0,
+        rowsWithWarnings: 0,
+        technicalErrorCount: 0,
+        suppressedErrorCount: 0,
         uploadSpeedBps: null,
         uploadEtaSeconds: null,
         queuedAt: null,
@@ -594,8 +607,9 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
 
       const completed = await waitForJob(initiate.jobId);
       const uploadResult = uploadResultFromJob(completed.job, completed.upload);
+      const completedMessage = completed.job.status === "completed_with_warnings" ? t("upload.jobCompletedWithWarnings") : t("upload.jobCompleted");
       setMessage(
-        `${t("upload.jobCompleted")}. ${t("upload.qualityScore")}: ${uploadResult.dataQualityScore ?? "n/a"}`
+        `${completedMessage}. ${t("upload.qualityScore")}: ${uploadResult.dataQualityScore ?? "n/a"}`
       );
       clientLogger.uploadCompleted({
         recordsUploaded: uploadResult.recordsUploaded,
@@ -653,7 +667,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       await readJsonResponse(response);
       const completed = await waitForJob(activeJob.jobId);
       const uploadResult = uploadResultFromJob(completed.job, completed.upload);
-      setMessage(t("upload.jobCompleted"));
+      setMessage(completed.job.status === "completed_with_warnings" ? t("upload.jobCompletedWithWarnings") : t("upload.jobCompleted"));
       onUploaded?.(uploadResult);
     } catch (retryError) {
       setError(retryError instanceof Error ? retryError.message : t("upload.failed"));
@@ -775,7 +789,11 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
               <span>jobId: {activeJob.jobId}</span>
               <span>{t("upload.rowsProcessed")}: {activeJob.processedRows}</span>
               <span>{t("history.rows")}: {activeJob.totalRows}</span>
-              <span>{t("history.errors")}: {activeJob.failedRows}</span>
+              <span>{t("upload.rowsImported")}: {activeJob.successfulRows}</span>
+              <span>{t("upload.rowsWithWarnings")}: {activeJob.rowsWithWarnings}</span>
+              <span>{t("upload.technicalErrors")}: {activeJob.technicalErrorCount}</span>
+              <span>{t("upload.dataWarnings")}: {activeJob.warningCount}</span>
+              <span>{t("upload.suppressedWarnings")}: {activeJob.suppressedErrorCount}</span>
               <span>{t("upload.speed")}: {formatBytesPerSecond(activeJob.uploadSpeedBps)}</span>
               <span>{t("upload.eta")}: {formatDuration(activeJob.uploadEtaSeconds)}</span>
             </div>

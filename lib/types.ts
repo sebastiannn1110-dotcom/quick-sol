@@ -48,6 +48,7 @@ export type UploadStatus =
   | "retrying"
   | "processing"
   | "completed"
+  | "completed_with_warnings"
   | "failed"
   | "cancelled"
   | "archived";
@@ -103,6 +104,10 @@ export interface UploadBatch {
   processed_rows?: number | null;
   successful_rows?: number | null;
   failed_rows?: number | null;
+  warning_count?: number | null;
+  rows_with_warnings?: number | null;
+  technical_error_count?: number | null;
+  suppressed_error_count?: number | null;
   error_message?: string | null;
   queued_at?: string | null;
   processing_started_at?: string | null;
@@ -137,6 +142,10 @@ export interface ImportJob {
   processed_rows: number;
   successful_rows: number;
   failed_rows: number;
+  warning_count?: number | null;
+  rows_with_warnings?: number | null;
+  technical_error_count?: number | null;
+  suppressed_error_count?: number | null;
   progress_percent: number;
   error_message: string | null;
   attempts: number;

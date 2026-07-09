@@ -67,13 +67,18 @@ export async function getLatestUpload(context: AuthContext) {
   const supabase = requireSupabase(context);
   let query = supabase
     .from("upload_batches")
-    .select("id, uploaded_by, original_file_name, detected_category, status, total_rows, valid_rows, invalid_rows, error_count, data_quality_score, created_at, profiles(full_name,email,department,region,role)")
+    .select("id, uploaded_by, original_file_name, detected_category, status, total_rows, valid_rows, invalid_rows, successful_rows, failed_rows, error_count, warning_count, rows_with_warnings, technical_error_count, suppressed_error_count, data_quality_score, created_at, profiles(full_name,email,department,region,role)")
     .order("created_at", { ascending: false })
     .limit(1);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
-  return result(context, "getLatestUpload", data, data ? `Ultima carga: ${data.original_file_name}, ${data.total_rows} filas y ${data.error_count} errores.` : "No hay cargas visibles.", !data);
+  const summary = data
+    ? data.status === "completed_with_warnings"
+      ? `Ultima carga: ${data.original_file_name}. Se importaron ${data.successful_rows ?? data.valid_rows ?? 0} de ${data.total_rows ?? 0} filas. Termino con ${data.rows_with_warnings ?? 0} filas con advertencias de datos y ${data.technical_error_count ?? 0} errores tecnicos.`
+      : `Ultima carga: ${data.original_file_name}, estado ${data.status}, ${data.total_rows} filas y ${data.error_count} incidencias.`
+    : "No hay cargas visibles.";
+  return result(context, "getLatestUpload", data, summary, !data);
 }
 
 export async function searchBusinessRecords(context: AuthContext, searchTerm: string) {

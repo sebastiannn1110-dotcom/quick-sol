@@ -54,6 +54,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
     if (status === "retrying") return t("history.status.retrying");
     if (status === "processing") return t("history.status.processing");
     if (status === "completed") return t("history.status.completed");
+    if (status === "completed_with_warnings") return t("history.status.completedWithWarnings");
     if (status === "failed") return t("history.status.failed");
     if (status === "cancelled") return t("history.status.cancelled");
     if (status === "archived") return t("history.status.archived");
@@ -152,7 +153,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.processed_rows ?? upload.valid_rows}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.failed_rows ?? upload.error_count}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.technical_error_count ?? upload.failed_rows ?? upload.rows_with_warnings ?? upload.error_count}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-slate-600">{upload.data_quality_score ?? "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{new Date(upload.created_at).toLocaleString(locale)}</td>
                     <td className="min-w-[360px] px-4 py-3">

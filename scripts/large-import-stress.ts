@@ -8,7 +8,7 @@ import ExcelJS from "exceljs";
 import { createClient } from "@supabase/supabase-js";
 
 type FileKind = "csv" | "xlsx" | "bad";
-type ExpectedFinalState = "completed" | "failed" | "cancelled" | "duplicate";
+type ExpectedFinalState = "completed" | "completed_with_warnings" | "failed" | "cancelled" | "duplicate";
 type PlanName = "smoke" | "standard" | "production" | "full" | "bad-cases" | "generate";
 
 interface GeneratedFile {
@@ -42,6 +42,8 @@ interface JobPayload {
     processed_rows: number;
     successful_rows: number;
     failed_rows: number;
+    warning_count?: number | null;
+    rows_with_warnings?: number | null;
     progress_percent: number;
     error_message: string | null;
   };
@@ -53,6 +55,8 @@ interface JobPayload {
     successful_rows?: number | null;
     failed_rows?: number | null;
     error_count?: number | null;
+    warning_count?: number | null;
+    rows_with_warnings?: number | null;
     processing_progress_percent?: number | null;
     data_quality_score?: number | null;
   } | null;
@@ -249,7 +253,7 @@ async function generateBadCases() {
 
   const missingColumns = path.join(outputRoot, "bad-cases", "missing-columns.csv");
   await generateCsv(missingColumns, 1_000, { missingColumns: true });
-  cases.push({ name: "bad-missing-columns", kind: "csv", filePath: missingColumns, rows: 1_000, mimeType: "text/csv", expectedFinalState: "completed", expectedRowErrors: true });
+  cases.push({ name: "bad-missing-columns", kind: "csv", filePath: missingColumns, rows: 1_000, mimeType: "text/csv", expectedFinalState: "completed_with_warnings", expectedRowErrors: true });
 
   const falseExtension = path.join(outputRoot, "bad-cases", "false-extension.xlsx");
   await generateCsv(falseExtension, 1_000);
@@ -442,7 +446,7 @@ async function pollJobUntilDone(jobId: string, timeoutMs: number) {
   while (nowMs() - started < timeoutMs) {
     latest = await getJob(jobId);
     const status = latest.job?.status;
-    if (status === "completed" || status === "failed" || status === "cancelled") return latest;
+    if (status === "completed" || status === "completed_with_warnings" || status === "failed" || status === "cancelled") return latest;
     await new Promise((resolve) => setTimeout(resolve, Number(process.env.LARGE_IMPORT_POLL_MS || 2500)));
   }
   const error = new Error(`Polling timed out after ${formatDuration(timeoutMs)}.`);
@@ -531,12 +535,13 @@ async function runImportCase(testFile: GeneratedFile) {
     const finalStatus = latest.job?.status || "unknown";
     const rowsProcessed = latest.job?.processed_rows ?? latest.upload?.processed_rows ?? 0;
     const rowErrors = latest.job?.failed_rows ?? latest.upload?.failed_rows ?? latest.upload?.error_count ?? 0;
+    const rowWarnings = latest.job?.rows_with_warnings ?? latest.upload?.rows_with_warnings ?? latest.job?.warning_count ?? latest.upload?.warning_count ?? 0;
     const batches = await countBatchLogs(initiate.uploadId);
     const batchesInserted = batches.count ?? estimateBatches(rowsProcessed);
     const batchesSource = batches.count === null ? "estimated" : batches.source;
     const rowsPerSecond = rowsProcessed && processingMs > 0 ? rowsProcessed / (processingMs / 1000) : 0;
     const expectedStatePassed = finalStatus === testFile.expectedFinalState;
-    const rowErrorPassed = testFile.expectedRowErrors ? rowErrors > 0 : true;
+    const rowErrorPassed = testFile.expectedRowErrors ? rowErrors > 0 || rowWarnings > 0 : true;
     const crashOrTimeout = workerExitCode !== null && workerExitCode !== 0;
 
     return {

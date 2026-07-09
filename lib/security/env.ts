@@ -99,5 +99,17 @@ export const SECURITY_LIMITS = {
   },
   get workerHeartbeatIntervalMs() {
     return getNumberEnv("WORKER_HEARTBEAT_INTERVAL_MS", 15000);
+  },
+  get importMaxErrorsPerJob() {
+    return getNumberEnv("IMPORT_MAX_ERRORS_PER_JOB", 5000);
+  },
+  get importMaxErrorsPerRow() {
+    return getNumberEnv("IMPORT_MAX_ERRORS_PER_ROW", 5);
+  },
+  get treatValidationAsWarnings() {
+    return process.env.IMPORT_TREAT_VALIDATION_AS_WARNINGS !== "false";
+  },
+  get allowPartialRows() {
+    return process.env.IMPORT_ALLOW_PARTIAL_ROWS !== "false";
   }
 };

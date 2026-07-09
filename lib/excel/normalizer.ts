@@ -103,6 +103,35 @@ export function parseNumber(value: unknown): number | null {
   return /%/.test(value) && numberValue > 1 ? numberValue / 100 : numberValue;
 }
 
+function parseGpRate(value: unknown): { value: number | null; warning?: ImportIssue } {
+  if (value === null || value === undefined || value === "") return { value: null };
+  const parsed = parseNumber(value);
+  if (parsed === null) {
+    return {
+      value: null,
+      warning: {
+        columnName: "gp_rate",
+        errorType: "data_quality_warning",
+        message: "GP rate could not be normalized and was imported as empty.",
+        rawValue: String(value),
+        severity: "low"
+      }
+    };
+  }
+  if (parsed >= -1 && parsed <= 1) return { value: parsed };
+  if (parsed >= -100 && parsed <= 100) return { value: parsed / 100 };
+  return {
+    value: null,
+    warning: {
+      columnName: "gp_rate",
+      errorType: "data_quality_warning",
+      message: "GP rate was outside a reliable percentage range and was imported as empty.",
+      rawValue: String(value),
+      severity: "low"
+    }
+  };
+}
+
 export function parseDate(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
@@ -214,6 +243,14 @@ export function normalizeRow(rawData: JsonRecord, context?: LogContext) {
     }
 
     if (NUMERIC_FIELDS.has(field)) {
+      if (field === "gp_rate") {
+        const parsedRate = parseGpRate(value);
+        if (parsedRate.warning) issues.push(parsedRate.warning);
+        (columns as Record<string, unknown>)[field] = parsedRate.value;
+        normalizedData[field] = parsedRate.value;
+        if (parsedRate.warning) normalizedData.gp_rate_warning = parsedRate.warning.message;
+        continue;
+      }
       const parsed = parseNumber(value);
       if (value !== null && value !== undefined && value !== "" && parsed === null) {
         issues.push({

@@ -2,7 +2,7 @@ import type { ImportIssue, ParsedExcelRecord } from "@/lib/excel/types";
 import type { PlatformRecordColumns } from "@/lib/types";
 
 const REQUIRED_BY_CATEGORY: Record<string, (keyof PlatformRecordColumns)[]> = {
-  "Sales Margin": ["customer", "supplier", "mpn", "qty", "cost", "price", "gp_rate"],
+  "Sales Margin": ["customer", "supplier", "mpn", "qty", "cost", "price"],
   RFQ: ["customer", "line_id", "req_qty", "potential_amount_usd"],
   "Customer Demand": ["customer", "req_qty", "description"],
   "Supplier Offers": ["supplier_name", "mpn_quoted", "best_price_offered", "moq"],
@@ -40,10 +40,10 @@ export function detectRowQualityIssues(
     if (!Number.isFinite(gpRate) || gpRate < -1 || gpRate > 1) {
       issues.push({
         columnName: "gp_rate",
-        errorType: "invalid_gp_rate",
-        message: "GP rate should be a decimal percentage between -1 and 1.",
+        errorType: "data_quality_warning",
+        message: "GP rate is outside the expected decimal percentage range; the row was imported with a warning.",
         rawValue: String(columns.gp_rate),
-        severity: "medium"
+        severity: "low"
       });
     }
   }
