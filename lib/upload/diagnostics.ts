@@ -229,28 +229,28 @@ export async function checkUploadSchema(supabase: SupabaseClient, context?: LogC
       query: supabase
         .from("upload_batches")
         .select("id,storage_bucket,upload_progress_percent,processing_progress_percent,idempotency_key,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count")
-        .limit(1)
+        .limit(0)
     },
     {
       table: "import_jobs",
       query: supabase
         .from("import_jobs")
         .select("id,status,storage_bucket,storage_path,original_file_name,progress_percent,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count")
-        .limit(1)
+        .limit(0)
     },
     {
       table: "import_job_error_summary",
       query: supabase
         .from("import_job_error_summary")
         .select("id,job_id,upload_batch_id,error_type,severity,message,occurrence_count,sample_row_number")
-        .limit(1)
+        .limit(0)
     },
     {
       table: "import_job_errors",
       query: supabase
         .from("import_job_errors")
         .select("id,job_id,upload_batch_id,row_number,error_message,raw_data")
-        .limit(1)
+        .limit(0)
     }
   ];
 

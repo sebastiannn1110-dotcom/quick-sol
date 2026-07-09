@@ -143,7 +143,7 @@ export async function POST(request: Request) {
       });
     }
 
-    await checkUploadSchema(context.supabase, logContext);
+    await checkUploadSchema(service, logContext);
     await checkStorageBucket(service, diagnostics.storageBucket, logContext);
 
     if (parsed.data.idempotencyKey) {
