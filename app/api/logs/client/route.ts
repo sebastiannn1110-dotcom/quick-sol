@@ -104,6 +104,8 @@ export async function POST(request: Request) {
       message: parsed.data.message,
       user_id: context.profile.id,
       route: parsed.data.route ?? baseContext.route,
+      ip_address: context.requestMeta.ipAddress,
+      user_agent: context.requestMeta.userAgent,
       metadata: sanitizeForLog(parsed.data.metadata ?? {})
     });
   }

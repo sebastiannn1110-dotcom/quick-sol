@@ -12,11 +12,12 @@ import type { Profile } from "@/lib/types";
 function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicPage = ["/login", "/forgot-password", "/reset-password"].includes(pathname);
+  const isSuperadminArea = pathname.startsWith("/admindev");
   const isAdminArea = pathname.startsWith("/admin");
   const [profile, setProfile] = useState<Profile | null>(null);
 
   useEffect(() => {
-    if (isPublicPage) return;
+    if (isPublicPage || isSuperadminArea) return;
 
     async function loadProfile() {
       const response = await fetch("/api/me", { cache: "no-store" });
@@ -27,7 +28,11 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     }
 
     loadProfile();
-  }, [isPublicPage]);
+  }, [isPublicPage, isSuperadminArea]);
+
+  if (isSuperadminArea) {
+    return <main className="min-h-screen bg-slate-950">{children}</main>;
+  }
 
   if (isPublicPage) {
     return (

@@ -35,6 +35,9 @@ export interface LogContext {
   userRole?: string;
   route?: string;
   method?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  statusCode?: number;
   uploadBatchId?: string;
   fileName?: string;
   sheetName?: string;

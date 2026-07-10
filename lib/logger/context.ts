@@ -1,4 +1,5 @@
 import type { LogContext } from "@/lib/logger/types";
+import { requestIp } from "@/lib/security/rateLimit";
 
 export const TRACE_HEADER = "x-quiksol-trace-id";
 export const REQUEST_HEADER = "x-quiksol-request-id";
@@ -20,7 +21,9 @@ export function getLoggerContextFromRequest(request: Request): LogContext {
     traceId,
     requestId,
     route: url.pathname,
-    method: request.method
+    method: request.method,
+    ipAddress: requestIp(request),
+    userAgent: request.headers.get("user-agent") ?? "unknown"
   };
 }
 

@@ -14,6 +14,7 @@ const ADMIN_LINKS = [
   { href: "/admin/records", label: "admin.links.records", detail: "admin.links.recordsDetail" },
   { href: "/admin/search", label: "admin.links.search", detail: "admin.links.searchDetail" },
   { href: "/admin/analytics", label: "admin.links.analytics", detail: "admin.links.analyticsDetail" },
+  { href: "/admin/traffic", label: "admin.links.traffic", detail: "admin.links.trafficDetail" },
   { href: "/admin/import-errors", label: "admin.links.importErrors", detail: "admin.links.importErrorsDetail" },
   { href: "/admin/logs", label: "admin.links.logs", detail: "admin.links.logsDetail" },
   { href: "/admin/performance", label: "admin.links.performance", detail: "admin.links.performanceDetail" },

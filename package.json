@@ -15,6 +15,11 @@
     "diagnose:uploads": "tsx scripts/diagnose-uploads.ts",
     "diagnose:worker": "tsx scripts/diagnose-production-imports.ts --worker",
     "diagnose:production-imports": "tsx scripts/diagnose-production-imports.ts",
+    "diagnose:traffic": "tsx scripts/diagnose-system-health.ts traffic",
+    "diagnose:superadmin": "tsx scripts/diagnose-system-health.ts superadmin",
+    "diagnose:security": "tsx scripts/diagnose-system-health.ts security",
+    "diagnose:system-health": "tsx scripts/diagnose-system-health.ts system-health",
+    "superadmin:hash": "tsx scripts/generate-superadmin-hash.ts",
     "test:large-imports": "tsx scripts/large-import-stress.ts"
   },
   "dependencies": {
