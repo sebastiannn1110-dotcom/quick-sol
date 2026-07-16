@@ -23,5 +23,11 @@ export async function GET(request: Request) {
   const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: "Unable to load import errors." }, { status: 500 });
-  return NextResponse.json({ errors: data ?? [] });
+  const errors = (data ?? []).map((row) => {
+    const safeRow = { ...(row as Record<string, unknown>) };
+    delete safeRow.raw_data;
+    safeRow.raw_value = null;
+    return safeRow;
+  });
+  return NextResponse.json({ errors });
 }

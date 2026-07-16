@@ -27,7 +27,27 @@ export async function GET(request: Request) {
   const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: "Unable to load uploads." }, { status: 500 });
-  return NextResponse.json({ uploads: data ?? [] });
+  const uploads = data ?? [];
+  const uploadIds = uploads.map((upload) => upload.id);
+  if (!uploadIds.length) return NextResponse.json({ uploads });
+
+  const { data: jobs } = await context.supabase!
+    .from("import_jobs")
+    .select("id,upload_batch_id,status,total_rows,processed_rows,successful_rows,failed_rows,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count,progress_percent,error_message,attempts,max_attempts,locked_by,heartbeat_at,next_retry_at,last_error,created_at")
+    .in("upload_batch_id", uploadIds)
+    .order("created_at", { ascending: false });
+
+  const latestJobByUpload = new Map<string, unknown>();
+  for (const job of jobs ?? []) {
+    if (!latestJobByUpload.has(job.upload_batch_id)) latestJobByUpload.set(job.upload_batch_id, job);
+  }
+
+  return NextResponse.json({
+    uploads: uploads.map((upload) => ({
+      ...upload,
+      latest_import_job: latestJobByUpload.get(upload.id) ?? null
+    }))
+  });
 }
 
 export async function PATCH(request: Request) {

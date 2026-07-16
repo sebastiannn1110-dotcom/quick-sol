@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
+import { getImportJobDiagnostics } from "@/lib/upload/job-diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (context instanceof NextResponse) return context;
   const { id } = await params;
   if (context.isDemoMode || !context.supabase) return NextResponse.json({ error: "Supabase is required for import jobs." }, { status: 503 });
+
+  const diagnostics = await getImportJobDiagnostics(context.supabase, id);
+  if (diagnostics?.safeFinalize.possible) {
+    return NextResponse.json({
+      error: "This import appears complete with warnings. Contact an admin to safe-finalize it instead of retrying.",
+      diagnostics: diagnostics.safeFinalize
+    }, { status: 409 });
+  }
 
   const { data: job, error } = await context.supabase
     .from("import_jobs")

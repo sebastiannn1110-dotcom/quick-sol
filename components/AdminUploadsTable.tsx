@@ -11,6 +11,29 @@ interface ImportErrorRow extends ImportErrorLog {
   upload_sheets?: { sheet_name: string | null } | null;
 }
 
+export type UploadWithJob = UploadBatch & {
+  latest_import_job?: {
+    id: string;
+    status: string;
+    total_rows: number | null;
+    processed_rows: number | null;
+    successful_rows: number | null;
+    failed_rows: number | null;
+    warning_count: number | null;
+    rows_with_warnings: number | null;
+    technical_error_count: number | null;
+    suppressed_error_count: number | null;
+    progress_percent: number | null;
+    error_message: string | null;
+    attempts: number | null;
+    max_attempts: number | null;
+    locked_by: string | null;
+    heartbeat_at: string | null;
+    next_retry_at: string | null;
+    last_error: string | null;
+  } | null;
+};
+
 function suggestedFix(errorType: string | null) {
   if (errorType === "missing_required_field") return "Fill the required business field in the source Excel row.";
   if (errorType === "invalid_number") return "Use a clean numeric value without text, symbols or formula errors.";
@@ -35,7 +58,7 @@ function ErrorBadge({ severity }: { severity: string | null }) {
   return <span className={`rounded-md px-2 py-1 text-xs font-semibold ${color}`}>{severity ?? "low"}</span>;
 }
 
-export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] }) {
+export default function AdminUploadsTable({ uploads }: { uploads: UploadWithJob[] }) {
   const { t, locale } = useLanguage();
   const [errors, setErrors] = useState<ImportErrorRow[]>([]);
   const [records, setRecords] = useState<PlatformRecord[]>([]);
@@ -105,6 +128,32 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
     else window.alert("No trace is available for this upload.");
   }
 
+  async function openDiagnostics(upload: UploadWithJob) {
+    const jobId = upload.latest_import_job?.id;
+    if (!jobId) {
+      window.alert("No import job is available for this upload.");
+      return;
+    }
+    const response = await fetch(`/api/admin/imports/jobs/${jobId}/diagnostics`, { cache: "no-store" });
+    const payload = await response.json();
+    window.alert(JSON.stringify(payload.diagnostics ? {
+      safeFinalize: payload.diagnostics.safeFinalize,
+      counts: payload.diagnostics.counts
+    } : payload, null, 2));
+  }
+
+  async function runJobAction(upload: UploadWithJob, action: "safe-finalize" | "retry" | "cancel") {
+    const jobId = upload.latest_import_job?.id;
+    if (!jobId) {
+      window.alert("No import job is available for this upload.");
+      return;
+    }
+    const response = await fetch(`/api/admin/imports/jobs/${jobId}/${action}`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) window.alert(payload.error ?? "Job action failed.");
+    else window.location.reload();
+  }
+
   return (
     <>
       <section className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
@@ -128,11 +177,19 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
             <tbody className="divide-y divide-slate-100">
               {uploads.map((upload) => {
                 const href = upload.stored_file_path ? `/api/admin/uploads/${upload.id}/download` : null;
-                const progress = upload.status === "completed"
+                const progress = upload.status === "completed" || upload.status === "completed_with_warnings"
                   ? 100
                   : upload.status === "pending_upload" || upload.status === "uploaded"
                     ? upload.upload_progress_percent ?? 0
                     : upload.processing_progress_percent ?? 0;
+                const latestJob = upload.latest_import_job;
+                const canSafeFinalize = Boolean(
+                  latestJob &&
+                  (latestJob.processed_rows ?? upload.processed_rows ?? 0) >= (latestJob.total_rows ?? upload.total_rows ?? 0) &&
+                  (latestJob.successful_rows ?? upload.successful_rows ?? 0) > 0 &&
+                  (latestJob.technical_error_count ?? upload.technical_error_count ?? 0) === 0 &&
+                  !["completed", "completed_with_warnings", "cancelled"].includes(latestJob.status)
+                );
                 return (
                   <tr key={upload.id}>
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-950">{upload.original_file_name}</td>
@@ -142,7 +199,12 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                       <CategoryBadge category={(upload.detected_category ?? "Generic") as BusinessCategory} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{translateStatus(upload.status)}</span>
+                      <div className="grid gap-1">
+                        <span className="w-fit rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{translateStatus(upload.status)}</span>
+                        {upload.status === "completed_with_warnings" ? (
+                          <span className="text-xs text-amber-700">Archivo procesado con advertencias de calidad.</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="min-w-40 px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -179,6 +241,24 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                         <button type="button" onClick={() => openTrace(upload)} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                           View trace
                         </button>
+                        <button type="button" onClick={() => openDiagnostics(upload)} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                          View diagnostics
+                        </button>
+                        {canSafeFinalize ? (
+                          <button type="button" onClick={() => runJobAction(upload, "safe-finalize")} className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800">
+                            Safe finalize
+                          </button>
+                        ) : null}
+                        {latestJob && ["failed", "retrying", "cancelled"].includes(latestJob.status) ? (
+                          <button type="button" onClick={() => runJobAction(upload, "retry")} className="rounded-md border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50">
+                            Retry technical failure
+                          </button>
+                        ) : null}
+                        {latestJob && ["pending_upload", "uploaded", "queued", "retrying", "processing"].includes(latestJob.status) ? (
+                          <button type="button" onClick={() => runJobAction(upload, "cancel")} className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                            Cancel job
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -255,7 +335,6 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                           <th className="px-3 py-2 text-left font-semibold text-slate-600">Type</th>
                           <th className="px-3 py-2 text-left font-semibold text-slate-600">Row</th>
                           <th className="px-3 py-2 text-left font-semibold text-slate-600">Column</th>
-                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Raw value</th>
                           <th className="px-3 py-2 text-left font-semibold text-slate-600">Message</th>
                           <th className="px-3 py-2 text-left font-semibold text-slate-600">Suggested fix</th>
                         </tr>
@@ -267,14 +346,13 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadBatch[] 
                             <td className="px-3 py-2 text-slate-700">{error.error_type ?? "-"}</td>
                             <td className="px-3 py-2 text-slate-700">{error.row_index ?? "-"}</td>
                             <td className="px-3 py-2 text-slate-700">{error.column_name ?? "-"}</td>
-                            <td className="max-w-xs px-3 py-2 text-slate-600">{error.raw_value ?? "-"}</td>
                             <td className="max-w-md px-3 py-2 text-slate-600">{error.message ?? "-"}</td>
                             <td className="max-w-md px-3 py-2 text-slate-600">{suggestedFix(error.error_type)}</td>
                           </tr>
                         ))}
                         {!filteredErrors.length ? (
                           <tr>
-                            <td className="px-3 py-8 text-center text-slate-500" colSpan={7}>No matching errors.</td>
+                            <td className="px-3 py-8 text-center text-slate-500" colSpan={6}>No matching errors.</td>
                           </tr>
                         ) : null}
                       </tbody>

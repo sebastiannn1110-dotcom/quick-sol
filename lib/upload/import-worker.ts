@@ -14,6 +14,7 @@ import { getFileExtension, sanitizeFileName } from "@/lib/excel/validators";
 import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
 import { logger } from "@/lib/logger/logger";
 import { SECURITY_LIMITS } from "@/lib/security/env";
+import { finalizeImportJobSafely, redactDiagnosticText } from "@/lib/upload/job-diagnostics";
 import type { HeaderDetectionResult, ImportIssue, RawCell } from "@/lib/excel/types";
 import type { JsonRecord } from "@/lib/types";
 
@@ -124,13 +125,35 @@ function finalImportStatus(state: ProcessState) {
     : "completed";
 }
 
+function isTechnicalIssue(issue: ImportIssue) {
+  return issue.errorType === "technical_error";
+}
+
+function redactedRowSample(rawData: JsonRecord): JsonRecord {
+  const columns = Object.keys(rawData);
+  return {
+    column_count: columns.length,
+    columns: columns.slice(0, 50),
+    truncated_columns: Math.max(0, columns.length - 50)
+  };
+}
+
+function classifyThrownError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/storage|download|signed url|fetch/i.test(message)) return { retryable: true, safeMessage: "Storage download failed during import." };
+  if (/57014|statement timeout|timeout|connection|network|fetch failed|ECONN/i.test(message)) return { retryable: true, safeMessage: "Database or network timeout during import." };
+  if (/parser|workbook|csv|xlsx|zip|corrupt/i.test(message)) return { retryable: false, safeMessage: "The file could not be parsed reliably." };
+  if (/schema|column|relation|constraint|violates|23505|PGRST/i.test(message)) return { retryable: false, safeMessage: "Database schema or constraint error during import." };
+  return { retryable: true, safeMessage: "Import worker failed unexpectedly." };
+}
+
 function issueKey(issue: ImportIssue) {
   return [issue.errorType, issue.severity, issue.columnName ?? "", issue.message].join("|");
 }
 
 function recordIssue(state: ProcessState, job: ImportJobRow, issue: ImportIssue, rawData: JsonRecord, rowIndex: number) {
   state.errorCount += 1;
-  if (issue.errorType === "technical_error" || issue.severity === "critical") state.technicalErrorCount += 1;
+  if (isTechnicalIssue(issue)) state.technicalErrorCount += 1;
   else state.warningCount += 1;
 
   const key = issueKey(issue);
@@ -147,13 +170,14 @@ function recordIssue(state: ProcessState, job: ImportJobRow, issue: ImportIssue,
     message: issue.message,
     occurrence_count: 1,
     sample_row_number: rowIndex,
-    sample_raw_data: rawData
+    sample_raw_data: redactedRowSample(rawData)
   });
 }
 
 function shouldImportRow(issues: ImportIssue[]) {
+  if (issues.some(isTechnicalIssue)) return false;
   if (SECURITY_LIMITS.allowPartialRows) return true;
-  if (SECURITY_LIMITS.treatValidationAsWarnings) return issues.every((issue) => issue.errorType === "technical_error" || issue.severity !== "critical");
+  if (SECURITY_LIMITS.treatValidationAsWarnings) return issues.every((issue) => issue.severity !== "critical");
   return !issues.some((issue) => issue.severity === "high" || issue.severity === "critical");
 }
 
@@ -385,6 +409,25 @@ export async function recoverStaleImportJobs(supabase: SupabaseClient, workerId:
   if (error) throw error;
 
   for (const stale of staleJobs ?? []) {
+    const safeFinalize = await finalizeImportJobSafely(supabase, stale.id, {
+      reason: "Stale worker heartbeat recovered after all rows were already imported."
+    });
+    if (safeFinalize.finalized) {
+      await logger.warn({
+        traceId: crypto.randomUUID(),
+        requestId: crypto.randomUUID(),
+        route: "import-worker",
+        method: "WORKER",
+        module: "upload",
+        action: "stale_job_safe_finalized",
+        message: "Stale import job was safe-finalized instead of retried.",
+        status: "completed",
+        uploadBatchId: stale.upload_batch_id,
+        metadata: { jobId: stale.id, workerId, counts: safeFinalize.diagnostics?.counts }
+      });
+      continue;
+    }
+
     const attempts = Number(stale.attempts ?? 0);
     const maxAttempts = Number(stale.max_attempts ?? SECURITY_LIMITS.workerMaxAttempts);
     const nextStatus = attempts >= maxAttempts ? "failed" : "retrying";
@@ -528,9 +571,9 @@ async function processDataRow(
       column_name: issue.columnName ?? null,
       error_type: issue.errorType,
       message: issue.message,
-      raw_value: issue.rawValue ?? null,
+      raw_value: null,
       severity: issue.severity,
-      raw_data: rawData,
+      raw_data: redactedRowSample(rawData),
       job_id: job.id
     });
   }
@@ -746,6 +789,21 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
   }, SECURITY_LIMITS.workerHeartbeatIntervalMs);
   try {
     await updateHeartbeat(supabase, job, workerId);
+    const preflightFinalize = await finalizeImportJobSafely(supabase, job.id, {
+      reason: "Worker claimed a job that already had all rows imported."
+    });
+    if (preflightFinalize.finalized) {
+      await logger.audit({
+        ...context,
+        module: "upload",
+        action: "processing_safe_finalized_preflight",
+        message: "Import job was safe-finalized before retry processing.",
+        status: "completed",
+        metadata: { workerId, counts: preflightFinalize.diagnostics?.counts }
+      });
+      return;
+    }
+
     await Promise.all([
       supabase.from("upload_batches").update({ status: "processing", processing_started_at: nowIso(), error_message: null }).eq("id", job.upload_batch_id),
       supabase.from("business_records").delete().eq("upload_batch_id", job.upload_batch_id),
@@ -814,7 +872,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
         data_quality_score: dataQualityScore,
         processing_progress_percent: 100,
         completed_at: finishedAt,
-        error_message: null
+        error_message: finishedStatus === "completed_with_warnings" ? "Archivo procesado con advertencias de calidad." : null
       }).eq("id", job.upload_batch_id)
     ]);
 
@@ -881,14 +939,34 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       });
       return;
     }
-    const message = error instanceof Error ? error.message : "Unknown import worker error.";
-    const canRetry = job.attempts < job.max_attempts;
+    const classified = classifyThrownError(error);
+    if (state.totalRows > 0 && state.validRows > 0 && state.technicalErrorCount === 0) {
+      const safeFinalize = await finalizeImportJobSafely(supabase, job.id, {
+        reason: "Final-stage worker error recovered after rows were imported.",
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+      if (safeFinalize.finalized) {
+        await logger.warn({
+          ...context,
+          module: "upload",
+          action: "processing_safe_finalized_after_error",
+          message: "Import job failed after importing rows and was safe-finalized.",
+          status: "completed",
+          durationMs: Math.round(performance.now() - startedAt),
+          metadata: { workerId, safeErrorMessage: classified.safeMessage, counts: safeFinalize.diagnostics?.counts }
+        });
+        return;
+      }
+    }
+
+    const canRetry = classified.retryable && job.attempts < job.max_attempts;
     const nextRetryAt = new Date(Date.now() + Math.min(60_000 * job.attempts, 5 * 60_000)).toISOString();
+    const safeMessage = redactDiagnosticText(classified.safeMessage) ?? "Import worker failed unexpectedly.";
     await Promise.all([
       supabase.from("import_jobs").update({
         status: canRetry ? "retrying" : "failed",
-        error_message: canRetry ? null : message,
-        last_error: message,
+        error_message: canRetry ? null : safeMessage,
+        last_error: safeMessage,
         next_retry_at: canRetry ? nextRetryAt : null,
         finished_at: canRetry ? null : nowIso(),
         duration_ms: Math.round(performance.now() - startedAt),
@@ -899,7 +977,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       }).eq("id", job.id),
       supabase.from("upload_batches").update({
         status: canRetry ? "retrying" : "failed",
-        error_message: canRetry ? "Processing failed and will be retried by the worker." : message,
+        error_message: canRetry ? "Processing failed and will be retried by the worker." : safeMessage,
         completed_at: canRetry ? null : nowIso()
       }).eq("id", job.upload_batch_id)
     ]);
@@ -910,7 +988,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       message: "Background import processing failed.",
       status: "failed",
       durationMs: Math.round(performance.now() - startedAt),
-      metadata: { memoryUsage: memoryUsageMb(), tempDiskUsageMb: await tempDiskUsageMb(localPath), workerId, retryScheduled: canRetry, nextRetryAt },
+      metadata: { memoryUsage: memoryUsageMb(), tempDiskUsageMb: await tempDiskUsageMb(localPath), workerId, retryScheduled: canRetry, retryable: classified.retryable, safeErrorMessage: safeMessage, nextRetryAt },
       error
     });
     await evaluateEmailAlertRules({
@@ -920,7 +998,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       fileName: job.original_file_name,
       uploadBatchId: job.upload_batch_id,
       errorCount: 1,
-      metadata: { message, workerId }
+      metadata: { message: safeMessage, workerId }
     });
     throw error;
   } finally {

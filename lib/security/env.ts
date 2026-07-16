@@ -55,7 +55,9 @@ export function getRowsPerFileLimit() {
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
 
   const legacy = Number(process.env.MAX_EXCEL_ROWS);
-  if (Number.isFinite(legacy) && legacy > 0) return legacy;
+  if (Number.isFinite(legacy) && legacy > 0) {
+    return legacy > 1_000_000 ? 100_000 : legacy;
+  }
 
   return 100_000;
 }

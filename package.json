@@ -19,6 +19,7 @@
     "diagnose:superadmin": "tsx scripts/diagnose-system-health.ts superadmin",
     "diagnose:security": "tsx scripts/diagnose-system-health.ts security",
     "diagnose:system-health": "tsx scripts/diagnose-system-health.ts system-health",
+    "diagnose:job": "tsx scripts/diagnose-import-job.ts",
     "superadmin:hash": "tsx scripts/generate-superadmin-hash.ts",
     "test:large-imports": "tsx scripts/large-import-stress.ts"
   },

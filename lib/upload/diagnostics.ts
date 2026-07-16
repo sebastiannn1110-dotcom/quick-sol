@@ -91,6 +91,9 @@ export function getUploadRuntimeDiagnostics(): UploadRuntimeDiagnostics {
   if (!maxUploadSizeMbEnv) errors.push("Missing MAX_UPLOAD_SIZE_MB. Set an explicit production file-size limit.");
   if (!maxRowsPerFileEnv) errors.push("Missing MAX_ROWS_PER_FILE. It has priority over MAX_EXCEL_ROWS and must be explicit in production.");
   if (!maxExcelRowsEnv) warnings.push("MAX_EXCEL_ROWS is not set. MAX_ROWS_PER_FILE is still the effective row limit.");
+  if (!maxRowsPerFileEnv && maxExcelRowsEnv && maxExcelRowsEnv > ADVANCED_MAX_ROWS_PER_FILE) {
+    warnings.push(`MAX_EXCEL_ROWS=${maxExcelRowsEnv} is too high for legacy fallback. Using safe default ${SAFE_DEFAULT_ROWS_PER_FILE}.`);
+  }
   if (!envNumber("MAX_EXCEL_SHEETS")) errors.push("Missing MAX_EXCEL_SHEETS.");
   if (!envNumber("LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB")) errors.push("Missing LARGE_UPLOAD_RESUMABLE_THRESHOLD_MB.");
   if (!importBatchSize) errors.push("Missing IMPORT_BATCH_SIZE.");

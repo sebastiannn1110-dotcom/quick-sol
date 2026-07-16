@@ -3,20 +3,19 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AdminGuard from "@/components/AdminGuard";
-import AdminUploadsTable from "@/components/AdminUploadsTable";
+import AdminUploadsTable, { type UploadWithJob } from "@/components/AdminUploadsTable";
 import { useLanguage } from "@/components/LanguageProvider";
-import type { UploadBatch } from "@/lib/types";
 
 function AdminUploadsContent() {
   const { t } = useLanguage();
   const searchParams = useSearchParams();
   const employee = searchParams.get("employee");
-  const [uploads, setUploads] = useState<UploadBatch[]>([]);
+  const [uploads, setUploads] = useState<UploadWithJob[]>([]);
 
   const loadUploads = useCallback(async () => {
     const response = await fetch(employee ? `/api/admin/uploads?employee=${employee}` : "/api/admin/uploads", { cache: "no-store" });
     if (response.ok) {
-      const payload = (await response.json()) as { uploads: UploadBatch[] };
+      const payload = (await response.json()) as { uploads: UploadWithJob[] };
       setUploads(payload.uploads ?? []);
     }
   }, [employee]);

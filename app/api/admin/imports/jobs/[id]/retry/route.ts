@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
-import { requireSuperadmin } from "@/lib/superadmin/auth";
-import { logger } from "@/lib/logger/logger";
-import { requestIp } from "@/lib/security/rateLimit";
+import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { getImportJobDiagnostics } from "@/lib/upload/job-diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const context = await requireSuperadmin(request);
+  const context = await requireAdmin(request);
   if (context instanceof NextResponse) return context;
+  if (context.isDemoMode || !context.supabase) return NextResponse.json({ error: "Supabase is required." }, { status: 503 });
+
   const { id } = await params;
-  const diagnostics = await getImportJobDiagnostics(context.service, id);
-  if (diagnostics?.safeFinalize.possible) {
+  const diagnostics = await getImportJobDiagnostics(context.supabase, id);
+  if (!diagnostics) return NextResponse.json({ error: "Import job not found." }, { status: 404 });
+  if (diagnostics.safeFinalize.possible) {
     return NextResponse.json({
       error: "This job appears fully imported. Use safe finalize instead of retrying.",
       diagnostics
@@ -20,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   const queuedAt = new Date().toISOString();
-  const { data: job, error } = await context.service
+  const { data: job, error } = await context.supabase
     .from("import_jobs")
     .update({
       status: "queued",
@@ -46,11 +47,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       updated_at: queuedAt
     })
     .eq("id", id)
-    .select("id,upload_batch_id")
+    .in("status", ["failed", "cancelled", "retrying"])
+    .select("id, upload_batch_id")
     .maybeSingle();
-  if (error || !job) return NextResponse.json({ error: "Unable to retry job." }, { status: 500 });
+  if (error) return NextResponse.json({ error: "Unable to retry import job." }, { status: 500 });
+  if (!job) return NextResponse.json({ error: "Only failed, cancelled or retrying jobs can be retried." }, { status: 409 });
 
-  await context.service.from("upload_batches").update({
+  await context.supabase.from("upload_batches").update({
     status: "queued",
     processed_rows: 0,
     successful_rows: 0,
@@ -69,18 +72,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     completed_at: null
   }).eq("id", job.upload_batch_id);
 
-  await logger.audit({
-    traceId: crypto.randomUUID(),
-    requestId: crypto.randomUUID(),
-    route: new URL(request.url).pathname,
-    method: request.method,
-    ipAddress: requestIp(request),
-    userAgent: request.headers.get("user-agent") ?? "unknown",
-    module: "admin",
-    action: "superadmin_job_retry",
-    message: "Superadmin retried an import job.",
-    status: "completed",
-    metadata: { jobId: id, uploadBatchId: job.upload_batch_id }
-  });
-  return NextResponse.json({ ok: true, jobId: id, uploadId: job.upload_batch_id });
+  await logAuditEvent(context, "admin_import_job_retry", "upload_batch", job.upload_batch_id, { jobId: id });
+  return NextResponse.json({ ok: true, jobId: id, uploadId: job.upload_batch_id, status: "queued" });
 }

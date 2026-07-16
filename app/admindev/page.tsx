@@ -133,7 +133,7 @@ export default function AdminDevPage() {
     setHealth(null);
   }
 
-  async function jobAction(jobId: string, action: "retry" | "cancel") {
+  async function jobAction(jobId: string, action: "safe-finalize" | "retry" | "cancel") {
     await fetch(`/api/superadmin/jobs/${jobId}/${action}`, { method: "POST" });
     await loadAll();
   }
@@ -244,6 +244,7 @@ export default function AdminDevPage() {
                       <td>{metric(job.rows_with_warnings as number | null)}</td>
                       <td className="font-mono text-xs">{jobId}</td>
                       <td className="flex gap-2 py-2">
+                        <button onClick={() => jobAction(jobId, "safe-finalize")} className="rounded-md bg-emerald-900 px-2 py-1 text-xs hover:bg-emerald-800">Safe finalize</button>
                         <button onClick={() => jobAction(jobId, "retry")} className="rounded-md bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700">Retry</button>
                         <button onClick={() => jobAction(jobId, "cancel")} className="rounded-md bg-red-900 px-2 py-1 text-xs hover:bg-red-800">Cancel</button>
                       </td>
