@@ -23,6 +23,7 @@
     "diagnose:duplicates": "tsx scripts/import-duplicate-cleanup.ts",
     "cleanup:duplicates": "tsx scripts/import-duplicate-cleanup.ts",
     "restore:duplicates": "tsx scripts/restore-duplicate-cleanup.ts",
+    "backfill:file-profiles": "tsx scripts/backfill-file-profiles.ts",
     "superadmin:hash": "tsx scripts/generate-superadmin-hash.ts",
     "test:large-imports": "tsx scripts/large-import-stress.ts"
   },

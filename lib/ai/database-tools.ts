@@ -2,9 +2,17 @@ import type { AuthContext } from "@/lib/auth/context";
 import { getAiPermissionScope, mustForceOwnerScope } from "@/lib/ai/ai-permissions";
 import { buildSupplierRanking, summarizeMpnOffers, type MpnOffer } from "@/lib/mpn/recommendation";
 import { logger } from "@/lib/logger/logger";
+import {
+  ensureUploadStructureProfile,
+  formatColumnsAnswer,
+  formatDetectedFields,
+  type UploadStructureProfile
+} from "@/lib/upload/structure-profile";
+import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds, type StockNeedsImportJob, type StockNeedsProfile, type StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
 
 export type AiDatabaseToolName =
   | "getUploadPresentationSummary"
+  | "getStockNeedsSummary"
   | "getLatestUpload"
   | "searchBusinessRecords"
   | "getRecordsByMpn"
@@ -189,46 +197,6 @@ const FIELD_ALIASES: Record<string, string[]> = {
   po: ["po", "purchase order"]
 };
 
-const NORMALIZED_FIELD_LABEL: Record<string, string> = {
-  mpn: "MPN",
-  supplier: "supplier/manufacturer",
-  customer: "customer",
-  qty: "quantity",
-  price: "price",
-  cost: "cost",
-  date: "date",
-  status: "status",
-  gp: "GP",
-  gp_rate: "GP rate",
-  po: "PO"
-};
-
-const SAMPLE_RECORD_FIELDS = [
-  "mpn",
-  "mpn_quoted",
-  "manufacturer",
-  "clean_mfg",
-  "supplier",
-  "supplier_name",
-  "customer",
-  "client",
-  "qty",
-  "req_qty",
-  "price",
-  "best_price_offered",
-  "cost",
-  "earliest_shipping_date",
-  "date_code",
-  "gp",
-  "gp_rate",
-  "po",
-  "on_hand",
-  "lead_time_weeks",
-  "transit_time_weeks",
-  "shipping_point_country",
-  "delivery_point"
-];
-
 function classifyUploadPresentationQuestion(question: string): UploadPresentationKind {
   const text = normalizedText(question);
   if (/que puedo preguntarte|que preguntas|ayuda|help/.test(text)) return "help";
@@ -264,32 +232,18 @@ function headerMatches(header: string, aliases: string[]) {
   });
 }
 
-function sampleHasField(samples: Array<Record<string, unknown>>, uploadId: string, fields: string[]) {
-  return samples.some((record) => {
-    if (record.upload_batch_id !== uploadId) return false;
-    return fields.some((field) => {
-      const value = record[field];
-      return value !== null && value !== undefined && value !== "";
-    });
-  });
-}
-
 function detectedFieldLabel(
   key: string,
-  headers: string[],
-  samples: Array<Record<string, unknown>>,
-  uploadId: string,
-  sampleFields: string[]
+  headers: string[]
 ) {
   const header = headers.find((item) => headerMatches(item, FIELD_ALIASES[key] ?? []));
   if (header) return header;
-  return sampleHasField(samples, uploadId, sampleFields) ? NORMALIZED_FIELD_LABEL[key] : "no detectado";
+  return "no detectado";
 }
 
 function detectedTemplate(input: {
   upload: UploadOverview;
   headers: string[];
-  samples: Array<Record<string, unknown>>;
 }) {
   const category = normalizedText(`${input.upload.detected_category ?? ""} ${input.upload.selected_category ?? ""}`);
   const joinedHeaders = normalizedText(input.headers.join(" "));
@@ -316,8 +270,19 @@ function formatIssueSummary(summaries: ErrorSummaryOverview[], uploadId: string)
     .slice(0, 4);
   if (!scoped.length) return "No detecté problemas de formato en el resumen disponible.";
   return scoped
-    .map((item) => `${item.message} (${item.occurrence_count} ocurrencias)`)
+    .map((item) => `${safeSummaryIssueMessage(item)} (${item.occurrence_count} ocurrencias)`)
     .join(" ");
+}
+
+function safeSummaryIssueMessage(summary: ErrorSummaryOverview) {
+  const normalized = normalizedText(summary.error_type);
+  if (/invalid.*number|number|numeric/.test(normalized)) return "Columna numerica con valores no normalizados.";
+  if (/invalid.*date|date/.test(normalized)) return "Columna de fecha con valores no normalizados.";
+  if (/formula/.test(normalized)) return "Celda o columna con formula no importable directamente.";
+  if (/missing|required|null/.test(normalized)) return "Campo requerido ausente en algunas filas.";
+  if (/duplicate/.test(normalized)) return "Filas repetidas detectadas durante la importacion.";
+  if (/data.*quality|warning/.test(normalized)) return "Advertencia de calidad de datos detectada.";
+  return "Incidencia de formato o calidad detectada.";
 }
 
 function mixedTypeSummary(summaries: ErrorSummaryOverview[], uploadId: string) {
@@ -328,8 +293,25 @@ function mixedTypeSummary(summaries: ErrorSummaryOverview[], uploadId: string) {
     .slice(0, 4);
   if (!scoped.length) return "No detecté columnas con tipos mezclados en el resumen disponible.";
   return scoped
-    .map((item) => `${item.message} Debe normalizarse antes de comparar o calcular.`)
+    .map((item) => `${safeSummaryIssueMessage(item)} Debe normalizarse antes de comparar o calcular.`)
     .join(" ");
+}
+
+function issueSummaryFromProfile(profile: UploadStructureProfile | null | undefined) {
+  if (!profile) return "";
+  const issues = profile.dataQualitySummary.topIssues.slice(0, 4);
+  if (!issues.length && !profile.warnings.length) return "No detecte problemas de formato en el perfil estructural disponible.";
+  if (issues.length) return issues.map((item) => `${item.message} (${item.occurrenceCount} ocurrencias)`).join(" ");
+  return profile.warnings.slice(0, 4).map((item) => item.message).join(" ");
+}
+
+function mixedTypeSummaryFromProfile(profile: UploadStructureProfile | null | undefined) {
+  if (!profile) return "";
+  const issues = profile.dataQualitySummary.topIssues
+    .filter((item) => /invalid_number|invalid_date|formula_error|data_quality_warning/i.test(item.errorType) || /number|date|numeric|formula|normaliz/i.test(item.message))
+    .slice(0, 4);
+  if (!issues.length) return "No detecte columnas con tipos mezclados en el perfil estructural disponible.";
+  return issues.map((item) => `${item.message} Debe normalizarse antes de comparar o calcular.`).join(" ");
 }
 
 function uploadHelpSummary() {
@@ -344,27 +326,30 @@ function buildUploadPresentationSummary(input: {
   uploads: UploadOverview[];
   sheets: SheetOverview[];
   summaries: ErrorSummaryOverview[];
-  samples: Array<Record<string, unknown>>;
+  profiles: Map<string, UploadStructureProfile | null>;
 }) {
   if (input.kind === "help") return uploadHelpSummary();
   const latest = input.uploads[0];
   if (!latest) return "No encontré archivos subidos visibles para responder esa pregunta.";
 
+  const latestProfile = input.profiles.get(latest.id);
   const latestHeaders = headersFromSummaries(input.summaries, latest.id);
   const latestSheets = input.sheets.filter((sheet) => sheet.upload_batch_id === latest.id);
-  const template = detectedTemplate({ upload: latest, headers: latestHeaders.headers, samples: input.samples });
-  const profileMissing = latestHeaders.headers.length === 0;
+  const template = latestProfile?.detectedTemplate ?? detectedTemplate({ upload: latest, headers: latestHeaders.headers });
+  const profileMissing = !latestProfile?.columns.length && latestHeaders.headers.length === 0;
 
   if (input.kind === "latest_files") {
     const lines = input.uploads.slice(0, 3).map((upload, index) => {
+      const profile = input.profiles.get(upload.id);
       const headers = headersFromSummaries(input.summaries, upload.id);
-      const uploadTemplate = detectedTemplate({ upload, headers: headers.headers, samples: input.samples });
+      const uploadTemplate = profile?.detectedTemplate ?? detectedTemplate({ upload, headers: headers.headers });
       return `Archivo ${index + 1}: parece ${uploadTemplate}, estado ${compactStatus(upload)}, con ${upload.successful_rows ?? upload.valid_rows ?? upload.total_rows ?? 0} filas procesadas.`;
     });
     return `Analicé los últimos archivos visibles sin mostrar datos reales. ${lines.join(" ")}`;
   }
 
   if (input.kind === "columns") {
+    if (latestProfile?.columns.length) return formatColumnsAnswer(latestProfile);
     if (profileMissing) return "El archivo está importado, pero todavía falta generar el perfil estructural de columnas.";
     const columnText = latestHeaders.headers.slice(0, 30).join(", ");
     const extra = latestHeaders.truncatedColumns > 0 ? ` Hay ${latestHeaders.truncatedColumns} columnas adicionales no mostradas.` : "";
@@ -377,16 +362,17 @@ function buildUploadPresentationSummary(input: {
   }
 
   if (input.kind === "fields") {
+    if (latestProfile?.columns.length) return `En el ultimo archivo detecte ${formatDetectedFields(latestProfile)}.`;
     const headers = latestHeaders.headers;
     const parts = [
-      `MPN como ${detectedFieldLabel("mpn", headers, input.samples, latest.id, ["mpn", "mpn_quoted"])}`,
-      `proveedor o fabricante como ${detectedFieldLabel("supplier", headers, input.samples, latest.id, ["supplier", "supplier_name", "manufacturer", "clean_mfg"])}`,
-      `cliente como ${detectedFieldLabel("customer", headers, input.samples, latest.id, ["customer", "client"])}`,
-      `cantidad como ${detectedFieldLabel("qty", headers, input.samples, latest.id, ["qty", "req_qty", "on_hand"])}`,
-      `precio como ${detectedFieldLabel("price", headers, input.samples, latest.id, ["price", "best_price_offered"])}`,
-      `costo como ${detectedFieldLabel("cost", headers, input.samples, latest.id, ["cost"])}`,
-      `fecha como ${detectedFieldLabel("date", headers, input.samples, latest.id, ["earliest_shipping_date", "date_code"])}`,
-      `estado como ${detectedFieldLabel("status", headers, input.samples, latest.id, [])}`
+      `MPN como ${detectedFieldLabel("mpn", headers)}`,
+      `proveedor o fabricante como ${detectedFieldLabel("supplier", headers)}`,
+      `cliente como ${detectedFieldLabel("customer", headers)}`,
+      `cantidad como ${detectedFieldLabel("qty", headers)}`,
+      `precio como ${detectedFieldLabel("price", headers)}`,
+      `costo como ${detectedFieldLabel("cost", headers)}`,
+      `fecha como ${detectedFieldLabel("date", headers)}`,
+      `estado como ${detectedFieldLabel("status", headers)}`
     ];
     return `En el último archivo detecté ${parts.join(", ")}.`;
   }
@@ -395,11 +381,11 @@ function buildUploadPresentationSummary(input: {
     const sheetInfo = latestSheets.length
       ? `El archivo tiene ${latestSheets.length} hoja${latestSheets.length === 1 ? "" : "s"} registrada${latestSheets.length === 1 ? "" : "s"}.`
       : "";
-    return `${sheetInfo} ${formatIssueSummary(input.summaries, latest.id)}`.trim();
+    return `${sheetInfo} ${issueSummaryFromProfile(latestProfile) || formatIssueSummary(input.summaries, latest.id)}`.trim();
   }
 
   if (input.kind === "mixed_types") {
-    return mixedTypeSummary(input.summaries, latest.id);
+    return mixedTypeSummaryFromProfile(latestProfile) || mixedTypeSummary(input.summaries, latest.id);
   }
 
   const uploader = latest.profiles?.full_name || "un usuario visible";
@@ -442,18 +428,20 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
     .in("upload_batch_id", uploadIds)
     .order("occurrence_count", { ascending: false })
     .limit(50);
-  const samplesPromise = supabase
-    .from("business_records")
-    .select(["upload_batch_id", ...SAMPLE_RECORD_FIELDS].join(", "))
-    .in("upload_batch_id", uploadIds)
-    .is("archived_at", null)
-    .limit(30);
+  const profilePromises = uploadIds.map(async (uploadId) => {
+    try {
+      return await ensureUploadStructureProfile(supabase, uploadId);
+    } catch (error) {
+      void logAiFallback(context, "ai_missing_file_profile", { kind, uploadId }, error);
+      return null;
+    }
+  });
 
-  const [jobsResult, sheetsResult, summariesResult, samplesResult] = await Promise.allSettled([
+  const [jobsResult, sheetsResult, summariesResult, profilesResult] = await Promise.allSettled([
     jobsPromise,
     sheetsPromise,
     summariesPromise,
-    samplesPromise
+    Promise.all(profilePromises)
   ]);
 
   const optionalErrors: string[] = [];
@@ -474,10 +462,16 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
   const jobs = pickData<ImportJobOverview[]>(jobsResult, "import_jobs") ?? [];
   const sheets = pickData<SheetOverview[]>(sheetsResult, "upload_sheets") ?? [];
   const summaries = pickData<ErrorSummaryOverview[]>(summariesResult, "import_job_error_summary") ?? [];
-  const samples = pickData<Array<Record<string, unknown>>>(samplesResult, "business_records_sample") ?? [];
-  const summary = buildUploadPresentationSummary({ kind, uploads: safeUploads, sheets, summaries, samples });
+  const profilesList = profilesResult.status === "fulfilled" ? profilesResult.value : [];
+  if (profilesResult.status === "rejected") {
+    optionalErrors.push("file_schema_profiles");
+    void logAiFallback(context, timeoutLike(profilesResult.reason) ? "ai_timeout" : "ai_context_limited", { label: "file_schema_profiles" }, profilesResult.reason);
+  }
+  const profiles = new Map<string, UploadStructureProfile | null>();
+  for (let index = 0; index < uploadIds.length; index += 1) profiles.set(uploadIds[index], profilesList[index] ?? null);
+  const summary = buildUploadPresentationSummary({ kind, uploads: safeUploads, sheets, summaries, profiles });
 
-  if (!summaries.length) {
+  if (!profilesList.some((profile) => profile?.columns.length) && !summaries.length) {
     void logAiFallback(context, "ai_missing_file_profile", { kind, uploadCount: safeUploads.length });
   }
   if (optionalErrors.length) {
@@ -487,7 +481,20 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
   return result(
     context,
     "getUploadPresentationSummary",
-    { uploads: safeUploads, jobs, sheets, summaries, sampleFieldCount: samples.length },
+    {
+      uploads: safeUploads,
+      jobs,
+      sheets,
+      summaries,
+      profiles: profilesList.map((profile) => profile
+        ? {
+            uploadBatchId: profile.uploadBatchId,
+            columnCount: profile.columnCount,
+            detectedTemplate: profile.detectedTemplate,
+            confidenceScore: profile.confidenceScore
+          }
+        : null)
+    },
     summary,
     false,
     false,
@@ -495,6 +502,68 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
       deterministic: true,
       warning: optionalErrors.length ? "No pude obtener todos los detalles en este momento, pero puedo mostrarte el resumen disponible." : undefined
     }
+  );
+}
+
+function stockNeedsMode(question: string): "shortage" | "stock" | "needs" | "files" {
+  const text = normalizedText(question);
+  if (/archivo|inventario|necesidades del cliente|representan/.test(text)) return "files";
+  if (/falta|faltante|sin stock|no stock|parcial|partial|shortage/.test(text)) return "shortage";
+  if (/necesita|necesidad|cliente|demand|needs?/.test(text)) return "needs";
+  return "stock";
+}
+
+export async function getStockNeedsSummary(context: AuthContext, question: string, mpnInput?: string) {
+  const supabase = requireSupabase(context);
+  const mode = stockNeedsMode(question);
+  const mpn = normalizePartNumberForMatch(mpnInput || null);
+
+  let recordsQuery = supabase
+    .from("business_records")
+    .select("id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches(original_file_name,detected_category,status,created_at)")
+    .is("archived_at", null)
+    .order("created_at", { ascending: false })
+    .limit(800);
+  if (mustForceOwnerScope(context.profile.role)) recordsQuery = recordsQuery.eq("uploaded_by", context.profile.id);
+  const { data: recordsData, error: recordsError } = await recordsQuery;
+  if (recordsError) throw recordsError;
+
+  const records = (recordsData ?? []) as unknown as StockNeedsRecord[];
+  const uploadIds = Array.from(new Set(records.map((record) => record.upload_batch_id).filter(Boolean)));
+  let profiles: StockNeedsProfile[] = [];
+  let importJobs: StockNeedsImportJob[] = [];
+  if (uploadIds.length) {
+    const [profilesResult, jobsResult] = await Promise.all([
+      supabase.from("file_schema_profiles").select("upload_batch_id,detected_template,detected_mappings_json,column_count").in("upload_batch_id", uploadIds),
+      supabase.from("import_jobs").select("upload_batch_id,status").in("upload_batch_id", uploadIds).order("updated_at", { ascending: false })
+    ]);
+    profiles = profilesResult.error ? [] : (profilesResult.data ?? []) as StockNeedsProfile[];
+    importJobs = jobsResult.error ? [] : (jobsResult.data ?? []) as StockNeedsImportJob[];
+  }
+
+  const resultData = buildStockNeedsResult({
+    records,
+    profiles,
+    importJobs,
+    filters: {
+      q: mpn,
+      coverageStatus: /parcial|partial/i.test(question) ? "partial_stock" : undefined,
+      limit: 10
+    }
+  });
+  const summary = summarizeStockNeeds(resultData, { mpn, mode });
+  return result(
+    context,
+    "getStockNeedsSummary",
+    {
+      items: resultData.items.slice(0, 10),
+      totals: resultData.totals,
+      meta: resultData.meta
+    },
+    summary,
+    resultData.items.length === 0,
+    resultData.meta.scannedRecords >= 800,
+    { deterministic: true }
   );
 }
 

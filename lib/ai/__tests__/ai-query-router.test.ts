@@ -29,6 +29,7 @@ function authContext(role: "admin" | "manager" | "employee" = "admin"): AuthCont
 
 describe("AI query router", () => {
   const getRecordsByMpn = vi.fn();
+  const getStockNeedsSummary = vi.fn();
   const getUploadPresentationSummary = vi.fn();
   const searchBusinessRecords = vi.fn();
   const logger = {
@@ -70,6 +71,17 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getStockNeedsSummary.mockResolvedValue({
+      ok: true,
+      tool: "getStockNeedsSummary",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { items: [], totals: {} },
+      summary: "Para ABC123: necesidad 5, stock 3, cobertura partial stock.",
+      empty: false,
+      deterministic: true
+    });
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
     vi.doMock("@/lib/ai/database-tools", () => ({
       getDashboardSummary: vi.fn(),
@@ -80,6 +92,7 @@ describe("AI query router", () => {
       getMissingMpnRecords: vi.fn(),
       getMpnPriceComparison: vi.fn(),
       getRecordsByMpn,
+      getStockNeedsSummary,
       getUploadPresentationSummary,
       getUploadsByUser: vi.fn(),
       searchBusinessRecords
@@ -111,5 +124,14 @@ describe("AI query router", () => {
     expect(result.toolResult?.tool).toBe("getUploadPresentationSummary");
     expect(getUploadPresentationSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("MPN"));
     expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it("routes stock and needs questions to the deterministic stock-needs summary", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), "Que stock tenemos para el MPN ABC123?");
+
+    expect(result.toolResult?.tool).toBe("getStockNeedsSummary");
+    expect(getStockNeedsSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("ABC123"), "ABC123");
+    expect(getRecordsByMpn).not.toHaveBeenCalled();
   });
 });

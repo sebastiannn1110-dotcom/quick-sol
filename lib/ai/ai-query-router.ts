@@ -10,6 +10,7 @@ import {
   getMissingMpnRecords,
   getMpnPriceComparison,
   getRecordsByMpn,
+  getStockNeedsSummary,
   getUploadPresentationSummary,
   getUploadsByUser,
   searchBusinessRecords,
@@ -57,6 +58,16 @@ function isUploadPresentationQuestion(text: string) {
   );
 }
 
+function isStockNeedsQuestion(text: string) {
+  return (
+    /(stock|inventario).*(mpn|item|parte|part|cliente|necesita|necesidad|falta|parcial|disponible)/.test(text) ||
+    /(mpn|item|parte|part).*(stock|inventario|falta|parcial|disponible)/.test(text) ||
+    /(cliente|customer).*(necesita|necesidad|demand|needs?)/.test(text) ||
+    /(falta de stock|sin stock|no stock|stock parcial|partial stock)/.test(text) ||
+    /(archivo|archivos).*(inventario|necesidades del cliente|stock disponible)/.test(text)
+  );
+}
+
 export async function routeAssistantDatabaseQuery(context: AuthContext, question: string): Promise<AiRouterResult> {
   const startedAt = performance.now();
   const text = normalized(question);
@@ -73,6 +84,24 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
       status: "failed"
     });
     return { permissionDenied: true, toolResult: null };
+  }
+
+  if (isStockNeedsQuestion(text)) {
+    const toolResult = await getStockNeedsSummary(context, question, extractMpn(question));
+    await logger.info({
+      traceId: context.requestMeta.traceId,
+      requestId: context.requestMeta.requestId,
+      userId: context.profile.id,
+      userRole: context.profile.role,
+      route: context.requestMeta.route,
+      module: "ai",
+      action: "ai_database_tool_completed",
+      message: "Controlled AI database tool completed.",
+      status: "completed",
+      durationMs: Math.round(performance.now() - startedAt),
+      metadata: { question: question.slice(0, 500), tool: toolResult.tool, scope: toolResult.scope, summary: toolResult.summary, empty: toolResult.empty }
+    });
+    return { permissionDenied: false, toolResult };
   }
 
   if (isUploadPresentationQuestion(text)) {

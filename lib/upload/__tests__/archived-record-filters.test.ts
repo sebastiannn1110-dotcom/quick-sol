@@ -29,6 +29,7 @@ describe("archived business record filters", () => {
 
   it("keeps AI database tools active-only", () => {
     expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 8);
+    expectActiveBusinessRecordReads("lib/upload/structure-profile.ts", 1);
   });
 
   it("keeps analytics API queries active-only", () => {
@@ -39,6 +40,7 @@ describe("archived business record filters", () => {
   it("keeps admin and employee record views active-only", () => {
     expectActiveBusinessRecordReads("app/api/admin/records/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/admin/search/route.ts", 1);
+    expectActiveBusinessRecordReads("app/api/admin/stock-needs/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/employees/route.ts", 1);
   });
 
