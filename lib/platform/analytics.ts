@@ -74,7 +74,8 @@ export function buildPlatformAnalytics(input: {
   uploads: UploadBatch[];
   profiles: Profile[];
 }): PlatformAnalyticsSummary {
-  const { records, uploads, profiles } = input;
+  const records = input.records.filter((record) => record.archived_at === null);
+  const { uploads, profiles } = input;
   const completedUploads = uploads.filter((upload) => upload.status !== "archived");
   const activeEmployees = profiles.filter((profile) => profile.is_active);
   const categories = new Set(records.map((record) => record.category ?? "Generic"));

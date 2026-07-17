@@ -52,16 +52,17 @@ export async function GET(request: Request) {
 
   if (context.isDemoMode) {
     const data = await getDemoPlatformData();
+    const activeRecords = data.records.filter((record) => record.archived_at === null);
     const profiles = data.profiles.map((profile) => ({
       ...profile,
       uploadCount: data.uploads.filter((upload) => upload.uploaded_by === profile.id).length,
-      recordCount: data.records.filter((record) => record.uploaded_by === profile.id).length,
+      recordCount: activeRecords.filter((record) => record.uploaded_by === profile.id).length,
       lastUpload: data.uploads.find((upload) => upload.uploaded_by === profile.id)?.created_at ?? null
     }));
     if (employeeId) {
       const employee = profiles.find((profile) => profile.id === employeeId) ?? null;
       const uploads = data.uploads.filter((upload) => upload.uploaded_by === employeeId);
-      const records = data.records.filter((record) => record.uploaded_by === employeeId);
+      const records = activeRecords.filter((record) => record.uploaded_by === employeeId);
       return NextResponse.json({ employee, uploads, records, summary: { uploadCount: uploads.length, recordCount: records.length, lastUpload: uploads[0]?.created_at ?? null } });
     }
     return NextResponse.json({ employees: profiles });
@@ -90,6 +91,7 @@ export async function GET(request: Request) {
         .from("business_records")
         .select("*, profiles(full_name,email,department,region,role), upload_batches(original_file_name,detected_category,status)")
         .eq("uploaded_by", employeeId)
+        .is("archived_at", null)
         .order("created_at", { ascending: false })
         .limit(100)
     ]);

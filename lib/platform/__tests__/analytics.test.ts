@@ -71,4 +71,20 @@ describe("buildPlatformAnalytics", () => {
     expect(analytics.topMpns[0]).toEqual({ label: "ABC", value: 2, percent: 100 });
     expect(analytics.topMpns.at(-1)).toEqual({ label: "Missing MPN", value: 3 });
   });
+
+  it("does not count archived records", () => {
+    const archived = {
+      ...record("archived", "ARCHIVED-MPN"),
+      archived_at: "2026-07-17T00:00:00.000Z"
+    };
+
+    const analytics = buildPlatformAnalytics({
+      records: [record("active", "ACTIVE-MPN"), archived],
+      uploads: [upload],
+      profiles: [profile]
+    });
+
+    expect(analytics.totals.totalRecords).toBe(1);
+    expect(analytics.topMpns).toEqual([{ label: "ACTIVE-MPN", value: 1, percent: 100 }]);
+  });
 });

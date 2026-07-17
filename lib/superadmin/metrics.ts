@@ -98,19 +98,28 @@ export async function buildSuperadminSecurity(service: SupabaseClient) {
 }
 
 export async function buildSuperadminImports(service: SupabaseClient) {
-  const { data, error } = await service
-    .from("import_jobs")
-    .select("id,upload_batch_id,status,original_file_name,total_rows,processed_rows,successful_rows,failed_rows,warning_count,rows_with_warnings,technical_error_count,worker_id,heartbeat_at,created_at,finished_at,last_error,error_message")
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const [jobsResult, activeRecords, archivedRecords] = await Promise.all([
+    service
+      .from("import_jobs")
+      .select("id,upload_batch_id,status,original_file_name,total_rows,processed_rows,successful_rows,failed_rows,warning_count,rows_with_warnings,technical_error_count,worker_id,heartbeat_at,created_at,finished_at,last_error,error_message")
+      .order("created_at", { ascending: false })
+      .limit(50),
+    service.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null),
+    service.from("business_records").select("id", { count: "exact", head: true }).not("archived_at", "is", null)
+  ]);
+  const { data, error } = jobsResult;
   if (error) throw error;
+  if (activeRecords.error) throw activeRecords.error;
+  if (archivedRecords.error) throw archivedRecords.error;
   return {
     jobs: data ?? [],
     summary: {
       queued: (data ?? []).filter((job) => job.status === "queued" || job.status === "retrying").length,
       processing: (data ?? []).filter((job) => job.status === "processing").length,
       completedWithWarnings: (data ?? []).filter((job) => job.status === "completed_with_warnings").length,
-      failed: (data ?? []).filter((job) => job.status === "failed").length
+      failed: (data ?? []).filter((job) => job.status === "failed").length,
+      activeBusinessRecords: activeRecords.count ?? 0,
+      archivedBusinessRecords: archivedRecords.count ?? 0
     }
   };
 }

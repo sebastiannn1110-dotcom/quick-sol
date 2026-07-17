@@ -20,6 +20,9 @@
     "diagnose:security": "tsx scripts/diagnose-system-health.ts security",
     "diagnose:system-health": "tsx scripts/diagnose-system-health.ts system-health",
     "diagnose:job": "tsx scripts/diagnose-import-job.ts",
+    "diagnose:duplicates": "tsx scripts/import-duplicate-cleanup.ts",
+    "cleanup:duplicates": "tsx scripts/import-duplicate-cleanup.ts",
+    "restore:duplicates": "tsx scripts/restore-duplicate-cleanup.ts",
     "superadmin:hash": "tsx scripts/generate-superadmin-hash.ts",
     "test:large-imports": "tsx scripts/large-import-stress.ts"
   },

@@ -178,8 +178,8 @@ export async function getImportJobDiagnostics(supabase: SupabaseClient, jobId: s
       .select("id,status,total_rows,processed_rows,valid_rows,invalid_rows,successful_rows,failed_rows,error_count,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count,processing_progress_percent,error_message,worker_last_heartbeat_at")
       .eq("id", uploadBatchId)
       .maybeSingle(),
-    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId),
-    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).eq("has_errors", true),
+    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null),
+    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null).eq("has_errors", true),
     supabase.from("import_errors").select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId),
     supabase.from("import_errors").select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId).or("error_type.eq.technical_error,severity.eq.critical"),
     supabase.from("import_job_errors").select("id", { count: "exact", head: true }).eq("job_id", jobId),

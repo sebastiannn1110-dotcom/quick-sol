@@ -25,7 +25,14 @@ type HealthPayload = {
 type ImportsPayload = {
   imports: {
     jobs: Array<Record<string, string | number | null>>;
-    summary: { queued: number; processing: number; completedWithWarnings: number; failed: number };
+    summary: {
+      queued: number;
+      processing: number;
+      completedWithWarnings: number;
+      failed: number;
+      activeBusinessRecords: number;
+      archivedBusinessRecords: number;
+    };
   };
 };
 
@@ -187,6 +194,8 @@ export default function AdminDevPage() {
           <Tile label="Jobs processing" value={metric(health?.health.jobs.processing)} />
           <Tile label="Jobs failed" value={metric(health?.health.jobs.failed)} tone={health?.health.jobs.failed ? "red" : "green"} />
           <Tile label="Jobs stuck" value={metric(health?.health.jobs.stuck.length)} tone={health?.health.jobs.stuck.length ? "red" : "green"} />
+          <Tile label="Registros activos" value={metric(imports?.imports.summary.activeBusinessRecords)} tone="green" />
+          <Tile label="Registros archived" value={metric(imports?.imports.summary.archivedBusinessRecords)} tone={imports?.imports.summary.archivedBusinessRecords ? "amber" : "slate"} />
         </section>
 
         <section className="grid gap-4 xl:grid-cols-2">
