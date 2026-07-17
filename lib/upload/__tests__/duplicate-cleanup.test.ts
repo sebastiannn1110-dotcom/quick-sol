@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BUSINESS_RECORD_DUPLICATE_CRITERION,
-  buildDuplicateCleanupPlan
+  buildDuplicateCleanupPlan,
+  scanDuplicateRows
 } from "@/lib/upload/duplicate-cleanup";
 
 describe("business record duplicate cleanup planning", () => {
@@ -56,5 +57,47 @@ describe("business record duplicate cleanup planning", () => {
     expect(plan.cleanupSafe).toBe(false);
     expect(plan.risk).toBe("high");
     expect(plan.recommendation).toContain("Do not clean automatically");
+  });
+
+  it("detects exact duplicates without exposing raw payload values", () => {
+    const scan = scanDuplicateRows([
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        rowIndex: 2,
+        category: "RFQ",
+        rawData: { privateCustomer: "Sensitive Customer", mpn: "ABC123" },
+        normalizedData: { mpn: "ABC123", qty: 5 },
+        createdAt: "2026-07-16T06:22:35.000Z"
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000002",
+        rowIndex: 2,
+        category: "RFQ",
+        rawData: { mpn: "ABC123", privateCustomer: "Sensitive Customer" },
+        normalizedData: { qty: 5, mpn: "ABC123" },
+        createdAt: "2026-07-16T06:46:00.000Z"
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000003",
+        rowIndex: 3,
+        category: "RFQ",
+        rawData: { privateCustomer: "Different", mpn: "XYZ789" },
+        normalizedData: { mpn: "XYZ789", qty: 1 },
+        createdAt: "2026-07-16T06:47:00.000Z"
+      }
+    ]);
+
+    expect(scan.duplicateGroups).toBe(1);
+    expect(scan.duplicateRecordsToArchive).toBe(1);
+    expect(scan.candidates).toEqual([
+      expect.objectContaining({
+        id: "00000000-0000-4000-8000-000000000001",
+        keeperId: "00000000-0000-4000-8000-000000000002",
+        rawHashPrefix: expect.any(String),
+        normalizedHashPrefix: expect.any(String)
+      })
+    ]);
+    expect(JSON.stringify(scan)).not.toContain("Sensitive Customer");
+    expect(JSON.stringify(scan)).not.toContain("ABC123");
   });
 });

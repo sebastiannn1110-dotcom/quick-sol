@@ -1,13 +1,15 @@
-import { exec } from "node:child_process";
+import { loadEnvConfig } from "@next/env";
+import { PostgrestClient } from "@supabase/postgrest-js";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { getSupabaseServiceRoleKey } from "../lib/security/env";
 
-const execAsync = promisify(exec);
-const PAGE_SIZE = 5000;
+loadEnvConfig(process.cwd());
+
+const PAGE_SIZE = 500;
 
 type JsonRecord = Record<string, unknown>;
+type DatabaseClient = PostgrestClient;
 
 function arg(name: string) {
   const inline = process.argv.find((item) => item.startsWith(`--${name}=`));
@@ -27,36 +29,29 @@ function assertUuid(value: string | undefined, name: string) {
   return value;
 }
 
-function parseCliJson(stdout: string) {
-  const start = stdout.indexOf("{");
-  const end = stdout.lastIndexOf("}");
-  if (start < 0 || end < start) throw new Error(`Unable to parse Supabase CLI JSON output: ${stdout.slice(0, 200)}`);
-  return JSON.parse(stdout.slice(start, end + 1)) as { rows?: Array<Record<string, unknown>> };
-}
-
-async function runSql(sql: string) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "quiksol-supabase-restore-"));
-  const sqlPath = path.join(tempDir, "query.sql");
-  try {
-    await fs.writeFile(sqlPath, sql, "utf8");
-    const escapedSqlPath = `"${sqlPath.replace(/"/g, '\\"')}"`;
-    const { stdout } = await execAsync(`npx supabase db query --linked --file ${escapedSqlPath}`, {
-      maxBuffer: 1024 * 1024 * 50
-    });
-    return parseCliJson(stdout);
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-  }
-}
-
-function sqlLiteral(value: string) {
-  return `'${value.replace(/'/g, "''")}'`;
+function safeErrorMessage(error: unknown) {
+  const value = error instanceof Error ? error.message : JSON.stringify(error);
+  return String(value ?? "Unknown error").slice(0, 800);
 }
 
 function parseJsonCell(value: unknown) {
   if (typeof value === "string") return JSON.parse(value) as JsonRecord;
   if (value && typeof value === "object") return value as JsonRecord;
   return {};
+}
+
+function createServiceClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = getSupabaseServiceRoleKey();
+  if (!url || !key) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY/SUPABASE_SECRET_KEY.");
+  }
+  return new PostgrestClient(`${url.replace(/\/$/, "")}/rest/v1`, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`
+    }
+  });
 }
 
 async function loadRestoreReport(reportPath: string, jobId: string) {
@@ -86,124 +81,101 @@ async function loadRestoreReport(reportPath: string, jobId: string) {
   };
 }
 
-function idsCte(ids: string[]) {
-  return `
-    with restore_ids as (
-      select value::uuid as id
-      from jsonb_array_elements_text(${sqlLiteral(JSON.stringify(ids))}::jsonb)
-    )
-  `;
-}
-
-async function countRestoreCandidates(uploadBatchId: string, ids: string[]) {
+async function countRestoreCandidates(supabase: DatabaseClient, uploadBatchId: string, ids: string[]) {
   let archivedMatches = 0;
   let activeMatches = 0;
   let wrongBatchMatches = 0;
 
   for (let offset = 0; offset < ids.length; offset += PAGE_SIZE) {
     const page = ids.slice(offset, offset + PAGE_SIZE);
-    const sql = `
-      ${idsCte(page)}
-      select jsonb_build_object(
-        'archivedMatches', count(*) filter (
-          where br.upload_batch_id = ${sqlLiteral(uploadBatchId)}::uuid
-            and br.archived_at is not null
-        ),
-        'activeMatches', count(*) filter (
-          where br.upload_batch_id = ${sqlLiteral(uploadBatchId)}::uuid
-            and br.archived_at is null
-        ),
-        'wrongBatchMatches', count(*) filter (
-          where br.id is not null
-            and br.upload_batch_id <> ${sqlLiteral(uploadBatchId)}::uuid
-        )
-      ) as counts
-      from restore_ids ids
-      left join public.business_records br on br.id = ids.id;
-    `;
-    const result = await runSql(sql);
-    const counts = parseJsonCell(result.rows?.[0]?.counts);
-    archivedMatches += Number(counts.archivedMatches ?? 0);
-    activeMatches += Number(counts.activeMatches ?? 0);
-    wrongBatchMatches += Number(counts.wrongBatchMatches ?? 0);
+    const result = await supabase
+      .from("business_records")
+      .select("id,upload_batch_id,archived_at")
+      .in("id", page);
+    if (result.error) throw result.error;
+    for (const record of result.data ?? []) {
+      if (record.upload_batch_id !== uploadBatchId) {
+        wrongBatchMatches += 1;
+      } else if (record.archived_at === null) {
+        activeMatches += 1;
+      } else {
+        archivedMatches += 1;
+      }
+    }
   }
 
   return { archivedMatches, activeMatches, wrongBatchMatches };
 }
 
-async function restorePage(uploadBatchId: string, ids: string[]) {
-  const sql = `
-    ${idsCte(ids)}
-    , restored as (
-      update public.business_records br
-      set archived_at = null
-      from restore_ids ids
-      where br.id = ids.id
-        and br.upload_batch_id = ${sqlLiteral(uploadBatchId)}::uuid
-        and br.archived_at is not null
-      returning br.id
-    )
-    select jsonb_build_object('restoredRecords', count(*)) as result
-    from restored;
-  `;
-  const result = await runSql(sql);
-  const payload = parseJsonCell(result.rows?.[0]?.result);
-  return Number(payload.restoredRecords ?? 0);
-}
-
-async function restoreCandidates(uploadBatchId: string, ids: string[]) {
+async function restoreCandidates(supabase: DatabaseClient, uploadBatchId: string, ids: string[]) {
   let restoredRecords = 0;
   for (let offset = 0; offset < ids.length; offset += PAGE_SIZE) {
-    restoredRecords += await restorePage(uploadBatchId, ids.slice(offset, offset + PAGE_SIZE));
+    const page = ids.slice(offset, offset + PAGE_SIZE);
+    const result = await supabase
+      .from("business_records")
+      .update({ archived_at: null })
+      .eq("upload_batch_id", uploadBatchId)
+      .not("archived_at", "is", null)
+      .in("id", page)
+      .select("id");
+    if (result.error) throw result.error;
+    restoredRecords += result.data?.length ?? 0;
   }
   return restoredRecords;
 }
 
 async function main() {
-  const jobId = assertUuid(arg("jobId") ?? arg("job-id"), "jobId");
-  const fromReport = arg("fromReport") ?? arg("from-report");
-  if (!fromReport) throw new Error("Missing --fromReport=<backup-report.json>.");
-  const apply = hasFlag("apply");
-  if (apply && hasFlag("dry-run")) throw new Error("Use either --dry-run or --apply, not both.");
+  let mutationStarted = false;
+  try {
+    const jobId = assertUuid(arg("jobId") ?? arg("job-id"), "jobId");
+    const fromReport = arg("fromReport") ?? arg("from-report");
+    if (!fromReport) throw new Error("Missing --fromReport=<backup-report.json>.");
+    const apply = hasFlag("apply");
+    if (apply && hasFlag("dry-run")) throw new Error("Use either --dry-run or --apply, not both.");
 
-  const report = await loadRestoreReport(fromReport, jobId);
-  const counts = await countRestoreCandidates(report.uploadBatchId, report.ids);
-  const summary = {
-    jobId,
-    uploadBatchId: report.uploadBatchId,
-    reportPath: report.reportPath,
-    candidateIdsInReport: report.ids.length,
-    archivedMatchesToRestore: counts.archivedMatches,
-    alreadyActiveMatches: counts.activeMatches,
-    wrongBatchMatches: counts.wrongBatchMatches
-  };
+    const report = await loadRestoreReport(fromReport, jobId);
+    const supabase = createServiceClient();
+    const counts = await countRestoreCandidates(supabase, report.uploadBatchId, report.ids);
+    const summary = {
+      jobId,
+      uploadBatchId: report.uploadBatchId,
+      reportPath: report.reportPath,
+      candidateIdsInReport: report.ids.length,
+      archivedMatchesToRestore: counts.archivedMatches,
+      alreadyActiveMatches: counts.activeMatches,
+      wrongBatchMatches: counts.wrongBatchMatches
+    };
 
-  if (!apply) {
+    if (!apply) {
+      console.log(JSON.stringify({
+        mode: "dry-run",
+        ...summary,
+        restoreSafe: counts.wrongBatchMatches === 0,
+        recommendedAction: counts.archivedMatches > 0
+          ? "Run restore with --apply only if this backup report corresponds to the cleanup you want to revert."
+          : "No archived matching records were found to restore."
+      }, null, 2));
+      return;
+    }
+
+    if (counts.wrongBatchMatches > 0) {
+      throw new Error("Restore report contains IDs outside the target upload_batch_id; no records were restored.");
+    }
+
+    mutationStarted = true;
+    const restoredRecords = await restoreCandidates(supabase, report.uploadBatchId, report.ids);
     console.log(JSON.stringify({
-      mode: "dry-run",
+      mode: "apply",
       ...summary,
-      restoreSafe: counts.wrongBatchMatches === 0,
-      recommendedAction: counts.archivedMatches > 0
-        ? "Run restore with --apply only if this backup report corresponds to the cleanup you want to revert."
-        : "No archived matching records were found to restore."
+      restoredRecords,
+      note: "Restore only clears archived_at for IDs listed in the backup report and matching the target upload_batch_id."
     }, null, 2));
-    return;
+  } catch (error) {
+    console.error(safeErrorMessage(error));
+    if (!mutationStarted) console.error("No records were modified.");
+    else console.error("Mutation started before the failure. Verify current DB state before retrying.");
+    process.exit(1);
   }
-
-  if (counts.wrongBatchMatches > 0) {
-    throw new Error("Restore report contains IDs outside the target upload_batch_id; no records were restored.");
-  }
-
-  const restoredRecords = await restoreCandidates(report.uploadBatchId, report.ids);
-  console.log(JSON.stringify({
-    mode: "apply",
-    ...summary,
-    restoredRecords,
-    note: "Restore only clears archived_at for IDs listed in the backup report and matching the target upload_batch_id."
-  }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : JSON.stringify(error));
-  process.exit(1);
-});
+main();
