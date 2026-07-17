@@ -21,4 +21,13 @@ describe("AI response normalizer", () => {
     expect(speech).not.toContain("9d6e7b88");
     expect(speech).toContain("Supplier A tiene mejor precio");
   });
+
+  it("replaces technical assistant leaks with a presentation-safe message", () => {
+    const text = normalizeTextResponse("El asistente fallo por OPEN_IA y statement timeout 57014 en Render.");
+
+    expect(text).toBe("No pude obtener todos los detalles en este momento, pero puedo mostrarte el resumen disponible.");
+    expect(text).not.toContain("OPEN_IA");
+    expect(text).not.toContain("57014");
+    expect(text).not.toContain("Render");
+  });
 });

@@ -24,6 +24,17 @@ interface ChatMessage {
   };
 }
 
+const SAFE_ASSISTANT_FALLBACK =
+  "No pude obtener todos los detalles en este momento, pero puedo mostrarte el resumen disponible.";
+
+const TECHNICAL_LEAK_RE =
+  /\b(OPEN_IA|OPENAI_MODEL|OPENAI_API_KEY|Render|Supabase|Postgres|statement timeout|service role|stack trace|DATABASE_TIMEOUT|57014|PGRST|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY)\b/i;
+
+function safeAssistantText(value: string | null | undefined, fallback: string) {
+  const text = value?.trim() || fallback;
+  return TECHNICAL_LEAK_RE.test(text) ? SAFE_ASSISTANT_FALLBACK : text;
+}
+
 export default function AIAssistantWidget({ profile }: { profile: Profile | null }) {
   const { language, t } = useLanguage();
   const [open, setOpen] = useState(false);
@@ -54,10 +65,10 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
     if (payload.transcript) nextMessages.push({ role: "user", content: payload.transcript });
     nextMessages.push({
       role: "assistant",
-      content: payload.answerText ?? t("assistant.noAnswer"),
+      content: safeAssistantText(payload.answerText, t("assistant.noAnswer")),
       audioBase64: payload.audioBase64,
       audioMimeType: payload.audioMimeType,
-      audioError: payload.audioError,
+      audioError: payload.audioError ? safeAssistantText(payload.audioError, t("assistant.audioUnavailable")) : null,
       detectedLanguage: payload.detectedLanguage,
       timings: payload.timings
     });
@@ -70,7 +81,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
   }
 
   function handleVoiceError(errorMessage: string) {
-    setMessages((current) => [...current, { role: "assistant", content: errorMessage }]);
+    setMessages((current) => [...current, { role: "assistant", content: safeAssistantText(errorMessage, t("assistant.microphoneError")) }]);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -94,9 +105,10 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
         ...nextMessages,
         {
           role: "assistant",
-          content: response.ok
-            ? payload.answer ?? t("assistant.noAnswer")
-            : payload.error ?? t("assistant.unavailable"),
+          content: safeAssistantText(
+            response.ok ? payload.answer : payload.error,
+            response.ok ? t("assistant.noAnswer") : t("assistant.unavailable")
+          ),
           timings: payload.timings
         }
       ]);

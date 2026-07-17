@@ -10,6 +10,7 @@ import {
   getMissingMpnRecords,
   getMpnPriceComparison,
   getRecordsByMpn,
+  getUploadPresentationSummary,
   getUploadsByUser,
   searchBusinessRecords,
   type AiToolResult
@@ -42,6 +43,20 @@ function extractPerson(question: string) {
   return question.match(/(?:subio|subio el|empleado|employee|de|from|员工|用户)\s+([\p{L}][\p{L}\s]{1,50})/iu)?.[1]?.trim() ?? question;
 }
 
+function isUploadPresentationQuestion(text: string) {
+  return (
+    /ultim[oa]s?.*(archivo|upload|carga)/.test(text) ||
+    /(archivo|upload|carga).*(columna|plantilla|template|formato|tipo mezclado|tipos mezclados|campo|detectaste)/.test(text) ||
+    /(campo|detectaste).*(mpn|proveedor|cliente|cantidad|precio|costo|fecha|estado)/.test(text) ||
+    /(problema|problemas).*(formato|detectaste)|formato.*detectaste/.test(text) ||
+    /tipos? mezclados|columnas.*tipos?/.test(text) ||
+    /(plantilla|template).*(inventario|pricing|logistica|cotizacion|general|archivo|upload|carga)/.test(text) ||
+    /(mpn|proveedor|cliente|cantidad|precio|costo|fecha|estado).*(archivo|detectaste|campo)/.test(text) ||
+    /quien.*subio.*(archivo|upload|carga)/.test(text) ||
+    /que puedo preguntarte.*(archivo|upload|carga)/.test(text)
+  );
+}
+
 export async function routeAssistantDatabaseQuery(context: AuthContext, question: string): Promise<AiRouterResult> {
   const startedAt = performance.now();
   const text = normalized(question);
@@ -58,6 +73,24 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
       status: "failed"
     });
     return { permissionDenied: true, toolResult: null };
+  }
+
+  if (isUploadPresentationQuestion(text)) {
+    const toolResult = await getUploadPresentationSummary(context, question);
+    await logger.info({
+      traceId: context.requestMeta.traceId,
+      requestId: context.requestMeta.requestId,
+      userId: context.profile.id,
+      userRole: context.profile.role,
+      route: context.requestMeta.route,
+      module: "ai",
+      action: "ai_database_tool_completed",
+      message: "Controlled AI database tool completed.",
+      status: "completed",
+      durationMs: Math.round(performance.now() - startedAt),
+      metadata: { question: question.slice(0, 500), tool: toolResult.tool, scope: toolResult.scope, summary: toolResult.summary, empty: toolResult.empty }
+    });
+    return { permissionDenied: false, toolResult };
   }
 
   let toolResult: AiToolResult;

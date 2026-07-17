@@ -85,4 +85,25 @@ describe("assistant core", () => {
     expect(result.speechText).not.toContain("**");
     expect(result.speechText).toContain("Supplier A");
   });
+
+  it("returns a safe answer when data lookup times out", async () => {
+    routeAssistantDatabaseQuery.mockRejectedValueOnce({
+      code: "57014",
+      message: "canceling statement due to statement timeout"
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const result = await answerAssistantQuestion({
+      context: authContext("admin"),
+      message: "que columnas tiene el ultimo archivo subido",
+      language: "es",
+      channel: "text"
+    });
+
+    expect(result.answer).toContain("La consulta tard");
+    expect(result.answer).not.toContain("57014");
+    expect(result.answer).not.toContain("statement timeout");
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_timeout" }));
+    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_safe_response_returned" }));
+  });
 });

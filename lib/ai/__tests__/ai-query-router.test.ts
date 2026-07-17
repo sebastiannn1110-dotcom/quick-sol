@@ -29,6 +29,7 @@ function authContext(role: "admin" | "manager" | "employee" = "admin"): AuthCont
 
 describe("AI query router", () => {
   const getRecordsByMpn = vi.fn();
+  const getUploadPresentationSummary = vi.fn();
   const searchBusinessRecords = vi.fn();
   const logger = {
     info: vi.fn(async () => undefined),
@@ -58,6 +59,17 @@ describe("AI query router", () => {
       summary: "Sin resultados.",
       empty: true
     });
+    getUploadPresentationSummary.mockResolvedValue({
+      ok: true,
+      tool: "getUploadPresentationSummary",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: {},
+      summary: "El ultimo archivo parece inventario.",
+      empty: false,
+      deterministic: true
+    });
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
     vi.doMock("@/lib/ai/database-tools", () => ({
       getDashboardSummary: vi.fn(),
@@ -68,6 +80,7 @@ describe("AI query router", () => {
       getMissingMpnRecords: vi.fn(),
       getMpnPriceComparison: vi.fn(),
       getRecordsByMpn,
+      getUploadPresentationSummary,
       getUploadsByUser: vi.fn(),
       searchBusinessRecords
     }));
@@ -88,6 +101,15 @@ describe("AI query router", () => {
 
     expect(result.permissionDenied).toBe(true);
     expect(getRecordsByMpn).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it("routes upload presentation questions to the deterministic upload summary", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), "Que campos detectaste como MPN proveedor cantidad costo en el ultimo archivo?");
+
+    expect(result.toolResult?.tool).toBe("getUploadPresentationSummary");
+    expect(getUploadPresentationSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("MPN"));
     expect(searchBusinessRecords).not.toHaveBeenCalled();
   });
 });

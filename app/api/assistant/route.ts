@@ -4,6 +4,7 @@ import { rateLimitResponse } from "@/lib/security/rateLimit";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { answerAssistantQuestion, AssistantConfigError, type AssistantLanguage } from "@/lib/ai/assistantCore";
 import { detectAssistantLanguage } from "@/lib/ai/language-detection";
+import { SAFE_ASSISTANT_FALLBACK } from "@/lib/ai/response-normalizer";
 import { logger } from "@/lib/logger/logger";
 
 export const runtime = "nodejs";
@@ -33,9 +34,9 @@ export async function POST(request: Request) {
   });
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 
+  const detectedLanguage = body?.language ? language : detectAssistantLanguage(message);
   try {
     const startedAt = performance.now();
-    const detectedLanguage = body?.language ? language : detectAssistantLanguage(message);
     await logger.info({
       traceId: context.requestMeta.traceId,
       requestId: context.requestMeta.requestId,
@@ -79,13 +80,23 @@ export async function POST(request: Request) {
       status: "failed",
       error
     });
+    await logger.warn({
+      traceId: context.requestMeta.traceId,
+      requestId: context.requestMeta.requestId,
+      userId: context.profile.id,
+      userEmail: context.profile.email,
+      userRole: context.profile.role,
+      route: context.requestMeta.route,
+      module: "ai",
+      action: "ai_safe_response_returned",
+      message: "AI safe response returned to user after route failure.",
+      status: "completed",
+      metadata: { detectedLanguage, configError: error instanceof AssistantConfigError }
+    });
     if (error instanceof AssistantConfigError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      return NextResponse.json({ answer: SAFE_ASSISTANT_FALLBACK, answerText: SAFE_ASSISTANT_FALLBACK }, { status: 200 });
     }
 
-    return NextResponse.json(
-      { error: "El asistente no pudo generar respuesta. Revisa OPEN_IA y OPENAI_MODEL en Render." },
-      { status: 502 }
-    );
+    return NextResponse.json({ answer: SAFE_ASSISTANT_FALLBACK, answerText: SAFE_ASSISTANT_FALLBACK }, { status: 200 });
   }
 }

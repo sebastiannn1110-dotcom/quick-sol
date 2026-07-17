@@ -2,7 +2,12 @@ import OpenAI from "openai";
 import type { AuthContext } from "@/lib/auth/context";
 import { languageName, type AssistantLanguage } from "@/lib/ai/language-detection";
 import { routeAssistantDatabaseQuery } from "@/lib/ai/ai-query-router";
-import { normalizeSpeechResponse, normalizeTextResponse } from "@/lib/ai/response-normalizer";
+import {
+  SAFE_ASSISTANT_FALLBACK,
+  TIMEOUT_ASSISTANT_FALLBACK,
+  normalizeSpeechResponse,
+  normalizeTextResponse
+} from "@/lib/ai/response-normalizer";
 import { logger } from "@/lib/logger/logger";
 
 export type { AssistantLanguage } from "@/lib/ai/language-detection";
@@ -26,6 +31,24 @@ function permissionMessage(language: AssistantLanguage) {
   if (language === "zh") return "你没有权限查看该信息。";
   if (language === "en") return "You do not have permission to view that information.";
   return "No tienes permisos para ver esa informacion.";
+}
+
+function safeFallbackMessage(language: AssistantLanguage) {
+  if (language === "en") return "I could not get every detail right now, but I can show the available summary.";
+  if (language === "zh") return "我现在无法获取所有细节，但可以显示可用摘要。";
+  return SAFE_ASSISTANT_FALLBACK;
+}
+
+function timeoutFallbackMessage(language: AssistantLanguage) {
+  if (language === "en") return "The query took too long. I am showing the available summary, and you can try a more specific question.";
+  if (language === "zh") return "查询时间过长。我会显示可用摘要，你也可以尝试更具体的问题。";
+  return TIMEOUT_ASSISTANT_FALLBACK;
+}
+
+function isDatabaseTimeout(error: unknown) {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const text = [record.code, record.message, record.details, record.hint, String(error ?? "")].filter(Boolean).join(" ");
+  return /57014|statement timeout|timeout/i.test(text);
 }
 
 function compact(value: unknown, max = 14_000) {
@@ -54,8 +77,9 @@ function buildAssistantResult(input: {
   llmMs: number;
   startedAt: number;
   toolResult: Awaited<ReturnType<typeof routeAssistantDatabaseQuery>>["toolResult"];
+  language: AssistantLanguage;
 }) {
-  const answerText = normalizeTextResponse(input.rawAnswer);
+  const answerText = normalizeTextResponse(input.rawAnswer, { fallback: safeFallbackMessage(input.language) });
   return {
     intent: input.intent,
     tool: input.tool,
@@ -112,7 +136,34 @@ export async function answerAssistantQuestion({
   const startedAt = performance.now();
   const dataStartedAt = performance.now();
   await logAiTiming(context, "ai_data_lookup_started", "AI controlled data lookup started.", "started", { channel, language });
-  const routed = await routeAssistantDatabaseQuery(context, message);
+  let routed: Awaited<ReturnType<typeof routeAssistantDatabaseQuery>>;
+  try {
+    routed = await routeAssistantDatabaseQuery(context, message);
+  } catch (error) {
+    const dataLookupMs = Math.round(performance.now() - dataStartedAt);
+    const timeout = isDatabaseTimeout(error);
+    await logAiTiming(
+      context,
+      timeout ? "ai_timeout" : "ai_context_limited",
+      timeout ? "AI data lookup timed out." : "AI data lookup failed and returned a limited response.",
+      "failed",
+      { channel, language },
+      dataLookupMs,
+      error
+    );
+    await logAiTiming(context, "ai_safe_response_returned", "AI safe response returned to user.", "completed", { channel, language, timeout });
+    return buildAssistantResult({
+      intent: timeout ? "database_timeout" : "safe_fallback",
+      tool: null,
+      rawAnswer: timeout ? timeoutFallbackMessage(language) : safeFallbackMessage(language),
+      channel,
+      dataLookupMs,
+      llmMs: 0,
+      startedAt,
+      toolResult: null,
+      language
+    });
+  }
   const dataLookupMs = Math.round(performance.now() - dataStartedAt);
   await logAiTiming(context, "ai_data_lookup_done", "AI controlled data lookup completed.", "completed", {
     channel,
@@ -132,7 +183,8 @@ export async function answerAssistantQuestion({
       dataLookupMs,
       llmMs: 0,
       startedAt,
-      toolResult: null
+      toolResult: null,
+      language
     });
   }
 
@@ -145,12 +197,20 @@ export async function answerAssistantQuestion({
       dataLookupMs,
       llmMs: 0,
       startedAt,
-      toolResult: routed.toolResult
+      toolResult: routed.toolResult,
+      language
     });
   }
 
   const apiKey = getOpenAIKey();
-  if (!apiKey) {
+  if (!apiKey || routed.toolResult.deterministic) {
+    if (routed.toolResult.deterministic) {
+      await logAiTiming(context, "ai_fallback_used", "AI deterministic response returned without LLM.", "completed", {
+        channel,
+        language,
+        tool: routed.toolResult.tool
+      });
+    }
     return buildAssistantResult({
       intent: routed.toolResult.tool,
       tool: routed.toolResult.tool,
@@ -159,7 +219,8 @@ export async function answerAssistantQuestion({
       dataLookupMs,
       llmMs: 0,
       startedAt,
-      toolResult: routed.toolResult
+      toolResult: routed.toolResult,
+      language
     });
   }
 
@@ -208,7 +269,22 @@ export async function answerAssistantQuestion({
       tool: routed.toolResult.tool,
       scope: routed.toolResult.scope
     }, Math.round(performance.now() - llmStartedAt), error);
-    throw error;
+    await logAiTiming(context, "ai_safe_response_returned", "AI safe response returned after LLM failure.", "completed", {
+      channel,
+      language,
+      tool: routed.toolResult.tool
+    });
+    return buildAssistantResult({
+      intent: routed.toolResult.tool,
+      tool: routed.toolResult.tool,
+      rawAnswer: routed.toolResult.summary || safeFallbackMessage(language),
+      channel,
+      dataLookupMs,
+      llmMs: Math.round(performance.now() - llmStartedAt),
+      startedAt,
+      toolResult: routed.toolResult,
+      language
+    });
   }
   const llmMs = Math.round(performance.now() - llmStartedAt);
   await logAiTiming(context, "ai_llm_done", "AI LLM response completed.", "completed", {
@@ -226,6 +302,7 @@ export async function answerAssistantQuestion({
     dataLookupMs,
     llmMs,
     startedAt,
-    toolResult: routed.toolResult
+    toolResult: routed.toolResult,
+    language
   });
 }

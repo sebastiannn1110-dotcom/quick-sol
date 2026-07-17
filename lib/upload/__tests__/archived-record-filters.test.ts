@@ -28,7 +28,7 @@ describe("archived business record filters", () => {
   });
 
   it("keeps AI database tools active-only", () => {
-    expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 7);
+    expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 8);
   });
 
   it("keeps analytics API queries active-only", () => {

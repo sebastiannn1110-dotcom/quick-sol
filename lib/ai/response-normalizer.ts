@@ -2,6 +2,19 @@ function collapseWhitespace(value: string) {
   return value.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const TECHNICAL_LEAK_RE =
+  /\b(OPEN_IA|OPENAI_MODEL|OPENAI_API_KEY|Render|Supabase|Postgres|statement timeout|service role|stack trace|DATABASE_TIMEOUT|57014|PGRST|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY)\b/i;
+
+export const SAFE_ASSISTANT_FALLBACK =
+  "No pude obtener todos los detalles en este momento, pero puedo mostrarte el resumen disponible.";
+
+export const TIMEOUT_ASSISTANT_FALLBACK =
+  "La consulta tardó demasiado. Te muestro el resumen disponible y puedes intentar una pregunta más específica.";
+
+export function hasTechnicalLeak(value: string) {
+  return TECHNICAL_LEAK_RE.test(value);
+}
+
 function stripMarkdown(value: string) {
   return value
     .replace(/```[\s\S]*?```/g, " ")
@@ -50,12 +63,13 @@ function sentenceLimit(value: string, maxSentences: number) {
   return sentences.length > maxSentences ? `${limited} Puedo darte mas detalle si lo necesitas.` : limited;
 }
 
-export function normalizeTextResponse(input: string) {
-  return collapseWhitespace(
+export function normalizeTextResponse(input: string, options?: { fallback?: string }) {
+  const cleaned = collapseWhitespace(
     input
       .replace(/\r\n/g, "\n")
       .replace(/[ \t]+\n/g, "\n")
   );
+  return hasTechnicalLeak(cleaned) ? options?.fallback ?? SAFE_ASSISTANT_FALLBACK : cleaned;
 }
 
 export function normalizeSpeechResponse(input: string, options?: { maxCharacters?: number; maxSentences?: number }) {
