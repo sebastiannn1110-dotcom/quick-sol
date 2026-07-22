@@ -31,6 +31,9 @@ describe("AI query router", () => {
   const getRecordsByMpn = vi.fn();
   const getStockNeedsSummary = vi.fn();
   const getUploadPresentationSummary = vi.fn();
+  const getSensitiveDataPermissionDenied = vi.fn();
+  const getLowGpRecords = vi.fn();
+  const getMpnPriceComparison = vi.fn();
   const searchBusinessRecords = vi.fn();
   const logger = {
     info: vi.fn(async () => undefined),
@@ -82,16 +85,26 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getSensitiveDataPermissionDenied.mockImplementation((context: AuthContext) => ({
+      ok: true,
+      tool: "sensitiveDataPermissionDenied",
+      scope: context.profile.role === "admin" ? "company" : context.profile.role === "manager" ? "team" : "own",
+      data: { reason: "sensitive_fields_restricted" },
+      summary: "No tengo permiso para mostrar costos, precios o margen en esta vista.",
+      empty: false,
+      deterministic: true
+    }));
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
     vi.doMock("@/lib/ai/database-tools", () => ({
       getDashboardSummary: vi.fn(),
       getEmployeeSummary: vi.fn(),
       getImportErrors: vi.fn(),
       getLatestUpload: vi.fn(),
-      getLowGpRecords: vi.fn(),
+      getLowGpRecords,
       getMissingMpnRecords: vi.fn(),
-      getMpnPriceComparison: vi.fn(),
+      getMpnPriceComparison,
       getRecordsByMpn,
+      getSensitiveDataPermissionDenied,
       getStockNeedsSummary,
       getUploadPresentationSummary,
       getUploadsByUser: vi.fn(),
@@ -124,6 +137,29 @@ describe("AI query router", () => {
     expect(result.toolResult?.tool).toBe("getUploadPresentationSummary");
     expect(getUploadPresentationSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("MPN"));
     expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it("returns a clean permission message for restricted sensitive data questions", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("manager"), "Cual es el costo y GP rate de este MPN ABC123?");
+
+    expect(result.permissionDenied).toBe(false);
+    expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
+    expect(result.toolResult?.summary).toBe("No tengo permiso para mostrar costos, precios o margen en esta vista.");
+    expect(getSensitiveDataPermissionDenied).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ role: "manager" }) }));
+    expect(getLowGpRecords).not.toHaveBeenCalled();
+    expect(getMpnPriceComparison).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it("blocks price questions for employees before data tools run", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("employee"), "Muestrame el mejor precio para ABC123");
+
+    expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
+    expect(getSensitiveDataPermissionDenied).toHaveBeenCalled();
+    expect(getMpnPriceComparison).not.toHaveBeenCalled();
+    expect(getRecordsByMpn).not.toHaveBeenCalled();
   });
 
   it("routes stock and needs questions to the deterministic stock-needs summary", async () => {

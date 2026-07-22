@@ -5,6 +5,7 @@ import { logger } from "@/lib/logger/logger";
 import { measureAsync } from "@/lib/logger/performance";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 
 export const runtime = "nodejs";
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
               .toLowerCase()
               .includes(query.toLowerCase())
           );
-          return { records: filtered.slice(0, 50), count: filtered.length };
+          return { records: redactSensitiveFieldsForRole(filtered.slice(0, 50), context.profile.role), count: filtered.length };
         }
 
         const { data, error, count } = await safeQuery<unknown[]>(
@@ -81,7 +82,7 @@ export async function GET(request: Request) {
         );
 
         if (error) throw error;
-        return { records: data ?? [], count: count ?? data?.length ?? 0 };
+        return { records: redactSensitiveFieldsForRole(data ?? [], context.profile.role), count: count ?? data?.length ?? 0 };
       },
       { queryLength: query.length, limit: 50 },
       { slowAction: "slow_query_detected" }

@@ -2,6 +2,7 @@ import type { AuthContext } from "@/lib/auth/context";
 import { getAiPermissionScope, mustForceOwnerScope } from "@/lib/ai/ai-permissions";
 import { buildSupplierRanking, summarizeMpnOffers, type MpnOffer } from "@/lib/mpn/recommendation";
 import { logger } from "@/lib/logger/logger";
+import { redactSensitiveFieldsForRole, SENSITIVE_DATA_DENIED_MESSAGE } from "@/lib/security/permissions";
 import {
   ensureUploadStructureProfile,
   formatColumnsAnswer,
@@ -12,6 +13,7 @@ import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
 import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds } from "@/lib/stock-needs/stock-needs";
 
 export type AiDatabaseToolName =
+  | "sensitiveDataPermissionDenied"
   | "getUploadPresentationSummary"
   | "getStockNeedsSummary"
   | "getLatestUpload"
@@ -69,20 +71,33 @@ function result(
   truncated = false,
   options?: { deterministic?: boolean; warning?: string }
 ): AiToolResult {
-  const rows = rowsFromData(data);
+  const safeData = redactSensitiveFieldsForRole(data, context.profile.role);
+  const rows = rowsFromData(safeData);
   return {
     ok: !empty,
     tool,
     scope: getAiPermissionScope(context).mode,
     total: rows?.length,
     rows,
-    data,
+    data: safeData,
     summary,
     empty,
     truncated,
     deterministic: options?.deterministic,
     warning: options?.warning
   };
+}
+
+export function getSensitiveDataPermissionDenied(context: AuthContext): AiToolResult {
+  return result(
+    context,
+    "sensitiveDataPermissionDenied",
+    { reason: "sensitive_fields_restricted" },
+    SENSITIVE_DATA_DENIED_MESSAGE,
+    false,
+    false,
+    { deterministic: true }
+  );
 }
 
 function normalizedText(value: string) {
@@ -653,7 +668,7 @@ export async function getMpnPriceComparison(context: AuthContext, mpn: string) {
   const summary = summarizeMpnOffers(rows);
   const ranking = buildSupplierRanking(rows).slice(0, 10);
   const data = { mpn, summary, ranking, offers: rows.slice(0, 25) };
-  return result(context, "getMpnPriceComparison", data, summary.recommendedSupplier ? `Mejor opcion para ${mpn}: ${summary.recommendedSupplier}. ${summary.recommendationReason}` : `No hay ofertas comparables para ${mpn}.`, !summary.recommendedSupplier, rows.length > 25);
+  return result(context, "getMpnPriceComparison", data, summary.recommendedSupplier ? `Mejor opcion para ${mpn}: ${summary.recommendedSupplier}. ${summary.recommendationReason}` : `No hay ofertas comparables para ${mpn}.`, !summary.recommendedSupplier, rows.length > 25, { deterministic: true });
 }
 
 export async function getEmployeeSummary(context: AuthContext, userSearch: string) {
@@ -669,7 +684,7 @@ export async function getLowGpRecords(context: AuthContext, threshold = 0.15) {
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;
-  return result(context, "getLowGpRecords", { threshold: safeThreshold, records: data ?? [] }, `Hay ${data?.length ?? 0} registros visibles con GP rate menor a ${(safeThreshold * 100).toFixed(1)}%.`, !data?.length, (data?.length ?? 0) === 50);
+  return result(context, "getLowGpRecords", { threshold: safeThreshold, records: data ?? [] }, `Hay ${data?.length ?? 0} registros visibles con GP rate menor a ${(safeThreshold * 100).toFixed(1)}%.`, !data?.length, (data?.length ?? 0) === 50, { deterministic: true });
 }
 
 export async function getMissingMpnRecords(context: AuthContext) {

@@ -10,12 +10,14 @@ import {
   getMissingMpnRecords,
   getMpnPriceComparison,
   getRecordsByMpn,
+  getSensitiveDataPermissionDenied,
   getStockNeedsSummary,
   getUploadPresentationSummary,
   getUploadsByUser,
   searchBusinessRecords,
   type AiToolResult
 } from "@/lib/ai/database-tools";
+import { canViewCosts, canViewGp, canViewSensitivePricing, questionRequestsSensitiveCommercialData } from "@/lib/security/permissions";
 
 export interface AiRouterResult {
   permissionDenied: boolean;
@@ -104,6 +106,11 @@ function isStockNeedsQuestion(text: string) {
   );
 }
 
+function isRestrictedSensitiveQuestion(question: string, role: AuthContext["profile"]["role"]) {
+  if (!questionRequestsSensitiveCommercialData(question)) return false;
+  return !canViewCosts(role) || !canViewSensitivePricing(role) || !canViewGp(role);
+}
+
 async function logToolCompleted(context: AuthContext, startedAt: number, question: string, toolResult: AiToolResult) {
   await logger.info({
     traceId: context.requestMeta.traceId,
@@ -136,6 +143,12 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
       status: "failed"
     });
     return { permissionDenied: true, toolResult: null };
+  }
+
+  if (isRestrictedSensitiveQuestion(question, context.profile.role)) {
+    const toolResult = getSensitiveDataPermissionDenied(context);
+    await logToolCompleted(context, startedAt, question, toolResult);
+    return { permissionDenied: false, toolResult };
   }
 
   if (isStockNeedsQuestion(text)) {

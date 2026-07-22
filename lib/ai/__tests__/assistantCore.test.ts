@@ -29,6 +29,7 @@ function authContext(role: "admin" | "manager" | "employee" = "employee"): AuthC
 
 describe("assistant core", () => {
   const routeAssistantDatabaseQuery = vi.fn();
+  const responsesCreate = vi.fn();
   const logger = {
     info: vi.fn(async () => undefined),
     warn: vi.fn(async () => undefined)
@@ -39,6 +40,7 @@ describe("assistant core", () => {
     vi.clearAllMocks();
     delete process.env.OPEN_IA;
     delete process.env.OPENAI_API_KEY;
+    responsesCreate.mockResolvedValue({ output_text: "Respuesta segura." });
     routeAssistantDatabaseQuery.mockResolvedValue({
       permissionDenied: false,
       toolResult: {
@@ -55,6 +57,13 @@ describe("assistant core", () => {
     });
     vi.doMock("@/lib/ai/ai-query-router", () => ({ routeAssistantDatabaseQuery }));
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
+    vi.doMock("openai", () => ({
+      default: class MockOpenAI {
+        responses = {
+          create: responsesCreate
+        }
+      }
+    }));
   });
 
   it("answers text channel without calling TTS and includes structured tool metadata", async () => {
@@ -105,5 +114,62 @@ describe("assistant core", () => {
     expect(result.answer).not.toContain("statement timeout");
     expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_timeout" }));
     expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_safe_response_returned" }));
+  });
+
+  it("does not send sensitive commercial fields to OpenAI", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    routeAssistantDatabaseQuery.mockResolvedValueOnce({
+      permissionDenied: false,
+      toolResult: {
+        ok: true,
+        tool: "searchBusinessRecords",
+        scope: "company",
+        total: 1,
+        rows: [],
+        data: [
+          {
+            mpn: "ABC123",
+            qty: 10,
+            supplier_name: "Sensitive Supplier",
+            customer: "Sensitive Customer",
+            po: "PO-777",
+            cost: 12.34,
+            price: 20.45,
+            gp_rate: 0.42,
+            raw_data: {
+              MPN: "ABC123",
+              "UNIT COST": 12.34,
+              PriceBook: 20.45,
+              "USD Extended Price": 204.5,
+              GP: 8.11,
+              "GP rate": "42%",
+              PO: "PO-777"
+            }
+          }
+        ],
+        summary: "Se encontro 1 registro visible.",
+        empty: false,
+        truncated: false,
+        deterministic: false
+      }
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    await answerAssistantQuestion({
+      context: authContext("admin"),
+      message: "Busca MPN ABC123",
+      language: "es",
+      channel: "text"
+    });
+
+    const input = String(responsesCreate.mock.calls[0]?.[0]?.input ?? "");
+    expect(input).toContain("ABC123");
+    expect(input).not.toContain("Sensitive Supplier");
+    expect(input).not.toContain("Sensitive Customer");
+    expect(input).not.toContain("PO-777");
+    expect(input).not.toContain("12.34");
+    expect(input).not.toContain("20.45");
+    expect(input).not.toContain("204.5");
+    expect(input).not.toContain("42%");
   });
 });

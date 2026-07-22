@@ -5,8 +5,10 @@ import { logger } from "@/lib/logger/logger";
 import { measureAsync } from "@/lib/logger/performance";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { canViewCosts, canViewCustomerDetails, canViewGp, canViewSensitivePricing, canViewSupplierDetails, getRolePermissions, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import { recordsFilterSchema } from "@/lib/excel/validators";
+import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +58,27 @@ function applyDemoFilters(records: Awaited<ReturnType<typeof getDemoPlatformData
   });
 }
 
+function permissionScopedFilters(filters: ReturnType<typeof recordsFilterSchema.parse>, role: UserRole) {
+  const scoped = { ...filters };
+  const permissions = getRolePermissions(role);
+  if (!canViewSupplierDetails(role)) scoped.supplier = undefined;
+  if (!canViewCustomerDetails(role)) scoped.customer = undefined;
+  if (!permissions.canViewPurchaseOrders) scoped.po = undefined;
+  if (!canViewCosts(role)) {
+    scoped.costMin = undefined;
+    scoped.costMax = undefined;
+  }
+  if (!canViewSensitivePricing(role)) {
+    scoped.priceMin = undefined;
+    scoped.priceMax = undefined;
+  }
+  if (!canViewGp(role)) {
+    scoped.gpRateMin = undefined;
+    scoped.gpRateMax = undefined;
+  }
+  return scoped;
+}
+
 export async function GET(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
@@ -99,7 +122,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ error: "Invalid record filters." }, { status: 400 });
   }
-  const filters = parsedFilters.data;
+  const filters = permissionScopedFilters(parsedFilters.data, context.profile.role);
   const from = (filters.page - 1) * filters.pageSize;
   const to = from + filters.pageSize - 1;
   const filterMetadata = {
@@ -119,7 +142,7 @@ export async function GET(request: Request) {
         const data = await getDemoPlatformData();
         const filtered = applyDemoFilters(data.records, filters);
         return {
-          records: filtered.slice(from, to + 1),
+          records: redactSensitiveFieldsForRole(filtered.slice(from, to + 1), context.profile.role),
           employees: data.profiles,
           count: filtered.length,
           page: filters.page,
@@ -204,7 +227,7 @@ export async function GET(request: Request) {
     });
 
     return NextResponse.json({
-      records: records ?? [],
+      records: redactSensitiveFieldsForRole(records ?? [], context.profile.role),
       employees: employees ?? [],
       count: count ?? 0,
       page: filters.page,

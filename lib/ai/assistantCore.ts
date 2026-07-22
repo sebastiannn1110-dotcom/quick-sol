@@ -9,6 +9,7 @@ import {
   normalizeTextResponse
 } from "@/lib/ai/response-normalizer";
 import { logger } from "@/lib/logger/logger";
+import { redactSensitiveFieldsForLlm } from "@/lib/security/permissions";
 
 export type { AssistantLanguage } from "@/lib/ai/language-detection";
 export type AssistantChannel = "text" | "voice";
@@ -226,6 +227,7 @@ export async function answerAssistantQuestion({
 
   const client = new OpenAI({ apiKey });
   const llmStartedAt = performance.now();
+  const llmSafeToolData = redactSensitiveFieldsForLlm(routed.toolResult.data);
   await logAiTiming(context, "ai_llm_started", "AI LLM response started.", "started", {
     channel,
     language,
@@ -246,6 +248,7 @@ export async function answerAssistantQuestion({
           : "For text, use clean formatting. Use bullets only when they genuinely improve readability.",
         "Use only the controlled tool result provided. Never claim to run SQL and never suggest SQL.",
         "Do not reveal UUIDs, raw implementation field names, secrets, tokens, cookies or API keys.",
+        "Do not reveal costs, prices, GP, GP rate, margins, purchase orders, internal notes, supplier-sensitive fields or full customer-sensitive fields unless the server summary already explicitly allows it.",
         "Respect the scope already applied by the server. Do not infer data outside the result.",
         "If the result is truncated, say that you are showing the first results and suggest a narrower question."
       ].join(" "),
@@ -258,7 +261,7 @@ export async function answerAssistantQuestion({
         `Total rows in payload: ${routed.toolResult.total ?? "unknown"}`,
         `Server summary: ${routed.toolResult.summary}`,
         `Truncated: ${Boolean(routed.toolResult.truncated)}`,
-        `Authorized result: ${compact(routed.toolResult.data)}`
+        `Authorized result: ${compact(llmSafeToolData)}`
       ].join("\n\n"),
       max_output_tokens: channel === "voice" ? 360 : 700
     });

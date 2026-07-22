@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
 import { recordsFilterSchema } from "@/lib/excel/validators";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
+import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
   if (context.isDemoMode) {
     const data = await getDemoPlatformData();
     return NextResponse.json({
-      records: data.records.slice(from, to + 1),
+      records: redactSensitiveFieldsForRole(data.records.slice(from, to + 1), context.profile.role),
       count: data.records.length,
       page: filters.page,
       pageSize: filters.pageSize
@@ -42,7 +43,7 @@ export async function GET(request: Request) {
 
   if (error) return NextResponse.json({ error: "Unable to load admin records." }, { status: 500 });
   return NextResponse.json({
-    records: data ?? [],
+    records: redactSensitiveFieldsForRole(data ?? [], context.profile.role),
     count: count ?? 0,
     page: filters.page,
     pageSize: filters.pageSize
