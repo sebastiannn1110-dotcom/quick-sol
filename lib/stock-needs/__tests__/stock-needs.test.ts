@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStockNeedsResult, normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
+import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds } from "@/lib/stock-needs/stock-needs";
 
 const inventoryUpload = {
   original_file_name: "inventory.xlsx",
@@ -41,6 +41,30 @@ describe("stock needs matching", () => {
     });
     expect(JSON.stringify(result)).not.toContain("25.5");
     expect(JSON.stringify(result)).not.toContain("UNIT COST");
+  });
+
+  it("detects stock from inventory keys even when the structural profile is missing", () => {
+    const result = buildStockNeedsResult({
+      records: [
+        {
+          upload_batch_id: "stock-upload",
+          raw_data: { MFG: "Supplier A", MPN: "NO-PROFILE-1", "STOCK QTY": 8, "UNIT COST": 25.5 },
+          normalized_data: {},
+          upload_batches: inventoryUpload
+        }
+      ],
+      profiles: []
+    });
+
+    expect(result.items[0]).toMatchObject({
+      mpn: "NO-PROFILE-1",
+      stockQty: 8,
+      coverageStatus: "overstock",
+      warnings: []
+    });
+    expect(result.meta.hasMissingProfiles).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("backfill:file-profiles");
+    expect(JSON.stringify(result)).not.toContain("25.5");
   });
 
   it("detects needs from planning pricing and logistics columns", () => {
@@ -142,6 +166,36 @@ describe("stock needs matching", () => {
     });
   });
 
+  it("crosses needs against stock from a different upload without requiring a stock profile", () => {
+    const result = buildStockNeedsResult({
+      records: [
+        {
+          upload_batch_id: "stock-upload",
+          raw_data: { MFG: "Supplier A", MPN: "CROSS-1", "STOCK QTY": 5, "UNIT COST": 1 },
+          normalized_data: {},
+          upload_batches: inventoryUpload
+        },
+        {
+          upload_batch_id: "needs-upload",
+          raw_data: { Item: " cross-1 ", Quantity: 9, RequiredDate: "2026-08-02", LeadTime: "2w", BPName: "Customer" },
+          normalized_data: {},
+          upload_batches: planningUpload
+        }
+      ],
+      profiles: [{ upload_batch_id: "needs-upload", detected_template: "pricing/logistica" }]
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      mpn: "CROSS-1",
+      requiredQty: 9,
+      stockQty: 5,
+      shortageQty: 4,
+      coverageStatus: "partial_stock",
+      warnings: []
+    });
+  });
+
   it("calculates in stock, partial, no stock and unknown coverage", () => {
     const result = buildStockNeedsResult({
       records: [
@@ -182,5 +236,29 @@ describe("stock needs matching", () => {
     expect(serialized).not.toContain("raw_data");
     expect(serialized).not.toContain("normalized_data");
     expect(serialized).not.toContain("DO_NOT_EXPOSE");
+  });
+
+  it("summarizes shortage questions with totals and limited MPN examples", () => {
+    const result = buildStockNeedsResult({
+      records: [
+        { upload_batch_id: "need", raw_data: { Item: "A-1", Quantity: 5, status: "open" }, upload_batches: planningUpload },
+        { upload_batch_id: "need", raw_data: { Item: "B-2", Quantity: 7, status: "open" }, upload_batches: planningUpload },
+        { upload_batch_id: "stock", raw_data: { MPN: "B-2", "STOCK QTY": 2 }, upload_batches: inventoryUpload }
+      ],
+      profiles: [
+        { upload_batch_id: "stock", detected_template: "inventario" },
+        { upload_batch_id: "need", detected_template: "pricing/logistica" }
+      ],
+      filters: { limit: 10 }
+    });
+
+    const summary = summarizeStockNeeds(result, { mode: "shortage" });
+
+    expect(summary).toContain("1 MPN con necesidad y sin stock");
+    expect(summary).toContain("1 con stock parcial");
+    expect(summary).toContain("A-1");
+    expect(summary).toContain("B-2");
+    expect(summary).toContain("12 unidades");
+    expect(summary).toContain("2");
   });
 });

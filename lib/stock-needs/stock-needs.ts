@@ -258,10 +258,6 @@ function findLeadTime(raw: JsonRecord, normalized: JsonRecord, record: StockNeed
   return String(value).replace(/\s+/g, " ").trim().slice(0, 40);
 }
 
-function addWarning(acc: Accumulator, warning: string) {
-  if (warning) acc.warnings.add(warning);
-}
-
 function matchesFilter(value: string | null, filter?: string | null) {
   if (!filter) return true;
   return (value ?? "").toLowerCase().includes(filter.toLowerCase().trim());
@@ -349,8 +345,6 @@ export function buildStockNeedsResult(input: {
       if (qty !== null) existing.requiredQty = (existing.requiredQty ?? 0) + Math.max(qty, 0);
     }
 
-    if (!profile) addWarning(existing, "Este archivo todavia no tiene perfil estructural. Ejecuta backfill:file-profiles.");
-    if (record.has_errors) addWarning(existing, "El origen tiene advertencias de calidad.");
     upsertSource(existing, sourceUpload(record, profile, jobs.get(record.upload_batch_id)));
     rows.set(key, existing);
   }
@@ -415,6 +409,7 @@ export function buildStockNeedsResult(input: {
 }
 
 export function summarizeStockNeeds(result: StockNeedsResult, options?: { mpn?: string | null; mode?: "shortage" | "stock" | "needs" | "files" }) {
+  const formatQty = (value: number) => new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
   const mpn = options?.mpn ? normalizePartNumberForMatch(options.mpn) : null;
   if (mpn) {
     const item = result.items.find((row) => row.mpn === mpn);
@@ -426,10 +421,13 @@ export function summarizeStockNeeds(result: StockNeedsResult, options?: { mpn?: 
     return `Los archivos visibles se agrupan como ${Array.from(uploadNames).slice(0, 5).join(", ") || "sin clasificacion suficiente"}.`;
   }
   if (options?.mode === "needs") {
-    return `Detecte ${result.totals.totalItems} MPNs con necesidades o stock visible y ${result.totals.totalRequiredQty} unidades requeridas.`;
+    return `Detecte ${result.totals.totalItems} MPNs con necesidades o stock visible y ${formatQty(result.totals.totalRequiredQty)} unidades requeridas.`;
   }
   if (options?.mode === "shortage") {
-    return `Hay ${result.totals.noStock} MPNs sin stock y ${result.totals.partialStock} con stock parcial.`;
+    const shortageItems = result.items.filter((item) => item.coverageStatus === "no_stock" || item.coverageStatus === "partial_stock");
+    const examples = shortageItems.slice(0, 10).map((item) => item.mpn);
+    const exampleText = examples.length ? ` Algunos ejemplos son: ${examples.join(", ")}.` : "";
+    return `Encontre ${result.totals.noStock} MPN con necesidad y sin stock disponible, y ${result.totals.partialStock} con stock parcial.${exampleText} El total requerido detectado es ${formatQty(result.totals.totalRequiredQty)} unidades y el stock disponible cruzado actualmente es ${formatQty(result.totals.totalStockQty)}.`;
   }
-  return `Resumen de cobertura: ${result.totals.inStock} in stock, ${result.totals.partialStock} partial stock, ${result.totals.noStock} no stock, ${result.totals.overstock} overstock y ${result.totals.unknown} unknown.`;
+  return `Resumen de cobertura: ${result.totals.inStock} con stock completo, ${result.totals.partialStock} con stock parcial, ${result.totals.noStock} sin stock, ${result.totals.overstock} con sobrestock y ${result.totals.unknown} desconocidos.`;
 }

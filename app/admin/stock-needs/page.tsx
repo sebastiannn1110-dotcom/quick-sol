@@ -129,12 +129,6 @@ export default function AdminStockNeedsPage() {
           <p className="text-sm text-slate-500">Necesidades del cliente y stock disponible por MPN, Item o Mfg Partno.</p>
         </div>
 
-        {result.meta.hasMissingProfiles ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Este archivo todavia no tiene perfil estructural. Ejecuta <span className="font-mono">backfill:file-profiles</span>.
-          </div>
-        ) : null}
-
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
           {summaryCards.map(([label, value]) => (
             <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
@@ -222,7 +216,6 @@ export default function AdminStockNeedsPage() {
                     <td className="px-4 py-3 text-slate-700">{item.leadTime ?? "Unknown"}</td>
                     <td className="max-w-xs px-4 py-3 text-slate-700">
                       <span className="block truncate">{sourceLabel(item)}</span>
-                      {item.warnings.length ? <span className="mt-1 block text-xs text-amber-700">{item.warnings[0]}</span> : null}
                     </td>
                   </tr>
                 )) : (

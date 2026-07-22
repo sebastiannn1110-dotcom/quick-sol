@@ -8,7 +8,8 @@ import {
   formatDetectedFields,
   type UploadStructureProfile
 } from "@/lib/upload/structure-profile";
-import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds, type StockNeedsImportJob, type StockNeedsProfile, type StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
+import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
+import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds } from "@/lib/stock-needs/stock-needs";
 
 export type AiDatabaseToolName =
   | "getUploadPresentationSummary"
@@ -517,34 +518,16 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
   const supabase = requireSupabase(context);
   const mode = stockNeedsMode(question);
   const mpn = normalizePartNumberForMatch(mpnInput || null);
-
-  let recordsQuery = supabase
-    .from("business_records")
-    .select("id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches(original_file_name,detected_category,status,created_at)")
-    .is("archived_at", null)
-    .order("created_at", { ascending: false })
-    .limit(800);
-  if (mustForceOwnerScope(context.profile.role)) recordsQuery = recordsQuery.eq("uploaded_by", context.profile.id);
-  const { data: recordsData, error: recordsError } = await recordsQuery;
-  if (recordsError) throw recordsError;
-
-  const records = (recordsData ?? []) as unknown as StockNeedsRecord[];
-  const uploadIds = Array.from(new Set(records.map((record) => record.upload_batch_id).filter(Boolean)));
-  let profiles: StockNeedsProfile[] = [];
-  let importJobs: StockNeedsImportJob[] = [];
-  if (uploadIds.length) {
-    const [profilesResult, jobsResult] = await Promise.all([
-      supabase.from("file_schema_profiles").select("upload_batch_id,detected_template,detected_mappings_json,column_count").in("upload_batch_id", uploadIds),
-      supabase.from("import_jobs").select("upload_batch_id,status").in("upload_batch_id", uploadIds).order("updated_at", { ascending: false })
-    ]);
-    profiles = profilesResult.error ? [] : (profilesResult.data ?? []) as StockNeedsProfile[];
-    importJobs = jobsResult.error ? [] : (jobsResult.data ?? []) as StockNeedsImportJob[];
-  }
+  const input = await loadStockNeedsInput(supabase, {
+    ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
+    maxUploads: 20,
+    recordsPerUploadLimit: 5000
+  });
 
   const resultData = buildStockNeedsResult({
-    records,
-    profiles,
-    importJobs,
+    records: input.records,
+    profiles: input.profiles,
+    importJobs: input.importJobs,
     filters: {
       q: mpn,
       coverageStatus: /parcial|partial/i.test(question) ? "partial_stock" : undefined,
@@ -562,7 +545,7 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
     },
     summary,
     resultData.items.length === 0,
-    resultData.meta.scannedRecords >= 800,
+    input.uploadIds.length >= 20 || resultData.meta.scannedRecords >= 100000,
     { deterministic: true }
   );
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
-import { buildStockNeedsResult, type CoverageStatus, type StockNeedsFilters, type StockNeedsImportJob, type StockNeedsProfile, type StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
+import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
+import { buildStockNeedsResult, type CoverageStatus, type StockNeedsFilters } from "@/lib/stock-needs/stock-needs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,40 +44,15 @@ export async function GET(request: Request) {
     return NextResponse.json(buildStockNeedsResult({ records: [], filters }));
   }
 
-  const scanLimit = Math.min(Math.max((filters.offset ?? 0) + (filters.limit ?? 50), 500), 5000);
-  let recordsQuery = context.supabase
-    .from("business_records")
-    .select("id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches(original_file_name,detected_category,status,created_at)")
-    .is("archived_at", null)
-    .order("created_at", { ascending: false })
-    .limit(scanLimit);
+  try {
+    const input = await loadStockNeedsInput(context.supabase, {
+      filters,
+      maxUploads: 20,
+      recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000
+    });
 
-  if (filters.uploadBatchId) recordsQuery = recordsQuery.eq("upload_batch_id", filters.uploadBatchId);
-
-  const recordsResult = await recordsQuery;
-  if (recordsResult.error) return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });
-
-  const records = (recordsResult.data ?? []) as unknown as StockNeedsRecord[];
-  const uploadIds = Array.from(new Set(records.map((record) => record.upload_batch_id).filter(Boolean)));
-  let profiles: StockNeedsProfile[] = [];
-  let importJobs: StockNeedsImportJob[] = [];
-
-  if (uploadIds.length) {
-    const [profilesResult, jobsResult] = await Promise.all([
-      context.supabase
-        .from("file_schema_profiles")
-        .select("upload_batch_id,detected_template,detected_mappings_json,column_count")
-        .in("upload_batch_id", uploadIds),
-      context.supabase
-        .from("import_jobs")
-        .select("upload_batch_id,status")
-        .in("upload_batch_id", uploadIds)
-        .order("updated_at", { ascending: false })
-    ]);
-
-    profiles = profilesResult.error ? [] : (profilesResult.data ?? []) as StockNeedsProfile[];
-    importJobs = jobsResult.error ? [] : (jobsResult.data ?? []) as StockNeedsImportJob[];
+    return NextResponse.json(buildStockNeedsResult({ records: input.records, profiles: input.profiles, importJobs: input.importJobs, filters }));
+  } catch {
+    return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });
   }
-
-  return NextResponse.json(buildStockNeedsResult({ records, profiles, importJobs, filters }));
 }

@@ -134,4 +134,22 @@ describe("AI query router", () => {
     expect(getStockNeedsSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("ABC123"), "ABC123");
     expect(getRecordsByMpn).not.toHaveBeenCalled();
   });
+
+  it("does not treat generic Spanish words after MPN as a concrete part number", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), "Que MPN tienen falta de stock?");
+
+    expect(result.toolResult?.tool).toBe("getStockNeedsSummary");
+    expect(getStockNeedsSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("falta de stock"), "");
+    expect(getRecordsByMpn).not.toHaveBeenCalled();
+  });
+
+  it("routes reference shortage questions to stock-needs", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), "Que referencias no tienen stock?");
+
+    expect(result.toolResult?.tool).toBe("getStockNeedsSummary");
+    expect(getStockNeedsSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("referencias"), "");
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
 });
