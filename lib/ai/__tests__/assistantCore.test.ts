@@ -116,6 +116,63 @@ describe("assistant core", () => {
     expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_safe_response_returned" }));
   });
 
+  it.each([
+    "Muestrame los costos de los MPN",
+    "Que GP rate tenemos",
+    "Muestrame precios y margenes"
+  ])("blocks sensitive Spanish questions before DB and LLM: %s", async (message) => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const result = await answerAssistantQuestion({
+      context: authContext("admin"),
+      message,
+      language: "es",
+      channel: "text"
+    });
+
+    expect(result.answer).toBe("No tengo permiso para mostrar costos, precios o margen en esta vista.");
+    expect(result.intent).toBe("sensitiveDataPermissionDenied");
+    expect(result.tool).toBe("sensitiveDataPermissionDenied");
+    expect(result.timings.dataLookupMs).toBe(0);
+    expect(result.timings.llmMs).toBe(0);
+    expect(routeAssistantDatabaseQuery).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
+    expect(result.answer).not.toMatch(/Supabase|Render|OpenAI|timeout|statement/i);
+  });
+
+  it("keeps stock shortage questions on the deterministic stock-needs path", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    routeAssistantDatabaseQuery.mockResolvedValueOnce({
+      permissionDenied: false,
+      toolResult: {
+        ok: true,
+        tool: "getStockNeedsSummary",
+        scope: "company",
+        total: 90,
+        rows: [],
+        data: { items: [], totals: { noStock: 90 } },
+        summary: "Encontre 90 MPN con necesidad y sin stock disponible.",
+        empty: false,
+        truncated: false,
+        deterministic: true
+      }
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const result = await answerAssistantQuestion({
+      context: authContext("admin"),
+      message: "Que MPN tienen falta de stock?",
+      language: "es",
+      channel: "text"
+    });
+
+    expect(result.answer).toContain("90 MPN");
+    expect(result.tool).toBe("getStockNeedsSummary");
+    expect(routeAssistantDatabaseQuery).toHaveBeenCalledWith(expect.any(Object), "Que MPN tienen falta de stock?");
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
   it("does not send sensitive commercial fields to OpenAI", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     routeAssistantDatabaseQuery.mockResolvedValueOnce({

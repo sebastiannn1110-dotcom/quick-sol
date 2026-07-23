@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canUseSensitiveCommercialDataInAi,
   canViewCosts,
   canViewCustomerDetails,
   canViewGp,
@@ -8,7 +9,8 @@ import {
   getRolePermissions,
   questionRequestsSensitiveCommercialData,
   redactSensitiveFieldsForLlm,
-  redactSensitiveFieldsForRole
+  redactSensitiveFieldsForRole,
+  shouldBlockSensitiveAiQuestion
 } from "@/lib/security/permissions";
 
 const record = {
@@ -126,6 +128,19 @@ describe("role permissions and sensitive field redaction", () => {
 
   it("detects sensitive commercial questions", () => {
     expect(questionRequestsSensitiveCommercialData("Cual es el costo y GP rate?")).toBe(true);
+    expect(questionRequestsSensitiveCommercialData("Muestrame los costos de los MPN")).toBe(true);
+    expect(questionRequestsSensitiveCommercialData("Que GP rate tenemos")).toBe(true);
+    expect(questionRequestsSensitiveCommercialData("Muestrame precios y margenes")).toBe(true);
+    expect(questionRequestsSensitiveCommercialData("Dame las notas internas del PO")).toBe(true);
+    expect(questionRequestsSensitiveCommercialData("Que columnas tiene el ultimo archivo y que representa UNIT COST?")).toBe(false);
     expect(questionRequestsSensitiveCommercialData("Que MPN tienen falta de stock?")).toBe(false);
+  });
+
+  it("blocks sensitive AI questions for all MVP roles until deep permissions exist", () => {
+    expect(canUseSensitiveCommercialDataInAi("admin")).toBe(false);
+    expect(shouldBlockSensitiveAiQuestion("Muestrame precios y margenes", "admin")).toBe(true);
+    expect(shouldBlockSensitiveAiQuestion("Muestrame precios y margenes", "manager")).toBe(true);
+    expect(shouldBlockSensitiveAiQuestion("Muestrame precios y margenes", "employee")).toBe(true);
+    expect(shouldBlockSensitiveAiQuestion("Que MPN tienen falta de stock?", "employee")).toBe(false);
   });
 });

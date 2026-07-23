@@ -152,6 +152,25 @@ describe("AI query router", () => {
     expect(searchBusinessRecords).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "Muestrame los costos de los MPN",
+    "Que GP rate tenemos",
+    "Muestrame precios y margenes"
+  ])("blocks sensitive production phrase before heavy tools: %s", async (question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), question);
+
+    expect(result.permissionDenied).toBe(false);
+    expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
+    expect(result.toolResult?.summary).toBe("No tengo permiso para mostrar costos, precios o margen en esta vista.");
+    expect(getSensitiveDataPermissionDenied).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ role: "admin" }) }));
+    expect(getStockNeedsSummary).not.toHaveBeenCalled();
+    expect(getLowGpRecords).not.toHaveBeenCalled();
+    expect(getMpnPriceComparison).not.toHaveBeenCalled();
+    expect(getRecordsByMpn).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
   it("blocks price questions for employees before data tools run", async () => {
     const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
     const result = await routeAssistantDatabaseQuery(authContext("employee"), "Muestrame el mejor precio para ABC123");

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { AuthContext } from "@/lib/auth/context";
 import { languageName, type AssistantLanguage } from "@/lib/ai/language-detection";
 import { routeAssistantDatabaseQuery } from "@/lib/ai/ai-query-router";
+import { getSensitiveDataPermissionDenied } from "@/lib/ai/database-tools";
 import {
   SAFE_ASSISTANT_FALLBACK,
   TIMEOUT_ASSISTANT_FALLBACK,
@@ -9,7 +10,7 @@ import {
   normalizeTextResponse
 } from "@/lib/ai/response-normalizer";
 import { logger } from "@/lib/logger/logger";
-import { redactSensitiveFieldsForLlm } from "@/lib/security/permissions";
+import { redactSensitiveFieldsForLlm, shouldBlockSensitiveAiQuestion } from "@/lib/security/permissions";
 
 export type { AssistantLanguage } from "@/lib/ai/language-detection";
 export type AssistantChannel = "text" | "voice";
@@ -135,6 +136,26 @@ export async function answerAssistantQuestion({
   channel?: AssistantChannel;
 }) {
   const startedAt = performance.now();
+  if (shouldBlockSensitiveAiQuestion(message, context.profile.role)) {
+    const toolResult = getSensitiveDataPermissionDenied(context);
+    await logAiTiming(context, "ai_sensitive_permission_blocked", "AI sensitive data question blocked before lookup.", "completed", {
+      channel,
+      language,
+      tool: toolResult.tool
+    });
+    return buildAssistantResult({
+      intent: toolResult.tool,
+      tool: toolResult.tool,
+      rawAnswer: toolResult.summary,
+      channel,
+      dataLookupMs: 0,
+      llmMs: 0,
+      startedAt,
+      toolResult,
+      language
+    });
+  }
+
   const dataStartedAt = performance.now();
   await logAiTiming(context, "ai_data_lookup_started", "AI controlled data lookup started.", "started", { channel, language });
   let routed: Awaited<ReturnType<typeof routeAssistantDatabaseQuery>>;

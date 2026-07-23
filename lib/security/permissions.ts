@@ -168,6 +168,11 @@ export function canViewCustomerDetails(role: UserRole) {
   return getRolePermissions(role).canViewCustomerDetails;
 }
 
+export function canUseSensitiveCommercialDataInAi(role: UserRole) {
+  void role;
+  return false;
+}
+
 function canViewGroup(role: UserRole, group: SensitiveGroup) {
   const permissions = getRolePermissions(role);
   if (group === "pricing") return permissions.canViewSensitivePricing;
@@ -214,5 +219,15 @@ export function redactSensitiveFieldsForLlm<T>(data: T): T {
 
 export function questionRequestsSensitiveCommercialData(question: string) {
   const normalized = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  return /\b(costos?|cost|precio|price|precios|gp|gp rate|margen|margin|gross profit|profit|commission|comision|po|purchase order|pricebook|globalprice|contractglobalprice)\b/.test(normalized);
+  const asksOnlyForStructure =
+    /\b(columnas?|campos?|headers?|encabezados?|estructura|perfil|schema|formato|plantilla|representa|representan|detectaste)\b/.test(normalized) &&
+    /\b(archivo|upload|carga|excel|sheet|hoja|subid[oa]|ultim[oa])\b/.test(normalized) &&
+    !/\b(muestrame|mostrar|lista|listame|valores?|datos?|registros?|tenemos|tienen|hay|cuant[oa]s?|total|promedio|calcula|calcular|gp\s*rate|margen(?:es)?|profit)\b/.test(normalized);
+  if (asksOnlyForStructure) return false;
+
+  return /\b(costos?|cost|precio(?:s)?|price(?:s)?|margen(?:es)?|margin(?:s)?|gp(?:\s*rate)?|gross\s*profit|profit|commission|comision|unit\s*cost|price\s*book|pricebook|global\s*price|globalprice|contract\s*global\s*price|contractglobalprice|usd\s*extended\s*price|po|purchase\s*order|notas?\s+internas?|internal\s+notes?)\b/.test(normalized);
+}
+
+export function shouldBlockSensitiveAiQuestion(question: string, role: UserRole) {
+  return questionRequestsSensitiveCommercialData(question) && !canUseSensitiveCommercialDataInAi(role);
 }

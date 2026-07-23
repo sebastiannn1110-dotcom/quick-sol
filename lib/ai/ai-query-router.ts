@@ -17,7 +17,7 @@ import {
   searchBusinessRecords,
   type AiToolResult
 } from "@/lib/ai/database-tools";
-import { canViewCosts, canViewGp, canViewSensitivePricing, questionRequestsSensitiveCommercialData } from "@/lib/security/permissions";
+import { shouldBlockSensitiveAiQuestion } from "@/lib/security/permissions";
 
 export interface AiRouterResult {
   permissionDenied: boolean;
@@ -107,8 +107,7 @@ function isStockNeedsQuestion(text: string) {
 }
 
 function isRestrictedSensitiveQuestion(question: string, role: AuthContext["profile"]["role"]) {
-  if (!questionRequestsSensitiveCommercialData(question)) return false;
-  return !canViewCosts(role) || !canViewSensitivePricing(role) || !canViewGp(role);
+  return shouldBlockSensitiveAiQuestion(question, role);
 }
 
 async function logToolCompleted(context: AuthContext, startedAt: number, question: string, toolResult: AiToolResult) {
@@ -130,6 +129,12 @@ async function logToolCompleted(context: AuthContext, startedAt: number, questio
 export async function routeAssistantDatabaseQuery(context: AuthContext, question: string): Promise<AiRouterResult> {
   const startedAt = performance.now();
   const text = normalized(question);
+  if (isRestrictedSensitiveQuestion(question, context.profile.role)) {
+    const toolResult = getSensitiveDataPermissionDenied(context);
+    await logToolCompleted(context, startedAt, question, toolResult);
+    return { permissionDenied: false, toolResult };
+  }
+
   if (questionRequestsCompanyWideData(question) && !canRequestCompanyWideData(context.profile.role)) {
     await logger.security({
       traceId: context.requestMeta.traceId,
@@ -143,12 +148,6 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
       status: "failed"
     });
     return { permissionDenied: true, toolResult: null };
-  }
-
-  if (isRestrictedSensitiveQuestion(question, context.profile.role)) {
-    const toolResult = getSensitiveDataPermissionDenied(context);
-    await logToolCompleted(context, startedAt, question, toolResult);
-    return { permissionDenied: false, toolResult };
   }
 
   if (isStockNeedsQuestion(text)) {
