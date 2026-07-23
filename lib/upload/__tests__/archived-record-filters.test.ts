@@ -42,6 +42,8 @@ describe("archived business record filters", () => {
     expectActiveBusinessRecordReads("app/api/admin/records/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/admin/search/route.ts", 1);
     expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 1);
+    expect(source("app/api/admin/opportunities/route.ts")).toContain("loadStockNeedsInput");
+    expect(businessRecordReadSegments("app/api/admin/opportunities/route.ts")).toHaveLength(0);
     expectActiveBusinessRecordReads("app/api/employees/route.ts", 1);
   });
 

@@ -11,11 +11,18 @@ import {
 } from "@/lib/upload/structure-profile";
 import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
 import { buildStockNeedsResult, normalizePartNumberForMatch, summarizeStockNeeds } from "@/lib/stock-needs/stock-needs";
+import {
+  buildSalesOpportunitiesResult,
+  opportunityTypeFromQuestion,
+  summarizeSalesOpportunities,
+  type OpportunityType
+} from "@/lib/opportunities/opportunities";
 
 export type AiDatabaseToolName =
   | "sensitiveDataPermissionDenied"
   | "getUploadPresentationSummary"
   | "getStockNeedsSummary"
+  | "getOpportunitiesSummary"
   | "getLatestUpload"
   | "searchBusinessRecords"
   | "getRecordsByMpn"
@@ -561,6 +568,42 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
     summary,
     resultData.items.length === 0,
     input.uploadIds.length >= 20 || resultData.meta.scannedRecords >= 100000,
+    { deterministic: true }
+  );
+}
+
+export async function getOpportunitiesSummary(context: AuthContext, question: string) {
+  const supabase = requireSupabase(context);
+  const mode = opportunityTypeFromQuestion(question);
+  const opportunityType: OpportunityType | null =
+    mode && mode !== "confidence" && mode !== "approved" && mode !== "received" ? mode : null;
+  const input = await loadStockNeedsInput(supabase, {
+    ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
+    maxUploads: 30,
+    recordsPerUploadLimit: 5000
+  });
+
+  const resultData = buildSalesOpportunitiesResult({
+    records: input.records,
+    profiles: input.profiles,
+    importJobs: input.importJobs,
+    filters: {
+      opportunityType,
+      limit: 10
+    }
+  });
+  const summary = summarizeSalesOpportunities(resultData, { mode });
+  return result(
+    context,
+    "getOpportunitiesSummary",
+    {
+      items: resultData.items.slice(0, 10),
+      totals: resultData.totals,
+      meta: resultData.meta
+    },
+    summary,
+    resultData.totals.totalOpportunities === 0,
+    input.uploadIds.length >= 30 || resultData.meta.scannedRecords >= 150000,
     { deterministic: true }
   );
 }

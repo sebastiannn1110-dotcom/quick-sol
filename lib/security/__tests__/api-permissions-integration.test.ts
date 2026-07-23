@@ -13,10 +13,13 @@ describe("API sensitive field permission integration", () => {
     expect(source("app/api/search/route.ts")).toContain("redactSensitiveFieldsForRole");
   });
 
-  it("keeps admin records and stock-needs responses behind the shared redactor", () => {
+  it("keeps admin records, stock-needs and opportunities responses behind the shared redactor", () => {
     expect(source("app/api/admin/records/route.ts")).toContain("redactSensitiveFieldsForRole");
     expect(source("app/api/admin/stock-needs/route.ts")).toContain("redactSensitiveFieldsForRole");
+    expect(source("app/api/admin/opportunities/route.ts")).toContain("redactSensitiveFieldsForRole");
     expect(source("lib/stock-needs/stock-needs.ts")).not.toContain("UNIT COST:");
+    expect(source("lib/opportunities/opportunities.ts")).not.toContain("unitCost");
+    expect(source("lib/opportunities/opportunities.ts")).not.toContain("gp_rate");
   });
 
   it("protects AI tool payloads and LLM input from sensitive fields", () => {

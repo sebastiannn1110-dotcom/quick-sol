@@ -31,6 +31,7 @@ describe("AI query router", () => {
   const getRecordsByMpn = vi.fn();
   const getStockNeedsSummary = vi.fn();
   const getUploadPresentationSummary = vi.fn();
+  const getOpportunitiesSummary = vi.fn();
   const getSensitiveDataPermissionDenied = vi.fn();
   const getLowGpRecords = vi.fn();
   const getMpnPriceComparison = vi.fn();
@@ -85,6 +86,17 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getOpportunitiesSummary.mockResolvedValue({
+      ok: true,
+      tool: "getOpportunitiesSummary",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { items: [], totals: { totalOpportunities: 1 } },
+      summary: "Encontré 1 oportunidades comerciales.",
+      empty: false,
+      deterministic: true
+    });
     getSensitiveDataPermissionDenied.mockImplementation((context: AuthContext) => ({
       ok: true,
       tool: "sensitiveDataPermissionDenied",
@@ -103,6 +115,7 @@ describe("AI query router", () => {
       getLowGpRecords,
       getMissingMpnRecords: vi.fn(),
       getMpnPriceComparison,
+      getOpportunitiesSummary,
       getRecordsByMpn,
       getSensitiveDataPermissionDenied,
       getStockNeedsSummary,
@@ -147,6 +160,7 @@ describe("AI query router", () => {
     expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
     expect(result.toolResult?.summary).toBe("No tengo permiso para mostrar costos, precios o margen en esta vista.");
     expect(getSensitiveDataPermissionDenied).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ role: "manager" }) }));
+    expect(getOpportunitiesSummary).not.toHaveBeenCalled();
     expect(getLowGpRecords).not.toHaveBeenCalled();
     expect(getMpnPriceComparison).not.toHaveBeenCalled();
     expect(searchBusinessRecords).not.toHaveBeenCalled();
@@ -164,6 +178,7 @@ describe("AI query router", () => {
     expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
     expect(result.toolResult?.summary).toBe("No tengo permiso para mostrar costos, precios o margen en esta vista.");
     expect(getSensitiveDataPermissionDenied).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ role: "admin" }) }));
+    expect(getOpportunitiesSummary).not.toHaveBeenCalled();
     expect(getStockNeedsSummary).not.toHaveBeenCalled();
     expect(getLowGpRecords).not.toHaveBeenCalled();
     expect(getMpnPriceComparison).not.toHaveBeenCalled();
@@ -177,6 +192,7 @@ describe("AI query router", () => {
 
     expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
     expect(getSensitiveDataPermissionDenied).toHaveBeenCalled();
+    expect(getOpportunitiesSummary).not.toHaveBeenCalled();
     expect(getMpnPriceComparison).not.toHaveBeenCalled();
     expect(getRecordsByMpn).not.toHaveBeenCalled();
   });
@@ -188,6 +204,25 @@ describe("AI query router", () => {
     expect(result.toolResult?.tool).toBe("getStockNeedsSummary");
     expect(getStockNeedsSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("ABC123"), "ABC123");
     expect(getRecordsByMpn).not.toHaveBeenCalled();
+  });
+
+  it("routes commercial opportunity questions to the deterministic opportunities engine", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("admin"), "Que oportunidades de venta hay?");
+
+    expect(result.toolResult?.tool).toBe("getOpportunitiesSummary");
+    expect(getOpportunitiesSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("oportunidades"));
+    expect(getStockNeedsSummary).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it("routes immediate sale questions to opportunities without calling stock-needs", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("manager"), "Que MPN puedo vender ya?");
+
+    expect(result.toolResult?.tool).toBe("getOpportunitiesSummary");
+    expect(getOpportunitiesSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("vender ya"));
+    expect(getStockNeedsSummary).not.toHaveBeenCalled();
   });
 
   it("does not treat generic Spanish words after MPN as a concrete part number", async () => {

@@ -9,6 +9,7 @@ import {
   getLowGpRecords,
   getMissingMpnRecords,
   getMpnPriceComparison,
+  getOpportunitiesSummary,
   getRecordsByMpn,
   getSensitiveDataPermissionDenied,
   getStockNeedsSummary,
@@ -106,6 +107,20 @@ function isStockNeedsQuestion(text: string) {
   );
 }
 
+function isOpportunityQuestion(text: string) {
+  return (
+    /oportunidad|oportunidades|sales opportunities|commercial opportunities/.test(text) ||
+    /venta inmediata|venta parcial|vender ya|puedo vender|immediate sale|partial sale/.test(text) ||
+    /requieren sourcing|requiere sourcing|sourcing necesario|sourcing needed|buscar proveedor/.test(text) ||
+    /stock.*sin demanda|sin demanda actual|stock without demand/.test(text) ||
+    /exceso.*revender|revender.*exceso|reventa|excess resale|surplus resale|overstock resale/.test(text) ||
+    /cliente.*necesita.*fuente|fuente.*disponible.*cliente|broker/.test(text) ||
+    /mayor confianza|alta confianza|high confidence/.test(text) ||
+    /partes? aprobadas?|approved parts?|avl|aml/.test(text) ||
+    /(recibidas|recibidos|received|receipt|rcpt).*(demanda|oportunidad|opportunity)/.test(text)
+  );
+}
+
 function isRestrictedSensitiveQuestion(question: string, role: AuthContext["profile"]["role"]) {
   return shouldBlockSensitiveAiQuestion(question, role);
 }
@@ -148,6 +163,12 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
       status: "failed"
     });
     return { permissionDenied: true, toolResult: null };
+  }
+
+  if (isOpportunityQuestion(text)) {
+    const toolResult = await getOpportunitiesSummary(context, question);
+    await logToolCompleted(context, startedAt, question, toolResult);
+    return { permissionDenied: false, toolResult };
   }
 
   if (isStockNeedsQuestion(text)) {
