@@ -2,14 +2,13 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import { summarizeMpnOffers, buildSupplierRanking, type MpnOffer } from "@/lib/mpn/recommendation";
+import { loadMpnComparatorOffers, MpnLookupError, normalizedMpnDisplay } from "@/lib/mpn/lookup";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { canViewCosts, canViewGp, canViewSensitivePricing, canViewSupplierDetails, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
+import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function like(value: string) {
-  return `%${value.replace(/[%_]/g, "")}%`;
-}
 
 function priceHistory(offers: Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>) {
   return offers
@@ -23,7 +22,45 @@ function priceHistory(offers: Array<MpnOffer & { upload_batches?: { original_fil
     .sort((a, b) => String(a.date ?? "").localeCompare(String(b.date ?? "")));
 }
 
+function permissionSafePayload<T extends {
+  summary: {
+    bestPrice: number | null;
+    worstPrice: number | null;
+    recommendedSupplier: string | null;
+    recommendationReason: string;
+  };
+  priceHistory: unknown[];
+  supplierRanking: Array<{
+    bestPrice: number | null;
+    averageGpRate: number | null;
+  }>;
+}>(payload: T, role: UserRole) {
+  if (canViewSensitivePricing(role) && canViewCosts(role) && canViewGp(role) && canViewSupplierDetails(role)) {
+    return redactSensitiveFieldsForRole(payload, role);
+  }
+
+  const scoped = {
+    ...payload,
+    summary: {
+      ...payload.summary,
+      bestPrice: canViewSensitivePricing(role) ? payload.summary.bestPrice : null,
+      worstPrice: canViewSensitivePricing(role) ? payload.summary.worstPrice : null,
+      recommendedSupplier: canViewSupplierDetails(role) ? payload.summary.recommendedSupplier : null,
+      recommendationReason: "Hay registros visibles para este MPN. Los precios, costos y margen estan ocultos para tu rol."
+    },
+    priceHistory: canViewSensitivePricing(role) ? payload.priceHistory : [],
+    supplierRanking: payload.supplierRanking.map((item) => ({
+      ...item,
+      bestPrice: canViewSensitivePricing(role) ? item.bestPrice : null,
+      averageGpRate: canViewGp(role) ? item.averageGpRate : null
+    }))
+  };
+
+  return redactSensitiveFieldsForRole(scoped, role);
+}
+
 export async function GET(request: Request) {
+  const startedAt = performance.now();
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
 
@@ -31,7 +68,7 @@ export async function GET(request: Request) {
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 
   const { searchParams } = new URL(request.url);
-  const mpn = (searchParams.get("mpn") ?? "").trim().slice(0, 120);
+  const mpn = normalizedMpnDisplay(searchParams.get("mpn") ?? "");
   if (!mpn) return NextResponse.json({ error: "MPN is required." }, { status: 400 });
 
   await logger.info({
@@ -49,24 +86,20 @@ export async function GET(request: Request) {
   });
 
   if (context.isDemoMode || !context.supabase) {
-    return NextResponse.json({
+    return NextResponse.json(permissionSafePayload({
       mpn,
       summary: summarizeMpnOffers([]),
       offers: [],
       priceHistory: [],
       supplierRanking: []
-    });
+    }, context.profile.role));
   }
 
-  const { data, error } = await context.supabase
-    .from("business_records")
-    .select("*, profiles(full_name,email,department,region,role), upload_batches(id,original_file_name,detected_category,status,created_at,stored_file_path)")
-    .is("archived_at", null)
-    .or(`mpn.ilike.${like(mpn)},mpn_quoted.ilike.${like(mpn)}`)
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (error) {
+  let offers: Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>;
+  try {
+    offers = await loadMpnComparatorOffers(context.supabase, mpn);
+  } catch (error) {
+    const lookupError = error instanceof MpnLookupError ? error : null;
     await logger.error({
       traceId: context.requestMeta.traceId,
       requestId: context.requestMeta.requestId,
@@ -78,13 +111,16 @@ export async function GET(request: Request) {
       action: "mpn_comparison_failed",
       message: "MPN comparison failed.",
       status: "failed",
-      error,
-      metadata: { mpn }
+      durationMs: Math.round(performance.now() - startedAt),
+      error: lookupError?.originalError ?? error,
+      metadata: { mpn, stage: lookupError?.stage ?? "unknown", timeout: Boolean(lookupError?.isTimeout) }
     });
-    return NextResponse.json({ error: "Unable to compare MPN." }, { status: 500 });
+    return NextResponse.json(
+      { error: lookupError?.isTimeout ? "La busqueda del MPN tardo demasiado. Intenta con un MPN exacto." : "No se pudo comparar este MPN en este momento." },
+      { status: lookupError?.isTimeout ? 504 : 500 }
+    );
   }
 
-  const offers = (data ?? []) as Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>;
   const summary = summarizeMpnOffers(offers);
   const supplierRanking = buildSupplierRanking(offers);
 
@@ -99,15 +135,16 @@ export async function GET(request: Request) {
     action: "mpn_comparison_completed",
     message: "MPN comparison completed.",
     status: "completed",
+    durationMs: Math.round(performance.now() - startedAt),
     metadata: { mpn, offers: offers.length, recommendedSupplier: summary.recommendedSupplier }
   });
 
-  return NextResponse.json({
+  return NextResponse.json(permissionSafePayload({
     mpn,
     summary,
     offers,
     priceHistory: priceHistory(offers),
     supplierRanking,
     note: offers.length > 1 ? null : "No hay suficiente historial para este MPN todavia. Se muestran las ofertas disponibles."
-  });
+  }, context.profile.role));
 }

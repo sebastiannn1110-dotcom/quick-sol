@@ -48,8 +48,7 @@ describe("archived business record filters", () => {
   it("keeps executive and MPN record lookups active-only", () => {
     expectActiveBusinessRecordReads("app/api/executive-search/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/executive-search/suggest/route.ts", 1);
-    expectActiveBusinessRecordReads("app/api/mpn-comparator/route.ts", 1);
-    expectActiveBusinessRecordReads("app/api/mpn-comparator/suggest/route.ts", 1);
+    expectActiveBusinessRecordReads("lib/mpn/lookup.ts", 2);
   });
 
   it("keeps import diagnostics active-only for record counts", () => {

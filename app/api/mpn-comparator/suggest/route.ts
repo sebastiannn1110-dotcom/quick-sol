@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
+import { logger } from "@/lib/logger/logger";
+import { loadMpnSuggestions, MpnLookupError, MPN_SUGGESTION_MIN_LENGTH } from "@/lib/mpn/lookup";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function like(value: string) {
-  return `%${value.replace(/[%_]/g, "")}%`;
-}
-
 export async function GET(request: Request) {
+  const startedAt = performance.now();
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
 
@@ -18,30 +17,33 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const q = (searchParams.get("q") ?? "").trim().slice(0, 80);
-  if (q.length < 2 || context.isDemoMode || !context.supabase) {
+  if (q.length < MPN_SUGGESTION_MIN_LENGTH || context.isDemoMode || !context.supabase) {
     return NextResponse.json({ suggestions: [] });
   }
 
-  const { data, error } = await context.supabase
-    .from("business_records")
-    .select("mpn, mpn_quoted, manufacturer, supplier, supplier_name")
-    .is("archived_at", null)
-    .or(`mpn.ilike.${like(q)},mpn_quoted.ilike.${like(q)}`)
-    .limit(25);
-
-  if (error) return NextResponse.json({ error: "Unable to load MPN suggestions." }, { status: 500 });
-
-  const seen = new Set<string>();
-  const suggestions = (data ?? [])
-    .flatMap((record) => [record.mpn, record.mpn_quoted])
-    .filter(Boolean)
-    .map((mpn) => String(mpn).toUpperCase())
-    .filter((mpn) => {
-      if (seen.has(mpn)) return false;
-      seen.add(mpn);
-      return true;
-    })
-    .slice(0, 12);
-
-  return NextResponse.json({ suggestions });
+  try {
+    const suggestions = await loadMpnSuggestions(context.supabase, q);
+    return NextResponse.json({ suggestions });
+  } catch (error) {
+    const lookupError = error instanceof MpnLookupError ? error : null;
+    await logger.error({
+      traceId: context.requestMeta.traceId,
+      requestId: context.requestMeta.requestId,
+      userId: context.profile.id,
+      userEmail: context.profile.email,
+      userRole: context.profile.role,
+      route: context.requestMeta.route,
+      module: "api",
+      action: "mpn_suggestions_failed",
+      message: "MPN suggestions failed.",
+      status: "failed",
+      durationMs: Math.round(performance.now() - startedAt),
+      error: lookupError?.originalError ?? error,
+      metadata: { q, stage: lookupError?.stage ?? "unknown", timeout: Boolean(lookupError?.isTimeout) }
+    });
+    return NextResponse.json(
+      { error: lookupError?.isTimeout ? "La busqueda de sugerencias tardo demasiado. Escribe un MPN mas especifico." : "No se pudieron cargar sugerencias en este momento." },
+      { status: lookupError?.isTimeout ? 504 : 500 }
+    );
+  }
 }
