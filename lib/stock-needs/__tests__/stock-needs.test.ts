@@ -16,7 +16,11 @@ const planningUpload = {
 describe("stock needs matching", () => {
   it("normalizes part numbers as text and preserves leading zeroes", () => {
     expect(normalizePartNumberForMatch("  00123 ab  ")).toBe("00123AB");
+    expect(normalizePartNumberForMatch("001234")).toBe("001234");
+    expect(normalizePartNumberForMatch("1,748,917")).toBe("1748917");
+    expect(normalizePartNumberForMatch("1.748.917")).toBe("1748917");
     expect(normalizePartNumberForMatch("000-45")).toBe("000-45");
+    expect(normalizePartNumberForMatch("ABC-001")).toBe("ABC-001");
     expect(normalizePartNumberForMatch("")).toBeNull();
   });
 
@@ -241,8 +245,9 @@ describe("stock needs matching", () => {
   it("summarizes shortage questions with totals and limited MPN examples", () => {
     const result = buildStockNeedsResult({
       records: [
-        { upload_batch_id: "need", raw_data: { Item: "A-1", Quantity: 5, status: "open" }, upload_batches: planningUpload },
-        { upload_batch_id: "need", raw_data: { Item: "B-2", Quantity: 7, status: "open" }, upload_batches: planningUpload },
+        { upload_batch_id: "need", raw_data: { Item: "001234", Quantity: 5.4, status: "open" }, upload_batches: planningUpload },
+        { upload_batch_id: "need", raw_data: { Item: "1,748,917", Quantity: 7.1, status: "open" }, upload_batches: planningUpload },
+        { upload_batch_id: "need", raw_data: { Item: "ABC-001", Quantity: 216916510.5, status: "open" }, upload_batches: planningUpload },
         { upload_batch_id: "stock", raw_data: { MPN: "B-2", "STOCK QTY": 2 }, upload_batches: inventoryUpload }
       ],
       profiles: [
@@ -254,11 +259,28 @@ describe("stock needs matching", () => {
 
     const summary = summarizeStockNeeds(result, { mode: "shortage" });
 
-    expect(summary).toContain("1 MPN con necesidad y sin stock");
-    expect(summary).toContain("1 con stock parcial");
-    expect(summary).toContain("A-1");
-    expect(summary).toContain("B-2");
-    expect(summary).toContain("12 unidades");
-    expect(summary).toContain("2");
+    expect(summary).toContain("Encontré");
+    expect(summary).toContain("3 MPN con necesidad y sin stock");
+    expect(summary).toContain("0 con stock parcial");
+    expect(summary).toContain("001234");
+    expect(summary).toContain("1748917");
+    expect(summary).not.toContain("1,748,917");
+    expect(summary).toContain("ABC-001");
+    expect(summary).toContain("216.916.523 unidades");
+    expect(summary).not.toContain("216.916.522,999");
+    expect(summary).not.toContain(",5 unidades");
+  });
+
+  it("matches grouped numeric MPN input against plain text MPN output", () => {
+    const result = buildStockNeedsResult({
+      records: [
+        { upload_batch_id: "need", raw_data: { Item: "1,748,917", Quantity: 4, status: "open" }, upload_batches: planningUpload }
+      ],
+      profiles: [{ upload_batch_id: "need", detected_template: "pricing/logistica" }],
+      filters: { q: "1748917" }
+    });
+
+    expect(result.items[0]?.mpn).toBe("1748917");
+    expect(summarizeStockNeeds(result, { mpn: "1,748,917", mode: "stock" })).toContain("Para 1748917:");
   });
 });

@@ -152,7 +152,7 @@ describe("assistant core", () => {
         total: 90,
         rows: [],
         data: { items: [], totals: { noStock: 90 } },
-        summary: "Encontre 90 MPN con necesidad y sin stock disponible.",
+        summary: "Encontré 90 MPN con necesidad y sin stock disponible.",
         empty: false,
         truncated: false,
         deterministic: true
@@ -167,7 +167,7 @@ describe("assistant core", () => {
       channel: "text"
     });
 
-    expect(result.answer).toContain("90 MPN");
+    expect(result.answer).toContain("Encontré 90 MPN");
     expect(result.tool).toBe("getStockNeedsSummary");
     expect(routeAssistantDatabaseQuery).toHaveBeenCalledWith(expect.any(Object), "Que MPN tienen falta de stock?");
     expect(responsesCreate).not.toHaveBeenCalled();

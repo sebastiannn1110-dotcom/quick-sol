@@ -127,11 +127,15 @@ const REQUIRED_DATE_ALIASES = ["RequiredDate", "required date", "StartDate", "st
 const LEAD_TIME_ALIASES = ["LeadTime", "lead time", "InTransitLT", "lead_time_weeks", "transit_time_weeks"];
 const STATUS_ALIASES = ["status", "state", "estado"];
 
+function removeNumericGroupingSeparators(value: string) {
+  return /^\d{1,3}([,.]\d{3})+$/.test(value) ? value.replace(/[,.]/g, "") : value;
+}
+
 export function normalizePartNumberForMatch(value: unknown) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   if (!text) return null;
-  const compact = text.replace(/\s+/g, "").toUpperCase();
+  const compact = removeNumericGroupingSeparators(text.replace(/\s+/g, "").toUpperCase());
   return compact || null;
 }
 
@@ -409,25 +413,26 @@ export function buildStockNeedsResult(input: {
 }
 
 export function summarizeStockNeeds(result: StockNeedsResult, options?: { mpn?: string | null; mode?: "shortage" | "stock" | "needs" | "files" }) {
-  const formatQty = (value: number) => new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value);
+  const formatQty = (value: number | null, fallback = "desconocida") =>
+    value === null || !Number.isFinite(value) ? fallback : new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Math.round(value));
   const mpn = options?.mpn ? normalizePartNumberForMatch(options.mpn) : null;
   if (mpn) {
     const item = result.items.find((row) => row.mpn === mpn);
-    if (!item) return `No encontre stock o necesidades visibles para el MPN ${mpn}.`;
-    return `Para ${item.mpn}: necesidad ${item.requiredQty ?? "desconocida"}, stock ${item.stockQty ?? "desconocido"}, cobertura ${item.coverageStatus.replace(/_/g, " ")}.`;
+    if (!item) return `No encontré stock o necesidades visibles para el MPN ${mpn}.`;
+    return `Para ${item.mpn}: necesidad ${formatQty(item.requiredQty)}, stock ${formatQty(item.stockQty, "desconocido")}, cobertura ${item.coverageStatus.replace(/_/g, " ")}.`;
   }
   if (options?.mode === "files") {
     const uploadNames = new Set(result.items.flatMap((item) => item.sourceUploads.map((upload) => upload.detectedTemplate ?? "sin plantilla")));
-    return `Los archivos visibles se agrupan como ${Array.from(uploadNames).slice(0, 5).join(", ") || "sin clasificacion suficiente"}.`;
+    return `Los archivos visibles se agrupan como ${Array.from(uploadNames).slice(0, 5).join(", ") || "sin clasificación suficiente"}.`;
   }
   if (options?.mode === "needs") {
-    return `Detecte ${result.totals.totalItems} MPNs con necesidades o stock visible y ${formatQty(result.totals.totalRequiredQty)} unidades requeridas.`;
+    return `Detecté ${result.totals.totalItems} MPNs con necesidades o stock visible y ${formatQty(result.totals.totalRequiredQty)} unidades requeridas.`;
   }
   if (options?.mode === "shortage") {
     const shortageItems = result.items.filter((item) => item.coverageStatus === "no_stock" || item.coverageStatus === "partial_stock");
     const examples = shortageItems.slice(0, 10).map((item) => item.mpn);
     const exampleText = examples.length ? ` Algunos ejemplos son: ${examples.join(", ")}.` : "";
-    return `Encontre ${result.totals.noStock} MPN con necesidad y sin stock disponible, y ${result.totals.partialStock} con stock parcial.${exampleText} El total requerido detectado es ${formatQty(result.totals.totalRequiredQty)} unidades y el stock disponible cruzado actualmente es ${formatQty(result.totals.totalStockQty)}.`;
+    return `Encontré ${result.totals.noStock} MPN con necesidad y sin stock disponible, y ${result.totals.partialStock} con stock parcial.${exampleText} El total requerido detectado es ${formatQty(result.totals.totalRequiredQty)} unidades y el stock disponible cruzado actualmente es ${formatQty(result.totals.totalStockQty)}.`;
   }
   return `Resumen de cobertura: ${result.totals.inStock} con stock completo, ${result.totals.partialStock} con stock parcial, ${result.totals.noStock} sin stock, ${result.totals.overstock} con sobrestock y ${result.totals.unknown} desconocidos.`;
 }
