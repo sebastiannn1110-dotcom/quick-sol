@@ -140,7 +140,7 @@ export default function MpnComparator({ initialMpn = "" }: { initialMpn?: string
         <>
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <SupplierRecommendationCard label="Mejor precio" value={data.summary.bestPrice} detail="Menor price encontrado" accent="green" />
-            <SupplierRecommendationCard label="Entrega mas rapida" value={data.summary.fastestLeadTime} detail="Lead time en semanas" accent="blue" />
+            <SupplierRecommendationCard label="Entrega más rápida" value={data.summary.fastestLeadTime} detail="Lead time en semanas" accent="blue" />
             <SupplierRecommendationCard label="Mayor cantidad" value={data.summary.highestQuantity} detail="Qty / On hand" />
             <SupplierRecommendationCard label="Proveedor recomendado" value={data.summary.recommendedSupplier} detail={data.summary.recommendationReason} accent="orange" />
           </section>
@@ -221,7 +221,7 @@ export default function MpnComparator({ initialMpn = "" }: { initialMpn?: string
                     <p className="text-slate-500">{cell(item, "supplier")} - {cell(item, "uploadFile")}</p>
                   </div>
                 ))}
-                {!data.priceHistory.length ? <p className="text-sm text-slate-500">No hay historial suficiente para este MPN todavia.</p> : null}
+                {!data.priceHistory.length ? <p className="text-sm text-slate-500">No hay historial suficiente para este MPN todavía.</p> : null}
               </div>
             </section>
           </div>

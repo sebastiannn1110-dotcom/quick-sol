@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  cleanMpnOfferForOutput,
   loadMpnComparatorOffers,
   loadMpnSuggestions,
   MPN_COMPARATOR_SELECT,
@@ -66,13 +69,17 @@ describe("MPN lookup helpers", () => {
     expect(normalizedMpnDisplay("001234")).toBe("001234");
     expect(normalizedMpnDisplay("1,748,917")).toBe("1748917");
     expect(normalizedMpnDisplay("ABC-001")).toBe("ABC-001");
+    expect(cleanMpnOfferForOutput({ id: "1", mpn: "1,748,917", mpn_quoted: "1,748,917" })).toMatchObject({
+      mpn: "1748917",
+      mpn_quoted: "1748917"
+    });
     expect(mpnLookupCandidates("1748917")).toEqual(expect.arrayContaining(["1748917", "1,748,917", "1.748.917"]));
   });
 
-  it("uses an exact indexed MPN filter and a minimal select for 1748917", async () => {
+  it("uses an exact indexed MPN filter and returns clean display MPNs for 1748917", async () => {
     const { supabase, calls } = mockSupabase([
       {
-        data: [{ id: "1", mpn: "1748917", created_at: "2026-07-23T00:00:00Z" }],
+        data: [{ id: "1", mpn: "1,748,917", created_at: "2026-07-23T00:00:00Z" }],
         error: null
       }
     ]);
@@ -80,6 +87,7 @@ describe("MPN lookup helpers", () => {
     const rows = await loadMpnComparatorOffers(supabase as never, "1748917");
 
     expect(rows).toHaveLength(1);
+    expect(rows[0].mpn).toBe("1748917");
     expect(calls).toHaveLength(1);
     expect(calls[0].table).toBe("business_records");
     expect(calls[0].select).toBe(MPN_COMPARATOR_SELECT);
@@ -116,16 +124,44 @@ describe("MPN lookup helpers", () => {
 
   it("uses a bounded prefix range and limits suggestions", async () => {
     const suggestions = Array.from({ length: 30 }, (_, index) => ({ mpn: `1748917-${index}`, mpn_quoted: `1748917-${index}` }));
-    const { supabase, calls } = mockSupabase([{ data: suggestions, error: null }]);
+    const { supabase, calls } = mockSupabase([
+      { data: [], error: null },
+      { data: suggestions, error: null }
+    ]);
 
     const result = await loadMpnSuggestions(supabase as never, "1748917");
 
     expect(result).toHaveLength(MPN_SUGGESTION_LIMIT);
     expect(result[0]).toBe("1748917-0");
-    expect(calls).toHaveLength(1);
-    expect(calls[0].filters).toContainEqual({ method: "is", column: "archived_at", value: null });
-    expect(calls[0].filters).toContainEqual({ method: "gte", column: "mpn", value: "1748917" });
-    expect(calls[0].filters).toContainEqual({ method: "lt", column: "mpn", value: "1748918" });
-    expect(calls[0].limit).toBe(MPN_SUGGESTION_QUERY_LIMIT);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].filters).toContainEqual(expect.objectContaining({ method: "in", column: "mpn", value: expect.arrayContaining(["1,748,917"]) }));
+    expect(calls[1].filters).toContainEqual({ method: "is", column: "archived_at", value: null });
+    expect(calls[1].filters).toContainEqual({ method: "gte", column: "mpn", value: "1748917" });
+    expect(calls[1].filters).toContainEqual({ method: "lt", column: "mpn", value: "1748918" });
+    expect(calls[1].limit).toBe(MPN_SUGGESTION_QUERY_LIMIT);
+  });
+
+  it("finds historical grouped numeric MPNs in suggestions and deduplicates by normalized MPN", async () => {
+    const { supabase } = mockSupabase([
+      { data: [{ mpn: "1,748,917", mpn_quoted: null }], error: null },
+      { data: [{ mpn: "1748917", mpn_quoted: "1,748,917" }, { mpn: "1748917-A", mpn_quoted: null }], error: null }
+    ]);
+
+    const result = await loadMpnSuggestions(supabase as never, "1748917");
+
+    expect(result).toEqual(["1748917", "1748917-A"]);
+    expect(result.filter((item) => item === "1748917")).toHaveLength(1);
+  });
+
+  it("keeps comparator lookups free of unbounded contains scans and select star", () => {
+    const source = [
+      "app/api/mpn-comparator/route.ts",
+      "app/api/mpn-comparator/suggest/route.ts",
+      "lib/mpn/lookup.ts"
+    ].map((file) => readFileSync(path.join(process.cwd(), file), "utf8")).join("\n");
+
+    expect(source).not.toContain("ilike");
+    expect(source).not.toContain(".or(");
+    expect(source).not.toContain('select("*');
   });
 });

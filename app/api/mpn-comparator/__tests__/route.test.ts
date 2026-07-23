@@ -50,7 +50,7 @@ describe("GET /api/mpn-comparator", () => {
   });
 
   it("passes exact numeric MPNs as strings and keeps the response MPN unformatted", async () => {
-    loadMpnComparatorOffers.mockResolvedValueOnce([{ id: "1", mpn: "1748917", supplier_name: "Supplier A", created_at: "2026-07-23T00:00:00Z" }]);
+    loadMpnComparatorOffers.mockResolvedValueOnce([{ id: "1", mpn: "1,748,917", supplier_name: "Supplier A", created_at: "2026-07-23T00:00:00Z" }]);
 
     const { GET } = await import("../route");
     const response = await GET(new Request("https://app.test/api/mpn-comparator?mpn=1748917"));
@@ -60,6 +60,8 @@ describe("GET /api/mpn-comparator", () => {
     expect(loadMpnComparatorOffers).toHaveBeenCalledWith(expect.any(Object), "1748917");
     expect(payload.mpn).toBe("1748917");
     expect(payload.mpn).not.toBe("1,748,917");
+    expect(payload.offers[0].mpn).toBe("1748917");
+    expect(JSON.stringify(payload)).not.toContain("1,748,917");
   });
 
   it("preserves leading zeroes and letters with dashes in MPN input", async () => {

@@ -42,6 +42,8 @@ export const MPN_COMPARATOR_SELECT = [
 const MPN_SUGGESTION_SELECT = "mpn,mpn_quoted";
 
 export type MpnLookupStage = "mpn_exact" | "mpn_quoted_exact" | "mpn_suggest";
+type MpnLookupOffer = MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null };
+type MpnSuggestionRow = { mpn?: string | null; mpn_quoted?: string | null };
 
 export class MpnLookupError extends Error {
   stage: MpnLookupStage;
@@ -80,8 +82,19 @@ export function mpnLookupCandidates(input: string) {
   return Array.from(candidates).filter((value) => value.length <= 120).slice(0, 8);
 }
 
-export function normalizedMpnDisplay(input: string) {
-  return normalizePartNumberForMatch(input) ?? input.replace(/\u0000/g, "").trim().slice(0, 120);
+export function normalizedMpnDisplay(input: unknown) {
+  const raw = input === null || input === undefined ? "" : String(input);
+  return normalizePartNumberForMatch(raw) ?? raw.replace(/\u0000/g, "").trim().slice(0, 120);
+}
+
+export function cleanMpnOfferForOutput<T extends { mpn?: string | null; mpn_quoted?: string | null }>(offer: T): T {
+  const mpn = normalizedMpnDisplay(offer.mpn ?? offer.mpn_quoted ?? "");
+  const mpnQuoted = offer.mpn_quoted === null || offer.mpn_quoted === undefined ? offer.mpn_quoted : normalizedMpnDisplay(offer.mpn_quoted);
+  return {
+    ...offer,
+    mpn: mpn || null,
+    mpn_quoted: mpnQuoted || null
+  };
 }
 
 function nextTextPrefix(prefix: string) {
@@ -122,7 +135,7 @@ async function queryExactColumn(
     .limit(limit);
 
   if (error) throw new MpnLookupError(stage, error);
-  return (data ?? []) as unknown as Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>;
+  return (data ?? []) as unknown as MpnLookupOffer[];
 }
 
 export async function loadMpnComparatorOffers(supabase: SupabaseClient, mpnInput: string, limit = MPN_COMPARATOR_LIMIT) {
@@ -130,18 +143,26 @@ export async function loadMpnComparatorOffers(supabase: SupabaseClient, mpnInput
   if (!candidates.length) return [];
 
   const primary = await queryExactColumn(supabase, "mpn", candidates, limit, "mpn_exact");
-  if (primary.length > 0) return sortByNewest(uniqueById(primary)).slice(0, limit);
+  if (primary.length > 0) return sortByNewest(uniqueById(primary)).slice(0, limit).map(cleanMpnOfferForOutput);
 
   const quoted = await queryExactColumn(supabase, "mpn_quoted", candidates, Math.min(limit, 50), "mpn_quoted_exact");
-  return sortByNewest(uniqueById(quoted)).slice(0, limit);
+  return sortByNewest(uniqueById(quoted)).slice(0, limit).map(cleanMpnOfferForOutput);
 }
 
-export async function loadMpnSuggestions(supabase: SupabaseClient, input: string) {
-  const q = normalizedMpnDisplay(input);
-  if (q.length < MPN_SUGGESTION_MIN_LENGTH) return [];
-  const upperBound = nextTextPrefix(q);
-  if (!upperBound) return [];
+async function querySuggestionExact(supabase: SupabaseClient, candidates: string[]) {
+  const { data, error } = await supabase
+    .from("business_records")
+    .select(MPN_SUGGESTION_SELECT)
+    .is("archived_at", null)
+    .in("mpn", candidates)
+    .order("mpn", { ascending: true })
+    .limit(MPN_SUGGESTION_QUERY_LIMIT);
 
+  if (error) throw new MpnLookupError("mpn_suggest", error);
+  return (data ?? []) as unknown as MpnSuggestionRow[];
+}
+
+async function querySuggestionPrefix(supabase: SupabaseClient, q: string, upperBound: string) {
   const { data, error } = await supabase
     .from("business_records")
     .select(MPN_SUGGESTION_SELECT)
@@ -152,12 +173,26 @@ export async function loadMpnSuggestions(supabase: SupabaseClient, input: string
     .limit(MPN_SUGGESTION_QUERY_LIMIT);
 
   if (error) throw new MpnLookupError("mpn_suggest", error);
+  return (data ?? []) as unknown as MpnSuggestionRow[];
+}
 
+function suggestionValues(rows: MpnSuggestionRow[]) {
+  return rows.flatMap((record) => [record.mpn, record.mpn_quoted]).filter(Boolean).map((mpn) => normalizedMpnDisplay(mpn));
+}
+
+export async function loadMpnSuggestions(supabase: SupabaseClient, input: string) {
+  const q = normalizedMpnDisplay(input);
+  if (q.length < MPN_SUGGESTION_MIN_LENGTH) return [];
+  const upperBound = nextTextPrefix(q);
+  if (!upperBound) return [];
+
+  const candidates = mpnLookupCandidates(q);
+  const [exactRows, prefixRows] = await Promise.all([
+    querySuggestionExact(supabase, candidates),
+    querySuggestionPrefix(supabase, q, upperBound)
+  ]);
   const seen = new Set<string>();
-  return (data ?? [])
-    .flatMap((record) => [record.mpn, record.mpn_quoted])
-    .filter(Boolean)
-    .map((mpn) => normalizedMpnDisplay(String(mpn)))
+  return [...suggestionValues(exactRows), ...suggestionValues(prefixRows)]
     .filter((mpn) => {
       if (!mpn || seen.has(mpn)) return false;
       seen.add(mpn);

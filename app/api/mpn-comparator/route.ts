@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import { summarizeMpnOffers, buildSupplierRanking, type MpnOffer } from "@/lib/mpn/recommendation";
-import { loadMpnComparatorOffers, MpnLookupError, normalizedMpnDisplay } from "@/lib/mpn/lookup";
+import { cleanMpnOfferForOutput, loadMpnComparatorOffers, MpnLookupError, normalizedMpnDisplay } from "@/lib/mpn/lookup";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { canViewCosts, canViewGp, canViewSensitivePricing, canViewSupplierDetails, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import type { UserRole } from "@/lib/types";
@@ -97,7 +97,7 @@ export async function GET(request: Request) {
 
   let offers: Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>;
   try {
-    offers = await loadMpnComparatorOffers(context.supabase, mpn);
+    offers = (await loadMpnComparatorOffers(context.supabase, mpn)).map(cleanMpnOfferForOutput);
   } catch (error) {
     const lookupError = error instanceof MpnLookupError ? error : null;
     await logger.error({
@@ -145,6 +145,6 @@ export async function GET(request: Request) {
     offers,
     priceHistory: priceHistory(offers),
     supplierRanking,
-    note: offers.length > 1 ? null : "No hay suficiente historial para este MPN todavia. Se muestran las ofertas disponibles."
+    note: offers.length > 1 ? null : "No hay suficiente historial para este MPN todavía. Se muestran las ofertas disponibles."
   }, context.profile.role));
 }
