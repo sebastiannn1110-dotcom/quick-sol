@@ -76,17 +76,31 @@ describe("GET /api/mpn-comparator", () => {
     expect(alphaPayload.mpn).toBe("ABC-001");
   });
 
-  it("redacts sensitive price, cost and GP fields for managers", async () => {
+  it("redacts sensitive price, cost, GP and financial ranking fields for managers", async () => {
     getAuthContext.mockResolvedValueOnce(authContext("manager"));
     loadMpnComparatorOffers.mockResolvedValueOnce([
       {
         id: "1",
         mpn: "ABC-001",
+        supplier_name: "Supplier B",
+        price: 1,
+        cost: 0.5,
+        gp: 0.5,
+        gp_rate: 0.5,
+        on_hand: 10,
+        lead_time_weeks: 4,
+        created_at: "2026-07-23T00:00:00Z"
+      },
+      {
+        id: "2",
+        mpn: "ABC-001",
         supplier_name: "Supplier A",
-        price: 10,
-        cost: 7,
-        gp: 3,
-        gp_rate: 0.3,
+        price: 99,
+        cost: 80,
+        gp: 19,
+        gp_rate: 0.19,
+        on_hand: 2,
+        lead_time_weeks: 8,
         created_at: "2026-07-23T00:00:00Z"
       }
     ]);
@@ -97,12 +111,61 @@ describe("GET /api/mpn-comparator", () => {
 
     expect(response.status).toBe(200);
     expect(payload.summary.bestPrice).toBeNull();
-    expect(payload.summary.recommendationReason).toBe("Hay registros visibles para este MPN. Los precios, costos y margen estan ocultos para tu rol.");
+    expect(payload.summary.recommendedSupplier).toBeNull();
+    expect(payload.summary.recommendationReason).toBe("Hay registros visibles para este MPN. Los precios, costos y el margen están ocultos para tu rol.");
+    expect(payload.summary.recommendationReason).not.toMatch(/gp|score|margin/i);
     expect(payload.priceHistory).toEqual([]);
     expect(payload.offers[0].price).toBeNull();
     expect(payload.offers[0].cost).toBeNull();
     expect(payload.offers[0].gp).toBeNull();
     expect(payload.offers[0].gp_rate).toBeNull();
+    expect(payload.supplierRanking.map((item: { supplier: string }) => item.supplier)).toEqual(["Supplier A", "Supplier B"]);
+    expect(payload.supplierRanking.every((item: { score: number | null }) => item.score === null)).toBe(true);
+    expect(payload.supplierRanking.every((item: { bestPrice: number | null }) => item.bestPrice === null)).toBe(true);
+    expect(payload.supplierRanking.every((item: { averageGpRate: number | null }) => item.averageGpRate === null)).toBe(true);
+    expect(payload.supplierRanking[0].highestQuantity).toBe(2);
+    expect(payload.supplierRanking[1].highestQuantity).toBe(10);
+  });
+
+  it("keeps complete financial supplier ranking for admins", async () => {
+    loadMpnComparatorOffers.mockResolvedValueOnce([
+      {
+        id: "1",
+        mpn: "ABC-001",
+        supplier_name: "Supplier B",
+        price: 1,
+        cost: 0.5,
+        gp: 0.5,
+        gp_rate: 0.5,
+        on_hand: 10,
+        lead_time_weeks: 4,
+        created_at: "2026-07-23T00:00:00Z"
+      },
+      {
+        id: "2",
+        mpn: "ABC-001",
+        supplier_name: "Supplier A",
+        price: 99,
+        cost: 80,
+        gp: 19,
+        gp_rate: 0.19,
+        on_hand: 2,
+        lead_time_weeks: 8,
+        created_at: "2026-07-23T00:00:00Z"
+      }
+    ]);
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/mpn-comparator?mpn=ABC-001"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.summary.bestPrice).toBe(1);
+    expect(payload.summary.recommendedSupplier).toBe("Supplier B");
+    expect(payload.supplierRanking[0].supplier).toBe("Supplier B");
+    expect(payload.supplierRanking[0].score).toBeGreaterThan(payload.supplierRanking[1].score);
+    expect(payload.supplierRanking[0].bestPrice).toBe(1);
+    expect(payload.supplierRanking[0].averageGpRate).toBe(0.5);
   });
 
   it("turns database statement timeouts into a controlled safe response", async () => {
@@ -116,7 +179,7 @@ describe("GET /api/mpn-comparator", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(504);
-    expect(payload.error).toBe("La busqueda del MPN tardo demasiado. Intenta con un MPN exacto.");
+    expect(payload.error).toBe("La búsqueda del MPN tardó demasiado. Intenta con un MPN exacto.");
     expect(payload.error).not.toMatch(/57014|statement timeout|Supabase|SQL/i);
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
       action: "mpn_comparison_failed",

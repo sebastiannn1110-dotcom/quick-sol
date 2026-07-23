@@ -42,7 +42,7 @@ export async function GET(request: Request) {
       metadata: { q, stage: lookupError?.stage ?? "unknown", timeout: Boolean(lookupError?.isTimeout) }
     });
     return NextResponse.json(
-      { error: lookupError?.isTimeout ? "La busqueda de sugerencias tardo demasiado. Escribe un MPN mas especifico." : "No se pudieron cargar sugerencias en este momento." },
+      { error: lookupError?.isTimeout ? "La búsqueda de sugerencias tardó demasiado. Escribe un MPN más específico." : "No se pudieron cargar sugerencias en este momento." },
       { status: lookupError?.isTimeout ? 504 : 500 }
     );
   }

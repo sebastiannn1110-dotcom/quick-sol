@@ -80,7 +80,7 @@ describe("GET /api/mpn-comparator/suggest", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(504);
-    expect(payload.error).toBe("La busqueda de sugerencias tardo demasiado. Escribe un MPN mas especifico.");
+    expect(payload.error).toBe("La búsqueda de sugerencias tardó demasiado. Escribe un MPN más específico.");
     expect(payload.error).not.toMatch(/57014|statement timeout|Supabase|SQL/i);
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
       action: "mpn_suggestions_failed",

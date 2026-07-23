@@ -10,6 +10,64 @@ import type { UserRole } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type SupplierRankingPayloadItem = {
+  supplier: string;
+  offers: number;
+  bestPrice: number | null;
+  highestQuantity: number | null;
+  fastestLeadTimeWeeks: number | null;
+  averageGpRate: number | null;
+  score: number | null;
+};
+
+function numeric(value: unknown) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function supplierName(offer: MpnOffer) {
+  return offer.supplier_name || offer.supplier || "Unknown supplier";
+}
+
+function nonFinancialQuantity(offer: MpnOffer) {
+  return numeric(offer.on_hand) ?? numeric(offer.qty);
+}
+
+function nonFinancialLeadTimeWeeks(offer: MpnOffer) {
+  return numeric(offer.lead_time_weeks);
+}
+
+function hasFullFinancialRankingAccess(role: UserRole) {
+  return canViewSensitivePricing(role) && canViewCosts(role) && canViewGp(role) && canViewSupplierDetails(role);
+}
+
+function buildNonFinancialSupplierRanking(offers: MpnOffer[], role: UserRole): SupplierRankingPayloadItem[] {
+  if (!canViewSupplierDetails(role)) return [];
+
+  const grouped = new Map<string, MpnOffer[]>();
+  for (const offer of offers) {
+    const supplier = supplierName(offer);
+    grouped.set(supplier, [...(grouped.get(supplier) ?? []), offer]);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([supplier, supplierOffers]) => {
+      const quantities = supplierOffers.map(nonFinancialQuantity).filter((value): value is number => value !== null);
+      const leadTimes = supplierOffers.map(nonFinancialLeadTimeWeeks).filter((value): value is number => value !== null);
+
+      return {
+        supplier,
+        offers: supplierOffers.length,
+        bestPrice: null,
+        highestQuantity: quantities.length ? Math.max(...quantities) : null,
+        fastestLeadTimeWeeks: leadTimes.length ? Math.min(...leadTimes) : null,
+        averageGpRate: null,
+        score: null
+      };
+    })
+    .sort((a, b) => a.supplier.localeCompare(b.supplier, undefined, { sensitivity: "base" }));
+}
+
 function priceHistory(offers: Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>) {
   return offers
     .filter((offer) => offer.price !== null && offer.price !== undefined)
@@ -30,12 +88,10 @@ function permissionSafePayload<T extends {
     recommendationReason: string;
   };
   priceHistory: unknown[];
-  supplierRanking: Array<{
-    bestPrice: number | null;
-    averageGpRate: number | null;
-  }>;
+  offers: MpnOffer[];
+  supplierRanking: SupplierRankingPayloadItem[];
 }>(payload: T, role: UserRole) {
-  if (canViewSensitivePricing(role) && canViewCosts(role) && canViewGp(role) && canViewSupplierDetails(role)) {
+  if (hasFullFinancialRankingAccess(role)) {
     return redactSensitiveFieldsForRole(payload, role);
   }
 
@@ -45,15 +101,11 @@ function permissionSafePayload<T extends {
       ...payload.summary,
       bestPrice: canViewSensitivePricing(role) ? payload.summary.bestPrice : null,
       worstPrice: canViewSensitivePricing(role) ? payload.summary.worstPrice : null,
-      recommendedSupplier: canViewSupplierDetails(role) ? payload.summary.recommendedSupplier : null,
-      recommendationReason: "Hay registros visibles para este MPN. Los precios, costos y margen estan ocultos para tu rol."
+      recommendedSupplier: null,
+      recommendationReason: "Hay registros visibles para este MPN. Los precios, costos y el margen están ocultos para tu rol."
     },
     priceHistory: canViewSensitivePricing(role) ? payload.priceHistory : [],
-    supplierRanking: payload.supplierRanking.map((item) => ({
-      ...item,
-      bestPrice: canViewSensitivePricing(role) ? item.bestPrice : null,
-      averageGpRate: canViewGp(role) ? item.averageGpRate : null
-    }))
+    supplierRanking: buildNonFinancialSupplierRanking(payload.offers, role)
   };
 
   return redactSensitiveFieldsForRole(scoped, role);
@@ -116,7 +168,7 @@ export async function GET(request: Request) {
       metadata: { mpn, stage: lookupError?.stage ?? "unknown", timeout: Boolean(lookupError?.isTimeout) }
     });
     return NextResponse.json(
-      { error: lookupError?.isTimeout ? "La busqueda del MPN tardo demasiado. Intenta con un MPN exacto." : "No se pudo comparar este MPN en este momento." },
+      { error: lookupError?.isTimeout ? "La búsqueda del MPN tardó demasiado. Intenta con un MPN exacto." : "No se pudo comparar este MPN en este momento." },
       { status: lookupError?.isTimeout ? 504 : 500 }
     );
   }
@@ -136,7 +188,7 @@ export async function GET(request: Request) {
     message: "MPN comparison completed.",
     status: "completed",
     durationMs: Math.round(performance.now() - startedAt),
-    metadata: { mpn, offers: offers.length, recommendedSupplier: summary.recommendedSupplier }
+    metadata: { mpn, offers: offers.length, recommendedSupplier: hasFullFinancialRankingAccess(context.profile.role) ? summary.recommendedSupplier : null }
   });
 
   return NextResponse.json(permissionSafePayload({

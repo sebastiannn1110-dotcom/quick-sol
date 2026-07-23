@@ -126,7 +126,7 @@ export function summarizeMpnOffers(offers: MpnOffer[]): MpnComparisonSummary {
   if (recommended) {
     const parts = [`${recommended.supplier} tiene el mejor balance general`];
     if (bestPriceSupplier && supplierName(bestPriceSupplier) === recommended.supplier) parts.push("mejor precio");
-    if (fastestSupplier && supplierName(fastestSupplier) === recommended.supplier) parts.push("entrega mas rapida");
+    if (fastestSupplier && supplierName(fastestSupplier) === recommended.supplier) parts.push("entrega más rápida");
     if ((recommended.highestQuantity ?? 0) === highestQuantity && highestQuantity) parts.push("mayor disponibilidad");
     recommendationReason = `${parts[0]}: ${parts.slice(1).join(", ") || "score superior por precio, disponibilidad, lead time y calidad del dato"}.`;
   }
