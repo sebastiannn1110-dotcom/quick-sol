@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BarChart3,
+  Boxes,
+  BriefcaseBusiness,
+  Building2,
   Database,
-  LayoutDashboard,
   MessageCircle,
   UserCircle,
   Scale,
   Search,
+  Settings,
   ShieldCheck,
-  Tags,
   Upload,
   Users
 } from "lucide-react";
@@ -29,16 +30,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", labelKey: "nav.dashboard", icon: LayoutDashboard },
-  { href: "/upload", labelKey: "nav.upload", icon: Upload },
-  { href: "/records", labelKey: "nav.records", icon: Database },
-  { href: "/categories", labelKey: "nav.categories", icon: Tags },
-  { href: "/analytics", labelKey: "nav.analytics", icon: BarChart3 },
-  { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
+  { href: "/clients", labelKey: "nav.clients", icon: Building2 },
+  { href: "/opportunities", labelKey: "nav.opportunities", icon: BriefcaseBusiness },
+  { href: "/stock-needs", labelKey: "nav.stockNeeds", icon: Boxes },
   { href: "/mpn-comparator", labelKey: "nav.mpnComparator", icon: Scale },
-  { href: "/employees", labelKey: "nav.employees", icon: Users },
+  { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
   { href: "/chat", labelKey: "nav.chat", icon: MessageCircle },
   { href: "/profile", labelKey: "nav.profile", icon: UserCircle },
+  { href: "/upload", labelKey: "nav.uploads", icon: Upload, roles: ["admin", "manager"] },
+  { href: "/employees", labelKey: "nav.users", icon: Users, roles: ["admin", "manager"] },
+  { href: "/records", labelKey: "nav.records", icon: Database, roles: ["admin", "manager"] },
+  { href: "/settings", labelKey: "nav.settings", icon: Settings, roles: ["admin", "manager"] },
+  { href: "/admin/clients", labelKey: "nav.clientsAdmin", icon: Building2, roles: ["admin", "manager"] },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
 ];
 
@@ -47,7 +50,6 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
   const { t } = useLanguage();
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (!item.roles) return true;
-    if (pathname.startsWith(item.href)) return true;
     return profile ? item.roles.includes(profile.role) : false;
   });
 
@@ -58,7 +60,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
       }`}
     >
       <div className="flex items-center justify-between px-4 py-4 lg:block lg:px-6 lg:py-6">
-        <Link href="/dashboard" className="flex items-center gap-3">
+        <Link href="/clients" className="flex items-center gap-3">
           <QuiksolIcon size={40} className={isAdminArea ? "ring-1 ring-orange-300" : "ring-1 ring-brand-400"} />
           <span>
             <span className="block text-base font-semibold">Quiksol</span>

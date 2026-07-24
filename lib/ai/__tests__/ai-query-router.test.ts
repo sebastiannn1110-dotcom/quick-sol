@@ -216,6 +216,16 @@ describe("AI query router", () => {
     expect(searchBusinessRecords).not.toHaveBeenCalled();
   });
 
+  it("routes opportunity confidence questions to the deterministic opportunities engine", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("employee"), "Que oportunidades tienen alta confianza?");
+
+    expect(result.toolResult?.tool).toBe("getOpportunitiesSummary");
+    expect(getOpportunitiesSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("confianza"));
+    expect(getStockNeedsSummary).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
   it("routes immediate sale questions to opportunities without calling stock-needs", async () => {
     const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
     const result = await routeAssistantDatabaseQuery(authContext("manager"), "Que MPN puedo vender ya?");

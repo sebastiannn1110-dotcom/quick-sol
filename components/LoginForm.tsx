@@ -8,12 +8,13 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import LanguageToggle from "@/components/LanguageToggle";
 import QuiksolIcon from "@/components/QuiksolIcon";
 import { useLanguage } from "@/components/LanguageProvider";
+import { safePostLoginRedirect } from "@/lib/auth/redirects";
 
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t } = useLanguage();
-  const redirect = searchParams.get("redirect") ?? "/dashboard";
+  const redirect = safePostLoginRedirect(searchParams.get("redirect"));
   const setupError = searchParams.get("error");
   const [supabase, setSupabase] = useState(() => createSupabaseBrowserClient());
   const [configLoading, setConfigLoading] = useState(true);

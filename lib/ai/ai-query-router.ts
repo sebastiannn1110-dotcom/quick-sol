@@ -115,10 +115,15 @@ function isOpportunityQuestion(text: string) {
     /stock.*sin demanda|sin demanda actual|stock without demand/.test(text) ||
     /exceso.*revender|revender.*exceso|reventa|excess resale|surplus resale|overstock resale/.test(text) ||
     /cliente.*necesita.*fuente|fuente.*disponible.*cliente|broker/.test(text) ||
-    /mayor confianza|alta confianza|high confidence/.test(text) ||
     /partes? aprobadas?|approved parts?|avl|aml/.test(text) ||
     /(recibidas|recibidos|received|receipt|rcpt).*(demanda|oportunidad|opportunity)/.test(text)
   );
+}
+
+function isOpportunityClassificationQuestion(text: string) {
+  const asksAboutClassification = /confianz|confiabl|confidence|置信度/.test(text);
+  const asksAboutOpportunities = /oportun|opportun|销售机会/.test(text);
+  return asksAboutClassification && asksAboutOpportunities;
 }
 
 function isRestrictedSensitiveQuestion(question: string, role: AuthContext["profile"]["role"]) {
@@ -146,6 +151,12 @@ export async function routeAssistantDatabaseQuery(context: AuthContext, question
   const text = normalized(question);
   if (isRestrictedSensitiveQuestion(question, context.profile.role)) {
     const toolResult = getSensitiveDataPermissionDenied(context);
+    await logToolCompleted(context, startedAt, question, toolResult);
+    return { permissionDenied: false, toolResult };
+  }
+
+  if (isOpportunityClassificationQuestion(text)) {
+    const toolResult = await getOpportunitiesSummary(context, question);
     await logToolCompleted(context, startedAt, question, toolResult);
     return { permissionDenied: false, toolResult };
   }

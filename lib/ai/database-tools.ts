@@ -17,6 +17,10 @@ import {
   summarizeSalesOpportunities,
   type OpportunityType
 } from "@/lib/opportunities/opportunities";
+import {
+  enrichOpportunitiesWithConfidence,
+  summarizeOpportunityConfidence
+} from "@/lib/opportunities/quality";
 
 export type AiDatabaseToolName =
   | "sensitiveDataPermissionDenied"
@@ -574,36 +578,40 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
 
 export async function getOpportunitiesSummary(context: AuthContext, question: string) {
   const supabase = requireSupabase(context);
+  const asksAboutConfidence = /confianz|confiabl|confidence|置信度/.test(normalizedText(question));
   const mode = opportunityTypeFromQuestion(question);
   const opportunityType: OpportunityType | null =
-    mode && mode !== "confidence" && mode !== "approved" && mode !== "received" ? mode : null;
+    mode && mode !== "approved" && mode !== "received" ? mode : null;
   const input = await loadStockNeedsInput(supabase, {
     ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
     maxUploads: 30,
     recordsPerUploadLimit: 5000
   });
 
-  const resultData = buildSalesOpportunitiesResult({
+  const baseResult = buildSalesOpportunitiesResult({
     records: input.records,
     profiles: input.profiles,
     importJobs: input.importJobs,
     filters: {
       opportunityType,
-      limit: 10
+      limit: 200
     }
   });
-  const summary = summarizeSalesOpportunities(resultData, { mode });
+  const opportunityResult = enrichOpportunitiesWithConfidence(baseResult);
+  const summary = asksAboutConfidence
+    ? summarizeOpportunityConfidence(opportunityResult)
+    : summarizeSalesOpportunities(baseResult, { mode });
   return result(
     context,
     "getOpportunitiesSummary",
     {
-      items: resultData.items.slice(0, 10),
-      totals: resultData.totals,
-      meta: resultData.meta
+      items: opportunityResult.items.slice(0, 10),
+      totals: opportunityResult.totals,
+      meta: opportunityResult.meta
     },
     summary,
-    resultData.totals.totalOpportunities === 0,
-    input.uploadIds.length >= 30 || resultData.meta.scannedRecords >= 150000,
+    baseResult.totals.totalOpportunities === 0,
+    input.uploadIds.length >= 30 || baseResult.meta.scannedRecords >= 150000,
     { deterministic: true }
   );
 }

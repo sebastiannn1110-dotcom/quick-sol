@@ -7,6 +7,11 @@ import { logger } from "@/lib/logger/logger";
 const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password"];
 const PROTECTED_PREFIXES = [
   "/dashboard",
+  "/clients",
+  "/opportunities",
+  "/stock-needs",
+  "/executive-search",
+  "/mpn-comparator",
   "/upload",
   "/records",
   "/analytics",
@@ -15,6 +20,7 @@ const PROTECTED_PREFIXES = [
   "/profile",
   "/admin"
 ];
+const MANAGER_ADMIN_PREFIXES = ["/admin/clients", "/admin/opportunities", "/admin/stock-needs"];
 
 function isSupabaseConfigured() {
   return Boolean(
@@ -46,6 +52,10 @@ function isProtectedPath(pathname: string) {
 
 function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function managerCanAccessAdminPath(pathname: string) {
+  return MANAGER_ADMIN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
 async function logUnauthorizedAdminAttempt(request: NextRequest, profileId: string | null) {
@@ -94,7 +104,16 @@ export async function proxy(request: NextRequest) {
     }
   });
 
-  if (!isProtectedPath(pathname)) {
+  if (pathname === "/dashboard") {
+    const clientsUrl = request.nextUrl.clone();
+    clientsUrl.pathname = "/clients";
+    for (const key of Array.from(clientsUrl.searchParams.keys())) {
+      if (!["error", "lang", "locale"].includes(key)) clientsUrl.searchParams.delete(key);
+    }
+    return NextResponse.redirect(clientsUrl);
+  }
+
+  if (!isProtectedPath(pathname) && !isPublicPath(pathname)) {
     const response = NextResponse.next();
     response.headers.set(TRACE_HEADER, traceId);
     response.headers.set(REQUEST_HEADER, requestId);
@@ -118,6 +137,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!isSupabaseConfigured()) {
+    if (isPublicPath(pathname)) return NextResponse.next();
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("error", "supabase_not_configured");
@@ -199,7 +219,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (pathname.startsWith("/admin") && profile.role !== "admin") {
+  if (
+    pathname.startsWith("/admin") &&
+    profile.role !== "admin" &&
+    !(profile.role === "manager" && managerCanAccessAdminPath(pathname))
+  ) {
     await logger.security({
       ...baseLog,
       userId: profile.id,
@@ -211,16 +235,17 @@ export async function proxy(request: NextRequest) {
       durationMs: Math.round(performance.now() - startedAt)
     });
     await logUnauthorizedAdminAttempt(request, profile.id);
-    const dashboardUrl = request.nextUrl.clone();
-    dashboardUrl.pathname = "/dashboard";
-    dashboardUrl.searchParams.set("error", "admin_forbidden");
-    return NextResponse.redirect(dashboardUrl);
+    const clientsUrl = request.nextUrl.clone();
+    clientsUrl.pathname = "/clients";
+    clientsUrl.searchParams.set("error", "admin_forbidden");
+    return NextResponse.redirect(clientsUrl);
   }
 
   if (pathname === "/login") {
-    const dashboardUrl = request.nextUrl.clone();
-    dashboardUrl.pathname = "/dashboard";
-    return NextResponse.redirect(dashboardUrl);
+    const clientsUrl = request.nextUrl.clone();
+    clientsUrl.pathname = "/clients";
+    clientsUrl.search = "";
+    return NextResponse.redirect(clientsUrl);
   }
 
   if (pathname.startsWith("/admin")) {

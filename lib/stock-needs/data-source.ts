@@ -7,6 +7,7 @@ const JOB_SELECT = "upload_batch_id,status";
 
 export type LoadStockNeedsInputOptions = {
   filters?: Pick<StockNeedsFilters, "uploadBatchId">;
+  uploadIds?: string[];
   ownerId?: string | null;
   maxUploads?: number;
   recordsPerUploadLimit?: number;
@@ -27,15 +28,27 @@ function uniqueValues(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
-async function loadVisibleUploadIds(supabase: SupabaseClient, options: Required<LoadStockNeedsInputOptions>) {
+type NormalizedLoadOptions = {
+  filters: Pick<StockNeedsFilters, "uploadBatchId">;
+  uploadIds: string[] | null;
+  ownerId: string | null;
+  maxUploads: number;
+  recordsPerUploadLimit: number;
+};
+
+async function loadVisibleUploadIds(supabase: SupabaseClient, options: NormalizedLoadOptions) {
+  if (options.uploadIds !== null && !options.uploadIds.length) return [];
+
   let query = supabase
     .from("upload_batches")
     .select("id")
     .neq("status", "archived")
+    .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(options.maxUploads);
 
   if (options.filters.uploadBatchId) query = query.eq("id", options.filters.uploadBatchId);
+  if (options.uploadIds !== null) query = query.in("id", options.uploadIds);
   if (options.ownerId) query = query.eq("uploaded_by", options.ownerId);
 
   const { data, error } = await query;
@@ -44,7 +57,7 @@ async function loadVisibleUploadIds(supabase: SupabaseClient, options: Required<
   return uniqueValues(((data ?? []) as UploadIdRow[]).map((row) => row.id));
 }
 
-async function loadRecordsForUpload(supabase: SupabaseClient, uploadId: string, options: Required<LoadStockNeedsInputOptions>) {
+async function loadRecordsForUpload(supabase: SupabaseClient, uploadId: string, options: NormalizedLoadOptions) {
   let query = supabase
     .from("business_records")
     .select(BUSINESS_RECORD_SELECT)
@@ -64,8 +77,9 @@ export async function loadStockNeedsInput(
   supabase: SupabaseClient,
   options: LoadStockNeedsInputOptions = {}
 ): Promise<LoadedStockNeedsInput> {
-  const safeOptions: Required<LoadStockNeedsInputOptions> = {
+  const safeOptions: NormalizedLoadOptions = {
     filters: options.filters ?? {},
+    uploadIds: options.uploadIds === undefined ? null : uniqueValues(options.uploadIds).slice(0, 100),
     ownerId: options.ownerId ?? null,
     maxUploads: Math.min(Math.max(Number(options.maxUploads ?? 20) || 20, 1), 50),
     recordsPerUploadLimit: Math.min(Math.max(Number(options.recordsPerUploadLimit ?? 5000) || 5000, 100), 10000)

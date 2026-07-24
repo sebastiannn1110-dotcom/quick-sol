@@ -66,12 +66,14 @@ describe("GET /api/admin/opportunities", () => {
 
   it("keeps records active-only through the shared loader and never returns raw rows directly", () => {
     const source = readFileSync(path.join(process.cwd(), "app/api/admin/opportunities/route.ts"), "utf8");
+    const service = readFileSync(path.join(process.cwd(), "lib/opportunities/service.ts"), "utf8");
     const loader = readFileSync(path.join(process.cwd(), "lib/stock-needs/data-source.ts"), "utf8");
 
-    expect(source).toContain("loadStockNeedsInput");
+    expect(source).toContain("loadSalesOpportunities");
+    expect(service).toContain("loadStockNeedsInput");
     expect(loader).toContain('.from("business_records")');
     expect(loader).toContain('.is("archived_at", null)');
-    expect(source).toContain("buildSalesOpportunitiesResult");
+    expect(service).toContain("buildSalesOpportunitiesResult");
     expect(source).toContain("redactSensitiveFieldsForRole");
     expect(source).not.toContain("return NextResponse.json({ records");
   });

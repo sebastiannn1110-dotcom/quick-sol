@@ -8,6 +8,12 @@ export type RolePermissions = {
   canViewCustomerDetails: boolean;
   canViewPurchaseOrders: boolean;
   canViewInternalNotes: boolean;
+  canViewClients: boolean;
+  canViewOpportunities: boolean;
+  canManageClients: boolean;
+  canAssignClientUploads: boolean;
+  canArchiveClients: boolean;
+  canViewPrivateClientIdentification: boolean;
 };
 
 export const REDACTED_FIELD_VALUE = null;
@@ -96,6 +102,8 @@ const FIELD_PATTERNS: Array<{ group: SensitiveGroup; pattern: RegExp }> = [
   { group: "notes", pattern: /internalnote|internalnotes|^notes?$|^comments?$|remarks|memo/ }
 ];
 
+const SAFE_ACCOUNT_CONTEXT_KEYS = new Set(["accountclients", "accountclientid", "accountclientname"]);
+
 function normalizedKey(value: string) {
   return value
     .normalize("NFD")
@@ -106,6 +114,7 @@ function normalizedKey(value: string) {
 
 function sensitiveGroupForKey(key: string): SensitiveGroup | null {
   const normalized = normalizedKey(key);
+  if (SAFE_ACCOUNT_CONTEXT_KEYS.has(normalized)) return null;
   for (const [group, keys] of Object.entries(EXACT_SENSITIVE_KEYS) as Array<[SensitiveGroup, string[]]>) {
     if (keys.includes(normalized)) return group;
   }
@@ -121,7 +130,13 @@ export function getRolePermissions(role: UserRole): RolePermissions {
       canViewSupplierDetails: true,
       canViewCustomerDetails: true,
       canViewPurchaseOrders: true,
-      canViewInternalNotes: true
+      canViewInternalNotes: true,
+      canViewClients: true,
+      canViewOpportunities: true,
+      canManageClients: true,
+      canAssignClientUploads: true,
+      canArchiveClients: true,
+      canViewPrivateClientIdentification: true
     };
   }
 
@@ -133,7 +148,13 @@ export function getRolePermissions(role: UserRole): RolePermissions {
       canViewSupplierDetails: true,
       canViewCustomerDetails: true,
       canViewPurchaseOrders: false,
-      canViewInternalNotes: false
+      canViewInternalNotes: false,
+      canViewClients: true,
+      canViewOpportunities: true,
+      canManageClients: true,
+      canAssignClientUploads: true,
+      canArchiveClients: true,
+      canViewPrivateClientIdentification: true
     };
   }
 
@@ -144,8 +165,30 @@ export function getRolePermissions(role: UserRole): RolePermissions {
     canViewSupplierDetails: false,
     canViewCustomerDetails: false,
     canViewPurchaseOrders: false,
-    canViewInternalNotes: false
+    canViewInternalNotes: false,
+    canViewClients: true,
+    canViewOpportunities: true,
+    canManageClients: false,
+    canAssignClientUploads: false,
+    canArchiveClients: false,
+    canViewPrivateClientIdentification: false
   };
+}
+
+export function canManageClients(role: UserRole) {
+  return getRolePermissions(role).canManageClients;
+}
+
+export function canAssignClientUploads(role: UserRole) {
+  return getRolePermissions(role).canAssignClientUploads;
+}
+
+export function canArchiveClients(role: UserRole) {
+  return getRolePermissions(role).canArchiveClients;
+}
+
+export function canViewPrivateClientIdentification(role: UserRole) {
+  return getRolePermissions(role).canViewPrivateClientIdentification;
 }
 
 export function canViewSensitivePricing(role: UserRole) {

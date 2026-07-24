@@ -13,16 +13,14 @@ export type OpportunityType =
   | "sourcing_needed"
   | "stock_without_demand";
 
-export type OpportunityConfidenceLabel = "high" | "medium" | "low";
-
 export type SalesOpportunityFilters = {
   q?: string | null;
   mpn?: string | null;
+  clientId?: string | null;
   customer?: string | null;
   supplier?: string | null;
   manufacturer?: string | null;
   opportunityType?: OpportunityType | null;
-  confidence?: OpportunityConfidenceLabel | null;
   uploadBatchId?: string | null;
   limit?: number;
   offset?: number;
@@ -44,10 +42,9 @@ export type SalesOpportunityItem = {
   shortageQty: number | null;
   approvedPartSignal: boolean;
   receivedSignal: boolean;
-  confidenceScore: number;
-  confidenceLabel: OpportunityConfidenceLabel;
   reason: string;
   recommendedAction: string;
+  accountClients: Array<{ id: string; name: string }>;
   sourceUploads: StockNeedsSourceUpload[];
   dataQualityFlags: string[];
 };
@@ -61,9 +58,6 @@ export type SalesOpportunityTotals = {
   stockWithoutDemand: number;
   approvedPartMatches: number;
   receivedHistoryMatches: number;
-  highConfidence: number;
-  mediumConfidence: number;
-  lowConfidence: number;
 };
 
 export type SalesOpportunitiesResult = {
@@ -504,51 +498,8 @@ function emptyTotals(): SalesOpportunityTotals {
     sourcingNeeded: 0,
     stockWithoutDemand: 0,
     approvedPartMatches: 0,
-    receivedHistoryMatches: 0,
-    highConfidence: 0,
-    mediumConfidence: 0,
-    lowConfidence: 0
+    receivedHistoryMatches: 0
   };
-}
-
-function confidenceLabel(score: number): OpportunityConfidenceLabel {
-  if (score >= 75) return "high";
-  if (score >= 50) return "medium";
-  return "low";
-}
-
-export function scoreOpportunityConfidence(input: {
-  opportunityType: OpportunityType;
-  normalizedMpn: string;
-  requiredQty: number | null;
-  availableQty: number | null;
-  excessQty: number | null;
-  customerNeedName: string | null;
-  supplierName: string | null;
-  manufacturerName: string | null;
-  approvedPartSignal: boolean;
-  receivedSignal: boolean;
-  dataQualityFlags?: string[];
-}) {
-  let score = input.normalizedMpn ? 35 : 0;
-  const hasDemand = (input.requiredQty ?? 0) > 0;
-  const hasStock = (input.availableQty ?? 0) > 0;
-  const hasExcess = (input.excessQty ?? 0) > 0;
-
-  if (hasDemand) score += 15;
-  if (input.opportunityType === "immediate_sale" && hasDemand && hasStock) score += 20;
-  if (input.opportunityType === "partial_sale" && hasDemand && hasStock) score += 15;
-  if (input.opportunityType === "excess_resale" && hasDemand && hasExcess) score += 20;
-  if (input.opportunityType === "sourcing_needed" && hasDemand) score += 10;
-  if (input.opportunityType === "stock_without_demand" && (hasStock || hasExcess)) score += 15;
-  if (input.customerNeedName) score += 5;
-  if (input.supplierName || input.manufacturerName) score += 5;
-  if (input.approvedPartSignal) score += 10;
-  if (input.receivedSignal) score += 10;
-  if (input.dataQualityFlags?.includes("missing_customer_context")) score -= 10;
-  if (input.dataQualityFlags?.includes("manufacturer_context_mixed")) score -= 10;
-
-  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 export function formatOpportunityReason(item: Pick<SalesOpportunityItem, "opportunityType" | "requiredQty" | "availableQty" | "excessQty" | "shortageQty" | "approvedPartSignal" | "receivedSignal">) {
@@ -556,7 +507,7 @@ export function formatOpportunityReason(item: Pick<SalesOpportunityItem, "opport
     item.approvedPartSignal ? "approved part signal" : "",
     item.receivedSignal ? "received history" : ""
   ].filter(Boolean);
-  const suffix = signals.length ? ` Additional confidence signals: ${signals.join(", ")}.` : "";
+  const suffix = signals.length ? ` Supporting signals: ${signals.join(", ")}.` : "";
 
   if (item.opportunityType === "immediate_sale") return `Customer demand is covered by available stock.${suffix}`;
   if (item.opportunityType === "partial_sale") return `Customer demand is only partially covered; shortage is ${item.shortageQty ?? 0} units.${suffix}`;
@@ -598,20 +549,6 @@ function makeItem(group: OpportunityGroup, opportunityType: OpportunityType): Sa
   const availableQty = group.stockQty > 0 ? group.stockQty : null;
   const excessQty = group.excessQty > 0 ? group.excessQty : null;
   const shortageQty = requiredQty !== null ? Math.max(requiredQty - (availableQty ?? 0) - (opportunityType === "excess_resale" ? (excessQty ?? 0) : 0), 0) : null;
-  const base = {
-    opportunityType,
-    normalizedMpn: group.normalizedMpn,
-    requiredQty,
-    availableQty,
-    excessQty,
-    customerNeedName: group.customerName,
-    supplierName: group.supplierName,
-    manufacturerName: group.manufacturerName,
-    approvedPartSignal: group.approvedPartSignal,
-    receivedSignal: group.receivedSignal,
-    dataQualityFlags: Array.from(group.dataQualityFlags)
-  };
-  const confidenceScore = scoreOpportunityConfidence(base);
   const item: SalesOpportunityItem = {
     id: `${opportunityType}:${group.normalizedMpn}`,
     opportunityType,
@@ -628,10 +565,9 @@ function makeItem(group: OpportunityGroup, opportunityType: OpportunityType): Sa
     shortageQty,
     approvedPartSignal: group.approvedPartSignal,
     receivedSignal: group.receivedSignal,
-    confidenceScore,
-    confidenceLabel: confidenceLabel(confidenceScore),
     reason: "",
     recommendedAction: "",
+    accountClients: [],
     sourceUploads: Array.from(group.sourceUploads.values()).slice(0, 6),
     dataQualityFlags: Array.from(group.dataQualityFlags).slice(0, 8)
   };
@@ -695,7 +631,12 @@ function sortItems(left: SalesOpportunityItem, right: SalesOpportunityItem) {
     sourcing_needed: 3,
     stock_without_demand: 4
   };
-  return order[left.opportunityType] - order[right.opportunityType] || right.confidenceScore - left.confidenceScore || left.mpn.localeCompare(right.mpn);
+  return (
+    order[left.opportunityType] - order[right.opportunityType] ||
+    (right.requiredQty ?? -1) - (left.requiredQty ?? -1) ||
+    (right.shortageQty ?? -1) - (left.shortageQty ?? -1) ||
+    left.mpn.localeCompare(right.mpn)
+  );
 }
 
 function computeTotals(items: SalesOpportunityItem[]) {
@@ -708,9 +649,6 @@ function computeTotals(items: SalesOpportunityItem[]) {
     if (item.opportunityType === "stock_without_demand") acc.stockWithoutDemand += 1;
     if (item.approvedPartSignal) acc.approvedPartMatches += 1;
     if (item.receivedSignal) acc.receivedHistoryMatches += 1;
-    if (item.confidenceLabel === "high") acc.highConfidence += 1;
-    if (item.confidenceLabel === "medium") acc.mediumConfidence += 1;
-    if (item.confidenceLabel === "low") acc.lowConfidence += 1;
     return acc;
   }, emptyTotals());
 }
@@ -756,7 +694,6 @@ export function buildSalesOpportunitiesResult(input: {
     .filter((item) => matchesFilter(item.customerNeedName, filters.customer))
     .filter((item) => matchesPartnerFilter(item, filters))
     .filter((item) => !filters.opportunityType || item.opportunityType === filters.opportunityType)
-    .filter((item) => !filters.confidence || item.confidenceLabel === filters.confidence)
     .sort(sortItems);
 
   const items = allItems.slice(offset, offset + limit);
@@ -774,16 +711,13 @@ export function buildSalesOpportunitiesResult(input: {
   };
 }
 
-export function summarizeSalesOpportunities(result: SalesOpportunitiesResult, options?: { mode?: OpportunityType | "confidence" | "approved" | "received" | null }) {
+export function summarizeSalesOpportunities(result: SalesOpportunitiesResult, options?: { mode?: OpportunityType | "approved" | "received" | null }) {
   const mode = options?.mode ?? null;
-  if (mode && mode !== "confidence" && mode !== "approved" && mode !== "received") {
+  if (mode && mode !== "approved" && mode !== "received") {
     const scoped = result.items.filter((item) => item.opportunityType === mode);
     const examples = scoped.slice(0, 8).map((item) => item.mpn);
     const exampleText = examples.length ? ` Algunos MPN: ${examples.join(", ")}.` : "";
     return `Encontré ${scoped.length} oportunidades de tipo ${mode.replace(/_/g, " ")}.${exampleText}`;
-  }
-  if (mode === "confidence") {
-    return `Encontré ${result.totals.highConfidence} oportunidades de alta confianza, ${result.totals.mediumConfidence} de confianza media y ${result.totals.lowConfidence} de baja confianza.`;
   }
   if (mode === "approved") {
     return `Encontré ${result.totals.approvedPartMatches} oportunidades con señales de parte aprobada o AVL/AML.`;
@@ -794,18 +728,17 @@ export function summarizeSalesOpportunities(result: SalesOpportunitiesResult, op
   return [
     `Encontré ${result.totals.totalOpportunities} oportunidades comerciales.`,
     `${result.totals.immediateSale} parecen venta inmediata, ${result.totals.partialSale} son ventas parciales, ${result.totals.excessResale} son reventa de exceso, ${result.totals.sourcingNeeded} requieren sourcing y ${result.totals.stockWithoutDemand} tienen stock sin demanda actual.`,
-    `Las oportunidades de mayor confianza usan MPN exacto, cantidades válidas y señales como parte aprobada o historial recibido.`
+    `${result.totals.approvedPartMatches} tienen señal de parte aprobada y ${result.totals.receivedHistoryMatches} tienen historial recibido.`
   ].join(" ");
 }
 
-export function opportunityTypeFromQuestion(question: string): OpportunityType | "confidence" | "approved" | "received" | null {
+export function opportunityTypeFromQuestion(question: string): OpportunityType | "approved" | "received" | null {
   const text = question.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (/venta inmediata|vender ya|puedo vender|immediate/.test(text)) return "immediate_sale";
   if (/venta parcial|parcial|partial/.test(text)) return "partial_sale";
   if (/sourcing|buscar proveedor|requieren proveedor|sin stock|no stock/.test(text)) return "sourcing_needed";
   if (/exceso|surplus|overstock|revender|reventa|broker/.test(text)) return "excess_resale";
   if (/stock.*sin demanda|sin demanda|outbound|comprador/.test(text)) return "stock_without_demand";
-  if (/mayor confianza|alta confianza|confidence/.test(text)) return "confidence";
   if (/aprobada|aprobadas|approved|avl|aml/.test(text)) return "approved";
   if (/recibidas|recibidos|received|receipt|rcpt|historial/.test(text)) return "received";
   return null;
