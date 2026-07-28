@@ -9,7 +9,6 @@ import {
   Database,
   MessageCircle,
   UserCircle,
-  Scale,
   Search,
   Settings,
   ShieldCheck,
@@ -31,9 +30,8 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/clients", labelKey: "nav.clients", icon: Building2 },
-  { href: "/opportunities", labelKey: "nav.opportunities", icon: BriefcaseBusiness },
+  { href: "/opportunity-finder", labelKey: "nav.opportunityFinder", icon: BriefcaseBusiness },
   { href: "/stock-needs", labelKey: "nav.stockNeeds", icon: Boxes },
-  { href: "/mpn-comparator", labelKey: "nav.mpnComparator", icon: Scale },
   { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
   { href: "/chat", labelKey: "nav.chat", icon: MessageCircle },
   { href: "/profile", labelKey: "nav.profile", icon: UserCircle },
@@ -55,12 +53,12 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
 
   return (
     <aside
-      className={`border-b text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r ${
+      className={`w-full max-w-full overflow-hidden border-b text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r ${
         isAdminArea ? "border-orange-900 bg-orange-950" : "border-slate-200 bg-slate-950 lg:border-slate-800"
       }`}
     >
       <div className="flex items-center justify-between px-4 py-4 lg:block lg:px-6 lg:py-6">
-        <Link href="/clients" className="flex items-center gap-3">
+        <Link href="/clients" className="flex min-h-11 items-center gap-3">
           <QuiksolIcon size={40} className={isAdminArea ? "ring-1 ring-orange-300" : "ring-1 ring-brand-400"} />
           <span>
             <span className="block text-base font-semibold">Quiksol</span>
@@ -70,7 +68,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
           </span>
         </Link>
       </div>
-      <nav className="flex gap-2 overflow-x-auto px-4 pb-4 lg:block lg:space-y-1 lg:overflow-visible lg:px-4">
+      <nav className="flex min-w-0 max-w-full gap-2 overflow-x-auto px-4 pb-4 lg:block lg:space-y-1 lg:overflow-visible lg:px-4">
         {visibleItems.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;

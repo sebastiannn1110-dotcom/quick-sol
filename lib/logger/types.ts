@@ -18,7 +18,8 @@ export type LogModule =
   | "email"
   | "ai"
   | "chat"
-  | "profile";
+  | "profile"
+  | "opportunity-finder";
 
 export interface LogError {
   name?: string;

@@ -8,6 +8,7 @@ const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password"];
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/clients",
+  "/opportunity-finder",
   "/opportunities",
   "/stock-needs",
   "/executive-search",

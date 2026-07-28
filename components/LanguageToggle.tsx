@@ -16,7 +16,7 @@ export default function LanguageToggle() {
           key={item.code}
           type="button"
           onClick={() => setLanguage(item.code)}
-          className={`rounded px-2 py-1 font-semibold transition ${
+          className={`min-h-11 min-w-11 rounded px-2 py-1 font-semibold transition ${
             language === item.code ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"
           }`}
           aria-label={`${t("language.label")}: ${item.label}`}

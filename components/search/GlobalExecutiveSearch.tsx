@@ -135,7 +135,7 @@ export default function GlobalExecutiveSearch({ compact = false }: { compact?: b
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder={PLACEHOLDERS[placeholderIndex]}
-          className="focus-ring w-full rounded-md border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-950 placeholder:text-slate-400"
+          className="focus-ring min-h-11 w-full rounded-md border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-950 placeholder:text-slate-400"
         />
       </div>
 
@@ -146,7 +146,7 @@ export default function GlobalExecutiveSearch({ compact = false }: { compact?: b
             <button
               type="button"
               onClick={submitSearch}
-              className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
+              className="block min-h-11 w-full rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
             >
               Buscar &quot;{query.trim()}&quot; en Buscador Ejecutivo
             </button>
@@ -168,7 +168,7 @@ export default function GlobalExecutiveSearch({ compact = false }: { compact?: b
                         router.push(suggestion.href);
                         setOpen(false);
                       }}
-                      className={`block w-full rounded-md px-3 py-2 text-left text-sm ${
+                      className={`block min-h-11 w-full rounded-md px-3 py-2 text-left text-sm ${
                         activeIndex === index ? "bg-orange-50 text-orange-900" : "text-slate-700 hover:bg-slate-50"
                       }`}
                     >
