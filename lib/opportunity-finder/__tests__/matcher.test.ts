@@ -85,11 +85,119 @@ describe("two-file opportunity allocation", () => {
     });
     expect(output.results[0]).toMatchObject({
       opportunityType: "sourcing_needed",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: false,
+      exactQuantityMatch: false,
       availableQty: 0,
       allocatedQty: 0,
       shortageQty: 10
     });
     expect(output.results[0].warnings).toContain("negative_available_quantity");
+    expect(output.summary).toMatchObject({
+      exactMatches: 1,
+      usableAvailabilityMatches: 0,
+      exactQuantityMatches: 0
+    });
+  });
+
+  it("ignores invalid supply quantities without reducing valid inventory", () => {
+    const output = matchOpportunityRows({
+      jobId: "job",
+      roleA: "demand",
+      roleB: "stock",
+      rows: [
+        row({ side: "A", role: "demand", mpn: "X", requiredQty: 10 }),
+        row({ side: "B", role: "stock", mpn: "X", availableQty: -5 }),
+        row({ side: "B", role: "stock", mpn: "X", availableQty: Number.NaN, sourceRow: 3 }),
+        row({ side: "B", role: "stock", mpn: "X", availableQty: 10, sourceRow: 4 })
+      ]
+    });
+
+    expect(output.results[0]).toMatchObject({
+      opportunityType: "full_sale",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: true,
+      exactQuantityMatch: true,
+      availableQty: 10,
+      allocatedQty: 10,
+      shortageQty: 0
+    });
+    expect(output.summary).toMatchObject({
+      exactMatches: 1,
+      usableAvailabilityMatches: 1,
+      exactQuantityMatches: 1
+    });
+  });
+
+  it("calculates usable and exact quantity matches from remaining inventory at allocation time", () => {
+    const output = matchOpportunityRows({
+      jobId: "job",
+      roleA: "demand",
+      roleB: "stock",
+      rows: [
+        row({
+          side: "A",
+          role: "demand",
+          mpn: "X",
+          requiredQty: 5,
+          requiredDate: "2026-08-01",
+          customerContext: "first"
+        }),
+        row({
+          side: "A",
+          role: "demand",
+          mpn: "X",
+          requiredQty: 5,
+          requiredDate: "2026-08-02",
+          customerContext: "second",
+          sourceRow: 3
+        }),
+        row({ side: "B", role: "stock", mpn: "X", availableQty: 5 })
+      ]
+    });
+
+    expect(output.results[0]).toMatchObject({
+      customerContext: "first",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: true,
+      exactQuantityMatch: true,
+      allocatedQty: 5
+    });
+    expect(output.results[1]).toMatchObject({
+      customerContext: "second",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: false,
+      exactQuantityMatch: false,
+      allocatedQty: 0
+    });
+    expect(output.summary).toMatchObject({
+      exactMatches: 1,
+      usableAvailabilityMatches: 1,
+      exactQuantityMatches: 1
+    });
+  });
+
+  it("distinguishes full coverage from an exact quantity match", () => {
+    const output = matchOpportunityRows({
+      jobId: "job",
+      roleA: "demand",
+      roleB: "stock",
+      rows: [
+        row({ side: "A", role: "demand", mpn: "X", requiredQty: 6 }),
+        row({ side: "B", role: "stock", mpn: "X", availableQty: 10 })
+      ]
+    });
+
+    expect(output.results[0]).toMatchObject({
+      opportunityType: "full_sale",
+      usableAvailabilityMatch: true,
+      exactQuantityMatch: false,
+      allocatedQty: 6
+    });
   });
 
   it("keeps manufacturer conflicts visible but not confirmed", () => {
@@ -104,6 +212,10 @@ describe("two-file opportunity allocation", () => {
     });
     expect(output.results[0]).toMatchObject({
       opportunityType: "review_required",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: false,
+      exactQuantityMatch: false,
       allocatedQty: 0,
       reasonCode: "manufacturer_conflict"
     });
@@ -121,6 +233,7 @@ describe("two-file opportunity allocation", () => {
     });
     expect(output.results.find((item) => item.displayMpn === "ABC-001")).toMatchObject({
       opportunityType: "sourcing_needed",
+      exactMpnMatch: false,
       exactMatch: false
     });
     expect(output.possibleMatches).toHaveLength(1);
@@ -138,6 +251,10 @@ describe("two-file opportunity allocation", () => {
     });
     expect(output.results[0]).toMatchObject({
       opportunityType: "historical_signal",
+      exactMpnMatch: true,
+      exactMatch: true,
+      usableAvailabilityMatch: false,
+      exactQuantityMatch: false,
       availableQty: null,
       allocatedQty: null,
       actionCode: "upload_current_stock"

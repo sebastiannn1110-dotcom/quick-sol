@@ -8,6 +8,11 @@ import {
   safeOpportunityStoragePath,
   validateOpportunityFileMetadata
 } from "@/lib/opportunity-finder/validation";
+import {
+  buildOpportunityFinderIdempotencyKey,
+  OPPORTUNITY_FINDER_PIPELINE_VERSION,
+  opportunityFinderPipelineVersionFromKey
+} from "@/lib/opportunity-finder/pipeline";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
@@ -33,6 +38,23 @@ const createSchema = z.object({
   }
 });
 
+function existingComparisonResponse(existing: {
+  id: string;
+  status: string;
+  created_at?: string | null;
+  idempotency_key?: string | null;
+}) {
+  return NextResponse.json({
+    code: "COMPARISON_ALREADY_EXISTS",
+    errorCode: "COMPARISON_ALREADY_EXISTS",
+    jobId: existing.id,
+    status: existing.status,
+    reusedExistingJob: true,
+    createdAt: existing.created_at ?? null,
+    pipelineVersion: opportunityFinderPipelineVersionFromKey(existing.idempotency_key)
+  }, { status: 409 });
+}
+
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
@@ -57,19 +79,22 @@ export async function POST(request: Request) {
   const service = createSupabaseServiceRoleClient();
   if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
-  if (parsed.data.idempotencyKey) {
+  const idempotencyKey = parsed.data.idempotencyKey
+    ? await buildOpportunityFinderIdempotencyKey({
+      attemptId: parsed.data.idempotencyKey,
+      files: parsed.data.files
+    })
+    : null;
+
+  if (idempotencyKey) {
     const { data: existing } = await context.supabase
       .from("opportunity_finder_jobs")
-      .select("id,status")
+      .select("id,status,created_at,idempotency_key")
       .eq("created_by", context.profile.id)
-      .eq("idempotency_key", parsed.data.idempotencyKey)
+      .eq("idempotency_key", idempotencyKey)
       .maybeSingle();
     if (existing) {
-      return NextResponse.json({
-        errorCode: "COMPARISON_ALREADY_EXISTS",
-        jobId: existing.id,
-        status: existing.status
-      }, { status: 409 });
+      return existingComparisonResponse(existing);
     }
   }
 
@@ -99,12 +124,21 @@ export async function POST(request: Request) {
     .insert({
       id: jobId,
       created_by: context.profile.id,
-      idempotency_key: parsed.data.idempotencyKey || null,
+      idempotency_key: idempotencyKey,
       status: "uploading",
       current_stage: "uploading",
       progress_percent: 0
     });
   if (jobError) {
+    if (idempotencyKey && jobError.code === "23505") {
+      const { data: existing } = await context.supabase
+        .from("opportunity_finder_jobs")
+        .select("id,status,created_at,idempotency_key")
+        .eq("created_by", context.profile.id)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (existing) return existingComparisonResponse(existing);
+    }
     return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
   }
   const { error: filesError } = await context.supabase
@@ -171,8 +205,14 @@ export async function POST(request: Request) {
       jobId,
       fileCount: 2,
       totalSizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
-      maxFileSizeBytes: opportunityFinderMaxFileSizeBytes()
+      maxFileSizeBytes: opportunityFinderMaxFileSizeBytes(),
+      pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
     }
   });
-  return NextResponse.json({ jobId, files: signedFiles }, { status: 201 });
+  return NextResponse.json({
+    jobId,
+    files: signedFiles,
+    reusedExistingJob: false,
+    pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
+  }, { status: 201 });
 }

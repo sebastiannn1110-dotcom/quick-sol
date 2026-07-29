@@ -9,6 +9,7 @@ import {
   resultDatabaseRow,
   resultFilters
 } from "@/lib/opportunity-finder/api";
+import { opportunityFinderPipelineVersionFromKey } from "@/lib/opportunity-finder/pipeline";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ function jobPayload(job: Record<string, unknown>) {
     summary: job.summary_json ?? {},
     errorCode: job.error_code,
     cancelRequested: Boolean(job.cancel_requested),
+    pipelineVersion: opportunityFinderPipelineVersionFromKey(job.idempotency_key),
     createdAt: job.created_at,
     startedAt: job.started_at,
     completedAt: job.completed_at,
@@ -77,6 +79,7 @@ export async function GET(
   if (!jobId) return NextResponse.json({ errorCode: "JOB_NOT_FOUND" }, { status: 404 });
   const job = await loadOwnedOpportunityJob(context.supabase, jobId, context.profile.id);
   if (!job) return NextResponse.json({ errorCode: "JOB_NOT_FOUND" }, { status: 404 });
+  const pipelineVersion = opportunityFinderPipelineVersionFromKey(job.idempotency_key);
   const { data: files, error: filesError } = await context.supabase
     .from("opportunity_finder_files")
     .select(OPPORTUNITY_FILE_SELECT)
@@ -102,7 +105,7 @@ export async function GET(
     resultsQuery = resultsQuery.or(`demand_file_id.eq.${filters.fileId},supply_file_id.eq.${filters.fileId}`);
   }
   if (filters.withShortage) resultsQuery = resultsQuery.gt("shortage_qty", 0);
-  if (filters.withAvailable) resultsQuery = resultsQuery.gt("available_qty", 0);
+  if (filters.withAvailable) resultsQuery = resultsQuery.eq("usable_availability_match", true);
   if (filters.exactOnly) resultsQuery = resultsQuery.eq("exact_match", true);
   const { data: results, error: resultsError, count } = await resultsQuery
     .order("created_at", { ascending: true })
@@ -120,7 +123,9 @@ export async function GET(
   return NextResponse.json({
     job: jobPayload(job),
     files: ((files ?? []) as unknown as Record<string, unknown>[]).map(filePayload),
-    results: ((results ?? []) as unknown as Record<string, unknown>[]).map(resultDatabaseRow),
+    results: ((results ?? []) as unknown as Record<string, unknown>[]).map(
+      (result) => resultDatabaseRow(result, pipelineVersion)
+    ),
     possibleMatches: (possibleMatches ?? []).map((match) => ({
       id: match.id,
       demandDisplayMpn: match.demand_display_mpn,

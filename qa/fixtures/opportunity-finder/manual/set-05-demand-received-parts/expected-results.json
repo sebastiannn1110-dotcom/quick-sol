@@ -1,0 +1,58 @@
+[
+  {
+    "testCaseId": "HIST-MATCH-001",
+    "needFile": "QA_Set05_Customer_Demand.xlsx",
+    "availabilityFile": "QA_Set05_Received_Parts.xlsx",
+    "mpn": "HIST-MATCH-001",
+    "expectedType": "historical_signal",
+    "requiredQty": 10,
+    "originalAvailability": null,
+    "expectedAssignedQty": null,
+    "expectedShortage": null,
+    "expectedCoverage": null,
+    "exactMpnMatch": true,
+    "usableAvailabilityMatch": false,
+    "exactQuantityMatch": false,
+    "expectedWarnings": [
+      "historical_not_current_stock"
+    ],
+    "expectedManufacturer": "Mirevix Devices",
+    "expectedReference": "Cuenta Marea QA"
+  },
+  {
+    "testCaseId": "HIST-NOMATCH-002",
+    "needFile": "QA_Set05_Customer_Demand.xlsx",
+    "availabilityFile": "QA_Set05_Received_Parts.xlsx",
+    "mpn": "HIST-NOMATCH-002",
+    "expectedType": "no_result",
+    "requiredQty": 15,
+    "originalAvailability": null,
+    "expectedAssignedQty": null,
+    "expectedShortage": null,
+    "expectedCoverage": null,
+    "exactMpnMatch": false,
+    "usableAvailabilityMatch": false,
+    "exactQuantityMatch": false,
+    "expectedWarnings": [],
+    "expectedManufacturer": "Noryth Circuits",
+    "expectedReference": "Cuenta Nexo QA"
+  },
+  {
+    "testCaseId": "HIST-ONLY-003",
+    "needFile": "QA_Set05_Customer_Demand.xlsx",
+    "availabilityFile": "QA_Set05_Received_Parts.xlsx",
+    "mpn": "HIST-ONLY-003",
+    "expectedType": "no_result",
+    "requiredQty": null,
+    "originalAvailability": null,
+    "expectedAssignedQty": null,
+    "expectedShortage": null,
+    "expectedCoverage": null,
+    "exactMpnMatch": false,
+    "usableAvailabilityMatch": false,
+    "exactQuantityMatch": false,
+    "expectedWarnings": [],
+    "expectedManufacturer": "Praxilium Labs",
+    "expectedReference": null
+  }
+]

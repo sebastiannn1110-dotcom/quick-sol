@@ -65,6 +65,8 @@ type ApiJob = {
   warningCount: number;
   summary: Partial<OpportunitySummary>;
   errorCode: string | null;
+  pipelineVersion: string | null;
+  createdAt: string | null;
   expiresAt: string | null;
 };
 
@@ -85,6 +87,22 @@ type SignedFile = {
   id: string;
   side: "A" | "B";
   signedUrl: string;
+};
+
+type ReusedComparison = {
+  jobId: string;
+  status: OpportunityJobStatus;
+  createdAt: string | null;
+  pipelineVersion: string | null;
+};
+
+type OpportunityApiError = Error & {
+  reasonCode?: string;
+  jobId?: string;
+  status?: OpportunityJobStatus;
+  reusedExistingJob?: boolean;
+  createdAt?: string | null;
+  pipelineVersion?: string | null;
 };
 
 type FilterState = {
@@ -115,13 +133,14 @@ const ROLE_OPTIONS: OpportunitySelectedRole[] = [
   "excess",
   "supplier_offer",
   "received_history",
-  "sales_history",
   "ignore"
 ];
 
 const SUMMARY_KEYS: Array<keyof OpportunitySummary> = [
   "analyzedMpns",
   "exactMatches",
+  "usableAvailabilityMatches",
+  "exactQuantityMatches",
   "fullSales",
   "partialSales",
   "sourcingNeeded",
@@ -179,18 +198,30 @@ function directUpload(
 }
 
 async function readPayload<T>(response: Response) {
-  const payload = await response.json().catch(() => ({})) as T & { errorCode?: string; reasonCode?: string; jobId?: string };
+  const payload = await response.json().catch(() => ({})) as T & {
+    errorCode?: string;
+    reasonCode?: string;
+    jobId?: string;
+    status?: OpportunityJobStatus;
+    reusedExistingJob?: boolean;
+    createdAt?: string | null;
+    pipelineVersion?: string | null;
+  };
   if (!response.ok) {
-    const error = new Error(payload.errorCode ?? "default") as Error & { reasonCode?: string; jobId?: string };
+    const error = new Error(payload.errorCode ?? "default") as OpportunityApiError;
     error.reasonCode = payload.reasonCode;
     error.jobId = payload.jobId;
+    error.status = payload.status;
+    error.reusedExistingJob = payload.reusedExistingJob;
+    error.createdAt = payload.createdAt;
+    error.pipelineVersion = payload.pipelineVersion;
     throw error;
   }
   return payload;
 }
 
 function suggestedRole(type: OpportunityFileType): OpportunitySelectedRole | "" {
-  return type === "financial" || type === "unknown" ? "" : type;
+  return type === "financial" || type === "unknown" || type === "sales_history" ? "" : type;
 }
 
 function FileDropzone({
@@ -280,6 +311,7 @@ export default function OpportunityFinder() {
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState("");
   const [compatibilityReason, setCompatibilityReason] = useState("");
+  const [reusedComparison, setReusedComparison] = useState<ReusedComparison | null>(null);
   const uploadAttemptIdRef = useRef("");
 
   function errorMessage(code: string) {
@@ -377,6 +409,7 @@ export default function OpportunityFinder() {
         })
       });
       const initiate = await readPayload<{ jobId: string; files: SignedFile[] }>(initiateResponse);
+      setReusedComparison(null);
       setJobId(initiate.jobId);
       await Promise.all(initiate.files.map((signed) => {
         const index = signed.side === "A" ? 0 : 1;
@@ -392,7 +425,18 @@ export default function OpportunityFinder() {
       await readPayload(profileResponse);
       await loadJob();
     } catch (error) {
-      const apiError = error as Error & { jobId?: string };
+      const apiError = error as OpportunityApiError;
+      if (apiError.reusedExistingJob && apiError.jobId && apiError.status) {
+        setReusedComparison({
+          jobId: apiError.jobId,
+          status: apiError.status,
+          createdAt: apiError.createdAt ?? null,
+          pipelineVersion: apiError.pipelineVersion ?? null
+        });
+        setJobId(apiError.jobId);
+        setErrorCode("");
+        return;
+      }
       if (apiError.jobId) setJobId(apiError.jobId);
       setErrorCode(apiError.message || "default");
     } finally {
@@ -458,6 +502,7 @@ export default function OpportunityFinder() {
     setAppliedFilters(EMPTY_FILTERS);
     setErrorCode("");
     setCompatibilityReason("");
+    setReusedComparison(null);
     uploadAttemptIdRef.current = "";
   }
 
@@ -513,6 +558,18 @@ export default function OpportunityFinder() {
       {errorCode ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-800">
           {errorMessage(errorCode)}
+        </div>
+      ) : null}
+
+      {reusedComparison ? (
+        <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
+          <p className="font-semibold">{text.reusedComparisonNotice}</p>
+          <p className="mt-1 text-blue-800">
+            {text.reusedComparisonStatus}:{" "}
+            <span className="font-semibold">
+              {STATUS_LABELS[language][data?.job.status ?? reusedComparison.status]}
+            </span>
+          </p>
         </div>
       ) : null}
 
@@ -650,8 +707,19 @@ export default function OpportunityFinder() {
                 <option value="">{text.filters.file}: {text.filters.all}</option>
                 {data.files.map((file) => <option key={file.id} value={file.id}>{file.originalFileName}</option>)}
               </select>
+              <label className="flex min-h-11 items-start gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={filters.exactOnly}
+                  onChange={(event) => setFilters((current) => ({ ...current, exactOnly: event.target.checked }))}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  <span className="block font-medium">{text.filters.exactOnly}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-slate-500">{text.filters.exactOnlyHelp}</span>
+                </span>
+              </label>
               {[
-                ["exactOnly", text.filters.exactOnly],
                 ["withShortage", text.filters.withShortage],
                 ["withAvailable", text.filters.withAvailable]
               ].map(([key, label]) => (

@@ -64,6 +64,8 @@ function emptySummary(): OpportunitySummary {
   return {
     analyzedMpns: 0,
     exactMatches: 0,
+    usableAvailabilityMatches: 0,
+    exactQuantityMatches: 0,
     fullSales: 0,
     partialSales: 0,
     sourcingNeeded: 0,
@@ -284,6 +286,7 @@ function makeDemandResult(input: {
   demand: DemandGroup;
   supply: SupplyGroup | null;
   supplyRole: OpportunitySelectedRole;
+  availableBeforeAllocation: number;
   allocatedQty: number;
   extraWarnings?: Set<OpportunityWarningCode>;
   reviewReason?: "manufacturer" | "unit" | "quantity";
@@ -304,10 +307,24 @@ function makeDemandResult(input: {
     reviewReason: input.reviewReason
   });
   const shortageQty = Math.max(requiredQty - allocatedQty, 0);
+  const usableAvailabilityMatch =
+    !historical &&
+    Boolean(input.supply) &&
+    !input.reviewReason &&
+    Number.isFinite(input.availableBeforeAllocation) &&
+    input.availableBeforeAllocation > 0;
+  const exactQuantityMatch =
+    usableAvailabilityMatch &&
+    input.availableBeforeAllocation === requiredQty &&
+    allocatedQty === requiredQty;
+  const exactMpnMatch = Boolean(input.supply);
   return {
     jobId: "",
     opportunityType: codes.opportunityType,
-    exactMatch: Boolean(input.supply),
+    exactMpnMatch,
+    exactMatch: exactMpnMatch,
+    usableAvailabilityMatch,
+    exactQuantityMatch,
     displayMpn: input.demand.displayMpn,
     normalizedMpn: input.demand.normalizedMpn,
     manufacturer: input.demand.manufacturer ?? input.supply?.manufacturer ?? null,
@@ -340,6 +357,12 @@ function countSummary(results: OpportunityResult[], analyzedMpns: number, exactM
   const summary = emptySummary();
   summary.analyzedMpns = analyzedMpns;
   summary.exactMatches = exactMatches;
+  summary.usableAvailabilityMatches = new Set(
+    results
+      .filter((result) => result.usableAvailabilityMatch)
+      .map((result) => result.normalizedMpn)
+  ).size;
+  summary.exactQuantityMatches = results.filter((result) => result.exactQuantityMatch).length;
   for (const result of results) {
     if (result.opportunityType === "full_sale") summary.fullSales += 1;
     if (result.opportunityType === "partial_sale") summary.partialSales += 1;
@@ -387,6 +410,7 @@ export function matchOpportunityRows(input: {
         demand,
         supply,
         supplyRole,
+        availableBeforeAllocation: supply ? Math.max(supply.remainingAvailable, 0) : 0,
         allocatedQty: 0,
         reviewReason: "quantity"
       }));
@@ -395,7 +419,13 @@ export function matchOpportunityRows(input: {
 
     if (supplyRole === "received_history" || supplyRole === "sales_history") {
       if (supply) {
-        results.push(makeDemandResult({ demand, supply, supplyRole, allocatedQty: 0 }));
+        results.push(makeDemandResult({
+          demand,
+          supply,
+          supplyRole,
+          availableBeforeAllocation: 0,
+          allocatedQty: 0
+        }));
       }
       continue;
     }
@@ -407,16 +437,18 @@ export function matchOpportunityRows(input: {
       : units.incompatible
         ? "unit" as const
         : undefined;
+    const availableBeforeAllocation = supply ? Math.max(supply.remainingAvailable, 0) : 0;
     const allocatedQty =
       !supply || reviewReason
         ? 0
-        : Math.min(demand.requiredQty, Math.max(supply.remainingAvailable, 0));
+        : Math.min(demand.requiredQty, availableBeforeAllocation);
     if (supply && !reviewReason) supply.remainingAvailable = Math.max(supply.remainingAvailable - allocatedQty, 0);
     const extraWarnings = new Set<OpportunityWarningCode>([...units.warnings, ...manufacturer]);
     results.push(makeDemandResult({
       demand,
       supply,
       supplyRole,
+      availableBeforeAllocation,
       allocatedQty,
       extraWarnings,
       reviewReason
@@ -429,7 +461,10 @@ export function matchOpportunityRows(input: {
       results.push({
         jobId: input.jobId,
         opportunityType: "supply_without_demand",
+        exactMpnMatch: false,
         exactMatch: false,
+        usableAvailabilityMatch: false,
+        exactQuantityMatch: false,
         displayMpn: supply.displayMpn,
         normalizedMpn: supply.normalizedMpn,
         manufacturer: supply.manufacturer,
@@ -507,7 +542,10 @@ export const SAFE_RESULT_KEYS = new Set<keyof OpportunityResult>([
   "id",
   "jobId",
   "opportunityType",
+  "exactMpnMatch",
   "exactMatch",
+  "usableAvailabilityMatch",
+  "exactQuantityMatch",
   "displayMpn",
   "normalizedMpn",
   "manufacturer",

@@ -149,7 +149,9 @@ describe("streaming opportunity workbook parser", () => {
       displayMpn: "0007-QA-01",
       normalizedMpn: "0007-QA-01",
       availableQty: 25,
-      manufacturer: "Luminara Circuits"
+      manufacturer: "Luminara Circuits",
+      unitOfMeasure: null
     });
+    expect(rows[0].qualityFlags).toContain("missing_unit");
   });
 });

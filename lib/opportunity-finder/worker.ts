@@ -310,6 +310,8 @@ function emptyOpportunitySummary(): OpportunitySummary {
   return {
     analyzedMpns: 0,
     exactMatches: 0,
+    usableAvailabilityMatches: 0,
+    exactQuantityMatches: 0,
     fullSales: 0,
     partialSales: 0,
     sourcingNeeded: 0,
@@ -393,6 +395,12 @@ async function matchCanonicalRowsIncrementally(input: {
       result.normalizedMpn === normalizedMpn
     );
     await persistMatchOutput(input.supabase, output);
+    if (output.results.some((result) => result.usableAvailabilityMatch)) {
+      summary.usableAvailabilityMatches += 1;
+    }
+    summary.exactQuantityMatches += output.results.filter(
+      (result) => result.exactQuantityMatch
+    ).length;
     for (const result of output.results) {
       resultCount += 1;
       warningCount += result.warnings.length;
@@ -457,7 +465,9 @@ function resultInsert(result: ReturnType<typeof matchOpportunityRows>["results"]
   return {
     job_id: result.jobId,
     opportunity_type: result.opportunityType,
-    exact_match: result.exactMatch,
+    exact_match: result.exactMpnMatch,
+    usable_availability_match: result.usableAvailabilityMatch,
+    exact_quantity_match: result.exactQuantityMatch,
     display_mpn: result.displayMpn,
     normalized_mpn: result.normalizedMpn,
     manufacturer: result.manufacturer,

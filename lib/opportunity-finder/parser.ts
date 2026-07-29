@@ -3,11 +3,16 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
 import { parse as parseCsv } from "csv-parse";
-import { normalizeHeader } from "@/lib/excel/header-detector";
 import {
   classifyOpportunityWorkbook,
   opportunityHeaderScore
 } from "@/lib/opportunity-finder/classifier";
+import {
+  findOpportunityHeaderColumn,
+  findSafeOpportunityUnitColumn,
+  normalizeOpportunityHeader,
+  OPPORTUNITY_HEADER_ALIASES
+} from "@/lib/opportunity-finder/aliases";
 import {
   mpnIdentity,
   parseOpportunityQuantity,
@@ -49,43 +54,12 @@ const MAX_PROFILE_ROWS_PER_SHEET = 40;
 const DEFAULT_PARSE_BATCH_SIZE = 500;
 const MAX_XLSX_FALLBACK_SIZE_BYTES = 16 * 1024 * 1024;
 
-const ALIASES = {
-  mpn: ["mpn", "mfr", "manufacturer part number", "mfr part number", "mfg part number", "mfg partno", "mfr number"],
-  manufacturer: ["mfg", "manufacturer", "maker", "brand", "manuname", "global manufacturer name"],
-  customer: ["global customer name", "customer", "client", "customer name", "requi"],
-  supplier: ["global supplier name", "supplier", "supplier name", "vendor", "bpname"],
-  requiredDate: ["requireddate", "required date", "need date", "startdate", "start date"],
-  unit: ["uom", "unit of measure", "unit", "um"],
-  demandQty: ["quantity", "required qty", "required quantity", "demand qty", "demand quantity", "req qty", "needed qty", "open qty"],
-  stockQty: ["stock qty", "on hand", "on hand qty", "available qty", "available quantity", "inventory qty"],
-  excessQty: ["quantity", "excess qty", "excess quantity", "surplus qty", "available excess"],
-  supplierQty: ["qty", "quantity", "max qty", "on hand", "on hand qty", "available qty"],
-  receivedQty: ["rcpt qty", "received qty", "receipt qty"]
-} as const;
-
-function normalizedColumnName(value: unknown) {
-  return normalizeHeader(value)
-    .replace(/\bno\b/g, "number")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function findColumn(headers: string[], aliases: readonly string[]) {
-  const normalizedAliases = aliases.map(normalizedColumnName);
-  const exact = headers.findIndex((header) => normalizedAliases.includes(header));
-  if (exact >= 0) return exact;
-  const partial = headers.findIndex((header) =>
-    normalizedAliases.some((alias) => header === alias || header.includes(alias))
-  );
-  return partial >= 0 ? partial : null;
-}
-
 function quantityAliases(role: OpportunitySelectedRole) {
-  if (role === "demand") return ALIASES.demandQty;
-  if (role === "stock") return ALIASES.stockQty;
-  if (role === "excess") return ALIASES.excessQty;
-  if (role === "supplier_offer") return ALIASES.supplierQty;
-  if (role === "received_history") return ALIASES.receivedQty;
+  if (role === "demand") return OPPORTUNITY_HEADER_ALIASES.demandQuantity;
+  if (role === "stock") return OPPORTUNITY_HEADER_ALIASES.stockQuantity;
+  if (role === "excess") return OPPORTUNITY_HEADER_ALIASES.excessQuantity;
+  if (role === "supplier_offer") return OPPORTUNITY_HEADER_ALIASES.supplierQuantity;
+  if (role === "received_history") return OPPORTUNITY_HEADER_ALIASES.receivedQuantity;
   return [] as const;
 }
 
@@ -94,19 +68,19 @@ export function buildOpportunityColumnMap(
   role: OpportunitySelectedRole
 ): ColumnMap | null {
   if (role === "ignore") return null;
-  const headers = headerValues.map(normalizedColumnName);
-  const mpn = findColumn(headers, ALIASES.mpn);
+  const headers = headerValues.map(normalizeOpportunityHeader);
+  const mpn = findOpportunityHeaderColumn(headers, OPPORTUNITY_HEADER_ALIASES.mpn);
   if (mpn === null) return null;
-  const quantity = findColumn(headers, quantityAliases(role));
+  const quantity = findOpportunityHeaderColumn(headers, quantityAliases(role));
   if (!["received_history", "sales_history"].includes(role) && quantity === null) return null;
   return {
     mpn,
     quantity,
-    manufacturer: findColumn(headers, ALIASES.manufacturer),
-    customerContext: findColumn(headers, ALIASES.customer),
-    supplierContext: findColumn(headers, ALIASES.supplier),
-    requiredDate: findColumn(headers, ALIASES.requiredDate),
-    unitOfMeasure: findColumn(headers, ALIASES.unit)
+    manufacturer: findOpportunityHeaderColumn(headers, OPPORTUNITY_HEADER_ALIASES.manufacturer),
+    customerContext: findOpportunityHeaderColumn(headers, OPPORTUNITY_HEADER_ALIASES.customerReference),
+    supplierContext: findOpportunityHeaderColumn(headers, OPPORTUNITY_HEADER_ALIASES.supplierReference),
+    requiredDate: findOpportunityHeaderColumn(headers, OPPORTUNITY_HEADER_ALIASES.requiredDate),
+    unitOfMeasure: findSafeOpportunityUnitColumn(headers)
   };
 }
 
