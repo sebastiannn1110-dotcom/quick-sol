@@ -41,6 +41,14 @@ describe("Opportunity Finder access and isolation integration", () => {
     expect(source("scripts/opportunity-finder-worker.ts")).toContain("claimNextOpportunityFinderJob");
   });
 
+  it("runs the Opportunity Finder worker with the production web process", () => {
+    expect(source("package.json")).toContain('"start": "node scripts/start-production.mjs"');
+    const productionStart = source("scripts/start-production.mjs");
+    expect(productionStart).toContain('nextCli, "start"');
+    expect(productionStart).toContain('"scripts/opportunity-finder-worker.ts"');
+    expect(productionStart).toContain("SIGTERM");
+  });
+
   it("requires exactly two files and queues background work instead of parsing in HTTP", () => {
     const createRoute = source("app/api/opportunity-finder/jobs/route.ts");
     const profileRoute = source("app/api/opportunity-finder/jobs/[id]/profile/route.ts");

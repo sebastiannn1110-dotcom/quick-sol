@@ -1,6 +1,6 @@
 "use client";
 
-import { StockNeedsDashboard } from "@/app/admin/stock-needs/page";
+import { StockNeedsDashboard } from "@/components/stock-needs/StockNeedsDashboard";
 import EmployeeGuard from "@/components/EmployeeGuard";
 
 export default function StockNeedsPage() {

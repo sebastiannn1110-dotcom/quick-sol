@@ -343,7 +343,10 @@ export default function OpportunityFinder() {
 
   const activeStep = useMemo(() => {
     if (!data) return 0;
-    if (data.job.status === "awaiting_roles") return 1;
+    if (
+      data.job.status === "awaiting_roles" ||
+      ["uploading", "inspecting_sheets", "detecting_headers", "confirming_roles"].includes(data.job.currentStage)
+    ) return 1;
     if (["completed", "completed_with_warnings"].includes(data.job.status)) return 3;
     return 2;
   }, [data]);
