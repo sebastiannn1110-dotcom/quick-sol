@@ -17,6 +17,9 @@ excel de test/
 outputs/quiksol_ai_test/
 outputs/large-import-stress/
 outputs/
+.codex_work/
+qa/fixtures/opportunity-finder/manual/technical-report.md
+qa/fixtures/opportunity-finder/manual/validation-report.json
 .env.local
 
 # Private local files

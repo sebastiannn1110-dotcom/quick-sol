@@ -6,10 +6,12 @@ import type {
   OpportunityType,
   OpportunityWarningCode
 } from "@/lib/opportunity-finder/types";
+import { OPPORTUNITY_FINDER_PIPELINE_VERSION } from "@/lib/opportunity-finder/pipeline";
 
 export const OPPORTUNITY_JOB_SELECT = [
   "id",
   "created_by",
+  "idempotency_key",
   "status",
   "current_stage",
   "progress_percent",
@@ -62,6 +64,8 @@ export const OPPORTUNITY_RESULT_SELECT = [
   "job_id",
   "opportunity_type",
   "exact_match",
+  "usable_availability_match",
+  "exact_quantity_match",
   "display_mpn",
   "normalized_mpn",
   "manufacturer",
@@ -147,12 +151,23 @@ export async function loadOwnedOpportunityJob(
   return data as unknown as Record<string, unknown> | null;
 }
 
-export function resultDatabaseRow(row: Record<string, unknown>) {
+export function resultDatabaseRow(
+  row: Record<string, unknown>,
+  pipelineVersion: string | null = OPPORTUNITY_FINDER_PIPELINE_VERSION
+) {
+  const exactMpnMatch = Boolean(row.exact_match);
+  const unitOfMeasure =
+    pipelineVersion === OPPORTUNITY_FINDER_PIPELINE_VERSION
+      ? row.unit_of_measure as string | null
+      : null;
   return {
     id: row.id as string,
     jobId: row.job_id as string,
     opportunityType: row.opportunity_type as OpportunityType,
-    exactMatch: Boolean(row.exact_match),
+    exactMpnMatch,
+    exactMatch: exactMpnMatch,
+    usableAvailabilityMatch: Boolean(row.usable_availability_match),
+    exactQuantityMatch: Boolean(row.exact_quantity_match),
     displayMpn: row.display_mpn as string,
     normalizedMpn: row.normalized_mpn as string,
     manufacturer: row.manufacturer as string | null,
@@ -164,7 +179,7 @@ export function resultDatabaseRow(row: Record<string, unknown>) {
     shortageQty: row.shortage_qty === null ? null : Number(row.shortage_qty),
     coveragePercent: row.coverage_percent === null ? null : Number(row.coverage_percent),
     requiredDate: row.required_date as string | null,
-    unitOfMeasure: row.unit_of_measure as string | null,
+    unitOfMeasure,
     demandFileId: row.demand_file_id as string | null,
     demandFileName: row.demand_file_name as string | null,
     demandSheetName: row.demand_sheet_name as string | null,

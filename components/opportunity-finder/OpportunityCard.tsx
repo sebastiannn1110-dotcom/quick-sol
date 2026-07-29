@@ -46,6 +46,11 @@ export default function OpportunityCard({
     [text.card.coverage, result.coveragePercent === null ? "—" : `${valueOrDash(result.coveragePercent, locale)} %`],
     [text.card.unit, result.unitOfMeasure ?? text.card.unspecified]
   ] as const;
+  const matchIndicators = [
+    [text.card.exactMpnMatch, result.exactMpnMatch],
+    [text.card.usableAvailabilityMatch, result.usableAvailabilityMatch],
+    [text.card.exactQuantity, result.exactQuantityMatch]
+  ] as const;
 
   return (
     <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -62,6 +67,20 @@ export default function OpportunityCard({
       </div>
 
       <h3 className="mt-4 break-all text-xl font-bold text-slate-950">MPN: {result.displayMpn}</h3>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {matchIndicators.map(([label, active]) => (
+          <span
+            key={label}
+            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+              active
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-slate-200 bg-slate-50 text-slate-600"
+            }`}
+          >
+            {label}: {active ? text.card.yes : text.card.no}
+          </span>
+        ))}
+      </div>
       <div className="mt-2 space-y-1 text-sm text-slate-600">
         <p><span className="font-semibold text-slate-700">{text.card.manufacturer}:</span> {result.manufacturer ?? text.card.unspecified}</p>
         {result.customerContext ? <p><span className="font-semibold text-slate-700">{text.card.customer}:</span> {result.customerContext}</p> : null}

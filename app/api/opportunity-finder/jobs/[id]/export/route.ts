@@ -15,6 +15,9 @@ import {
   opportunityReasonLabel,
   opportunityWarningLabel
 } from "@/lib/opportunity-finder/i18n";
+import {
+  opportunityFinderPipelineVersionFromKey
+} from "@/lib/opportunity-finder/pipeline";
 import type { OpportunityResult } from "@/lib/opportunity-finder/types";
 
 export const runtime = "nodejs";
@@ -27,12 +30,15 @@ function languageFromRequest(request: Request): Language {
   return value === "en" || value === "zh" ? value : "es";
 }
 
-function exportHeaders(language: Language) {
+export function exportHeaders(language: Language) {
   const copy = opportunityFinderCopy(language);
   const card = copy.card;
   return [
     copy.filters.type,
     "MPN",
+    card.exactMpnMatch,
+    card.usableAvailabilityMatch,
+    card.exactQuantity,
     card.manufacturer,
     card.customer,
     card.required,
@@ -50,10 +56,15 @@ function exportHeaders(language: Language) {
   ];
 }
 
-function exportRow(result: OpportunityResult, language: Language) {
+export function exportRow(result: OpportunityResult, language: Language) {
+  const card = opportunityFinderCopy(language).card;
+  const booleanLabel = (value: boolean) => value ? card.yes : card.no;
   return [
     OPPORTUNITY_TYPE_LABELS[language][result.opportunityType],
     result.displayMpn,
+    booleanLabel(result.exactMpnMatch),
+    booleanLabel(result.usableAvailabilityMatch),
+    booleanLabel(result.exactQuantityMatch),
     result.manufacturer ?? "",
     result.customerContext ?? "",
     result.requiredQty ?? "",
@@ -62,7 +73,7 @@ function exportRow(result: OpportunityResult, language: Language) {
     result.shortageQty ?? "",
     result.coveragePercent ?? "",
     result.requiredDate ?? "",
-    result.unitOfMeasure ?? "",
+    result.unitOfMeasure,
     [result.demandFileName, result.demandSheetName].filter(Boolean).join(" / "),
     [result.supplyFileName, result.supplySheetName].filter(Boolean).join(" / "),
     opportunityReasonLabel(language, result.reasonCode),
@@ -74,6 +85,48 @@ function exportRow(result: OpportunityResult, language: Language) {
 function csvCell(value: unknown) {
   const text = String(value ?? "");
   return `"${text.replace(/"/g, "\"\"")}"`;
+}
+
+export function buildOpportunityCsv(results: OpportunityResult[], language: Language) {
+  const rows = [exportHeaders(language), ...results.map((result) => exportRow(result, language))];
+  return `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+}
+
+export function buildOpportunityExportWorkbook(results: OpportunityResult[], language: Language) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Quiksol Opportunity Finder";
+  const sheetNames: Record<Language, string> = {
+    es: "Oportunidades",
+    en: "Opportunities",
+    zh: "销售机会"
+  };
+  const sheet = workbook.addWorksheet(sheetNames[language], {
+    views: [{ state: "frozen", ySplit: 1 }]
+  });
+  const headers = exportHeaders(language);
+  sheet.addRow(headers);
+  for (const result of results) sheet.addRow(exportRow(result, language));
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
+  sheet.getRow(1).height = 30;
+  sheet.getRow(1).alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  sheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: headers.length }
+  };
+  const widths = [24, 22, 18, 24, 18, 24, 26, 16, 18, 16, 14, 12, 16, 12, 30, 30, 45, 45, 40];
+  sheet.columns.forEach((column, index) => {
+    column.width = widths[index] ?? 18;
+  });
+  for (const columnNumber of [15, 16, 17, 18, 19]) {
+    sheet.getColumn(columnNumber).alignment = { vertical: "top", wrapText: true };
+  }
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    sheet.getRow(rowNumber).height = 36;
+  }
+  const coverageColumn = headers.indexOf(opportunityFinderCopy(language).card.coverage) + 1;
+  if (coverageColumn > 0) sheet.getColumn(coverageColumn).numFmt = "0.00\"%\"";
+  return workbook;
 }
 
 export async function GET(
@@ -92,6 +145,7 @@ export async function GET(
   if (!["completed", "completed_with_warnings"].includes(String(job.status ?? ""))) {
     return NextResponse.json({ errorCode: "JOB_NOT_COMPLETED" }, { status: 409 });
   }
+  const pipelineVersion = opportunityFinderPipelineVersionFromKey(job.idempotency_key);
   const url = new URL(request.url);
   const format = url.searchParams.get("format") === "csv" ? "csv" : "xlsx";
   const resultId = cleanUuid(url.searchParams.get("resultId"));
@@ -108,7 +162,9 @@ export async function GET(
     if (resultId) query = query.eq("id", resultId);
     const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
     if (error) return NextResponse.json({ errorCode: "EXPORT_FAILED" }, { status: 500 });
-    const page = ((data ?? []) as unknown as Record<string, unknown>[]).map(resultDatabaseRow);
+    const page = ((data ?? []) as unknown as Record<string, unknown>[]).map(
+      (result) => resultDatabaseRow(result, pipelineVersion)
+    );
     results.push(...page);
     if (page.length < PAGE_SIZE || resultId) break;
     offset += page.length;
@@ -116,8 +172,7 @@ export async function GET(
 
   const date = new Date().toISOString().slice(0, 10);
   if (format === "csv") {
-    const rows = [exportHeaders(language), ...results.map((result) => exportRow(result, language))];
-    const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
+    const csv = buildOpportunityCsv(results, language);
     return new NextResponse(csv, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
@@ -127,26 +182,7 @@ export async function GET(
     });
   }
 
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Quiksol Opportunity Finder";
-  const sheetNames: Record<Language, string> = {
-    es: "Oportunidades",
-    en: "Opportunities",
-    zh: "销售机会"
-  };
-  const sheet = workbook.addWorksheet(sheetNames[language], {
-    views: [{ state: "frozen", ySplit: 1 }]
-  });
-  sheet.addRow(exportHeaders(language));
-  for (const result of results) sheet.addRow(exportRow(result, language));
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
-  sheet.autoFilter = { from: "A1", to: "P1" };
-  const widths = [24, 22, 24, 26, 16, 18, 16, 14, 12, 16, 12, 30, 30, 45, 45, 40];
-  sheet.columns.forEach((column, index) => {
-    column.width = widths[index] ?? 18;
-  });
-  sheet.getColumn(9).numFmt = "0.00\"%\"";
+  const workbook = buildOpportunityExportWorkbook(results, language);
   const buffer = await workbook.xlsx.writeBuffer();
   return new NextResponse(Buffer.from(buffer), {
     headers: {

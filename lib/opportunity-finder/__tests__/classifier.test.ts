@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyOpportunityWorkbook } from "@/lib/opportunity-finder/classifier";
+import {
+  classifyOpportunityWorkbook,
+  opportunityHeaderScore
+} from "@/lib/opportunity-finder/classifier";
 
 function classify(fileName: string, sheetName: string, headers: string[][]) {
   return classifyOpportunityWorkbook({
@@ -34,5 +37,23 @@ describe("deterministic opportunity file classification", () => {
 
   it("does not call a generic MPN/quantity file excess without explicit context", () => {
     expect(classify("generic.xlsx", "Sheet1", [["MPN", "Maker", "Quantity"]])).toBe("unknown");
+  });
+
+  it("uses the shared safe demand aliases during classification", () => {
+    expect(classify("requirements.xlsx", "Requirements", [[
+      "Manufacturer Part Number",
+      "Required Qty",
+      "Need Date",
+      "Customer Name",
+      "Unit of Measure"
+    ]])).toBe("demand");
+  });
+
+  it("recognizes explicit UOM headers without partial abbreviation matches", () => {
+    expect(opportunityHeaderScore(["MPN", "STOCK QTY", "UOM"]).recognizedCount).toBe(3);
+    expect(opportunityHeaderScore(["Summary", "Comments"])).toMatchObject({
+      recognizedCount: 0,
+      isHeader: false
+    });
   });
 });

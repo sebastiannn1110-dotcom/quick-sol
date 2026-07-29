@@ -145,7 +145,14 @@ export interface OpportunityResult {
   id?: string;
   jobId: string;
   opportunityType: OpportunityType;
+  /** The normalized MPN exists on both sides of the comparison. */
+  exactMpnMatch: boolean;
+  /** @deprecated Use exactMpnMatch. Retained for API compatibility. */
   exactMatch: boolean;
+  /** Positive, valid supply remained and passed compatibility checks for this allocation. */
+  usableAvailabilityMatch: boolean;
+  /** Usable availability immediately before allocation exactly equaled the required quantity. */
+  exactQuantityMatch: boolean;
   displayMpn: string;
   normalizedMpn: string;
   manufacturer: string | null;
@@ -186,6 +193,8 @@ export interface PossibleOpportunityMatch {
 export interface OpportunitySummary {
   analyzedMpns: number;
   exactMatches: number;
+  usableAvailabilityMatches: number;
+  exactQuantityMatches: number;
   fullSales: number;
   partialSales: number;
   sourcingNeeded: number;

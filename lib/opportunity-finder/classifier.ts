@@ -1,4 +1,11 @@
-import { normalizeHeader } from "@/lib/excel/header-detector";
+import {
+  findSafeOpportunityUnitColumn,
+  normalizeOpportunityHeader,
+  OPPORTUNITY_HEADER_ALIASES,
+  OPPORTUNITY_QUANTITY_HEADER_ALIASES,
+  OPPORTUNITY_STRUCTURAL_HEADER_ALIASES,
+  opportunityHeaderHasAlias
+} from "@/lib/opportunity-finder/aliases";
 import type {
   OpportunityFileType,
   OpportunitySheetProfile,
@@ -6,32 +13,11 @@ import type {
 } from "@/lib/opportunity-finder/types";
 
 const STRUCTURAL_HEADER_TERMS = new Set([
-  "mpn",
-  "mfr",
-  "mfr number",
-  "mfg",
-  "mfg partno",
-  "manufacturer",
-  "manuname",
+  ...OPPORTUNITY_STRUCTURAL_HEADER_ALIASES,
   "item",
   "item number",
-  "qty",
-  "quantity",
-  "max qty",
-  "stock qty",
-  "maker",
-  "brand",
-  "required date",
-  "requireddate",
-  "start date",
-  "startdate",
   "source control",
   "sourcecontrol",
-  "supplier",
-  "global supplier name",
-  "global customer name",
-  "customer",
-  "rcpt qty",
   "open balance",
   "credit limit",
   "due date",
@@ -41,13 +27,11 @@ const STRUCTURAL_HEADER_TERMS = new Set([
   "gp",
   "g p",
   "description",
-  "pdl",
-  "requi",
-  "bpname"
+  "pdl"
 ]);
 
 function compactHeader(value: unknown) {
-  return normalizeHeader(value).replace(/\bno\b/g, "number").trim();
+  return normalizeOpportunityHeader(value);
 }
 
 function headerMatchesTerm(header: string, term: string) {
@@ -57,10 +41,11 @@ function headerMatchesTerm(header: string, term: string) {
 export function opportunityHeaderScore(cells: unknown[]) {
   const headers = cells.map(compactHeader).filter(Boolean);
   const recognized = headers.filter((header) =>
-    Array.from(STRUCTURAL_HEADER_TERMS).some((term) => headerMatchesTerm(header, term))
+    Array.from(STRUCTURAL_HEADER_TERMS).some((term) => headerMatchesTerm(header, term)) ||
+    findSafeOpportunityUnitColumn([header]) === 0
   );
-  const hasMpn = headers.some((header) => /\b(mpn|mfr|mfg part|manufacturer part)\b/.test(header));
-  const hasQuantity = headers.some((header) => /\b(qty|quantity|stock qty|rcpt qty|on hand)\b/.test(header));
+  const hasMpn = opportunityHeaderHasAlias(headers, OPPORTUNITY_HEADER_ALIASES.mpn);
+  const hasQuantity = opportunityHeaderHasAlias(headers, OPPORTUNITY_QUANTITY_HEADER_ALIASES);
   const duplicatePenalty = headers.length - new Set(headers).size;
   return {
     headers: cells.map((value) => String(value ?? "").trim()).filter(Boolean),
@@ -85,14 +70,18 @@ function count(headers: string[], terms: string[]) {
   return terms.filter((term) => has(headers, term)).length;
 }
 
+function hasAliases(headers: string[], aliases: readonly string[]) {
+  return opportunityHeaderHasAlias(headers, aliases);
+}
+
 export function classifyOpportunityWorkbook(input: {
   fileName: string;
   sheets: OpportunitySheetProfile[];
   rowCount: number;
 }): OpportunityWorkbookProfile {
   const headers = allNormalizedHeaders(input.sheets);
-  const sheetNames = input.sheets.map((sheet) => normalizeHeader(sheet.sheetName));
-  const fileName = normalizeHeader(input.fileName);
+  const sheetNames = input.sheets.map((sheet) => normalizeOpportunityHeader(sheet.sheetName));
+  const fileName = normalizeOpportunityHeader(input.fileName);
   const scores = new Map<OpportunityFileType, number>([
     ["demand", 0],
     ["stock", 0],
@@ -110,18 +99,35 @@ export function classifyOpportunityWorkbook(input: {
     reasons.set(type, [...(reasons.get(type) ?? []), reason]);
   }
 
-  if (has(headers, "mpn") && has(headers, "stock qty")) add("stock", 18, "mpn_and_stock_qty");
-  if (has(headers, "mfg") && has(headers, "stock qty")) add("stock", 6, "stock_manufacturer_columns");
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn) &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.stockQuantity)
+  ) {
+    add("stock", 18, "mpn_and_stock_qty");
+  }
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.stockManufacturer) &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.stockQuantity)
+  ) {
+    add("stock", 6, "stock_manufacturer_columns");
+  }
   if (sheetNames.some((name) => /\bstock|inventory\b/.test(name))) add("stock", 3, "inventory_sheet_name");
 
-  const explicitExcessColumns = has(headers, "mpn") && has(headers, "maker") && has(headers, "quantity");
+  const explicitExcessColumns =
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn) &&
+    has(headers, "maker") &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.excessQuantity);
   if (explicitExcessColumns && /\bexcess|surplus|overstock\b/.test(fileName)) {
     add("excess", 24, "explicit_excess_file_and_columns");
   } else if (explicitExcessColumns) {
     add("excess", 6, "possible_excess_columns_without_explicit_context");
   }
 
-  if (has(headers, "required date", "requireddate") && has(headers, "quantity") && has(headers, "mpn")) {
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.requiredDate) &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.demandQuantity) &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn)
+  ) {
     add("demand", 16, "planned_demand_columns");
   }
   if (count(headers, ["sourcecontrol", "source control", "bpname", "requi", "startdate"]) >= 3) {
@@ -129,14 +135,19 @@ export function classifyOpportunityWorkbook(input: {
   }
   if (sheetNames.some((name) => /\bplanned|demand|requirements?\b/.test(name))) add("demand", 4, "demand_sheet_name");
 
-  const supplierMpn = has(headers, "mfr", "mfr number", "mfg partno");
-  const supplierQty = has(headers, "qty", "quantity", "max qty", "on hand");
+  const supplierMpn = hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.supplierOfferMpn);
+  const supplierQty = hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.supplierQuantity);
   if (supplierMpn && supplierQty && count(headers, ["brand", "pdl", "list", "description", "price"]) >= 2) {
     add("supplier_offer", 16, "catalog_offer_columns");
   }
   if (input.sheets.length >= 3 && supplierMpn && supplierQty) add("supplier_offer", 5, "multi_sheet_offer");
 
-  if (has(headers, "mfg partno") && has(headers, "rcpt qty")) add("received_history", 20, "receipt_history_columns");
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.receivedMpn) &&
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.receivedQuantity)
+  ) {
+    add("received_history", 20, "receipt_history_columns");
+  }
   if (count(headers, ["global supplier name", "global customer name", "usd extended price"]) >= 2) {
     add("received_history", 7, "actual_spend_context");
   }
