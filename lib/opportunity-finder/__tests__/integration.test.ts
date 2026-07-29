@@ -49,6 +49,13 @@ describe("Opportunity Finder access and isolation integration", () => {
     expect(productionStart).toContain("SIGTERM");
   });
 
+  it("uses a new idempotency scope when starting another comparison", () => {
+    const component = source("components/opportunity-finder/OpportunityFinder.tsx");
+    expect(component).toContain("uploadAttemptIdRef");
+    expect(component).toContain("crypto.randomUUID()");
+    expect(component).not.toContain("file!.lastModified");
+  });
+
   it("requires exactly two files and queues background work instead of parsing in HTTP", () => {
     const createRoute = source("app/api/opportunity-finder/jobs/route.ts");
     const profileRoute = source("app/api/opportunity-finder/jobs/[id]/profile/route.ts");

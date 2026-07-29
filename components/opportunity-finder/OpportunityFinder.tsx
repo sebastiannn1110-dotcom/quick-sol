@@ -280,6 +280,7 @@ export default function OpportunityFinder() {
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState("");
   const [compatibilityReason, setCompatibilityReason] = useState("");
+  const uploadAttemptIdRef = useRef("");
 
   function errorMessage(code: string) {
     const errors = text.errors as Record<string, string>;
@@ -361,6 +362,7 @@ export default function OpportunityFinder() {
     setErrorCode("");
     setUploadProgress([0, 0]);
     try {
+      if (!uploadAttemptIdRef.current) uploadAttemptIdRef.current = crypto.randomUUID();
       const initiateResponse = await fetch("/api/opportunity-finder/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -371,7 +373,7 @@ export default function OpportunityFinder() {
             fileSize: file!.size,
             fileType: file!.type || null
           })),
-          idempotencyKey: localFiles.map((file) => `${file!.name}:${file!.size}:${file!.lastModified}`).join("|")
+          idempotencyKey: uploadAttemptIdRef.current
         })
       });
       const initiate = await readPayload<{ jobId: string; files: SignedFile[] }>(initiateResponse);
@@ -456,6 +458,7 @@ export default function OpportunityFinder() {
     setAppliedFilters(EMPTY_FILTERS);
     setErrorCode("");
     setCompatibilityReason("");
+    uploadAttemptIdRef.current = "";
   }
 
   async function deleteJob() {
@@ -521,14 +524,20 @@ export default function OpportunityFinder() {
               file={localFiles[0]}
               progress={uploadProgress[0]}
               disabled={loading}
-              onFile={(file) => setLocalFiles((current) => [file, current[1]])}
+              onFile={(file) => {
+                uploadAttemptIdRef.current = "";
+                setLocalFiles((current) => [file, current[1]]);
+              }}
             />
             <FileDropzone
               title={text.supplyFile}
               file={localFiles[1]}
               progress={uploadProgress[1]}
               disabled={loading}
-              onFile={(file) => setLocalFiles((current) => [current[0], file])}
+              onFile={(file) => {
+                uploadAttemptIdRef.current = "";
+                setLocalFiles((current) => [current[0], file]);
+              }}
             />
           </div>
           <button

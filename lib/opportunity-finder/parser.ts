@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import { parse as parseCsv } from "csv-parse";
 import { normalizeHeader } from "@/lib/excel/header-detector";
 import {
@@ -46,6 +47,7 @@ export type OpportunityParseMetrics = {
 
 const MAX_PROFILE_ROWS_PER_SHEET = 40;
 const DEFAULT_PARSE_BATCH_SIZE = 500;
+const MAX_XLSX_FALLBACK_SIZE_BYTES = 16 * 1024 * 1024;
 
 const ALIASES = {
   mpn: ["mpn", "mfr", "manufacturer part number", "mfr part number", "mfg part number", "mfg partno", "mfr number"],
@@ -151,6 +153,52 @@ function csvCells(row: unknown[]) {
   }));
 }
 
+function sheetJsRows(worksheet: XLSX.WorkSheet) {
+  const options = {
+    header: 1,
+    defval: null,
+    blankrows: true
+  } as const;
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    ...options,
+    raw: true
+  });
+  const displayRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+    ...options,
+    raw: false
+  });
+  const startRow = worksheet["!ref"] ? XLSX.utils.decode_range(worksheet["!ref"]).s.r : 0;
+  const rowCount = Math.max(rawRows.length, displayRows.length);
+
+  return Array.from({ length: rowCount }, (_, rowIndex) => {
+    const rawRow = rawRows[rowIndex] ?? [];
+    const displayRow = displayRows[rowIndex] ?? [];
+    const columnCount = Math.max(rawRow.length, displayRow.length);
+    const cells = Array.from({ length: columnCount }, (_, columnIndex) => {
+      const value = rawRow[columnIndex];
+      const displayValue = displayRow[columnIndex];
+      const textSource = displayValue ?? value;
+      return {
+        value,
+        text: textSource === null || textSource === undefined ? "" : String(textSource).trim()
+      };
+    });
+    return { rowNumber: startRow + rowIndex + 1, cells };
+  });
+}
+
+async function readXlsxFallback(filePath: string) {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.size > MAX_XLSX_FALLBACK_SIZE_BYTES) {
+    throw new Error("OPPORTUNITY_XLSX_FALLBACK_TOO_LARGE");
+  }
+  return XLSX.readFile(filePath, {
+    cellDates: true,
+    dense: true,
+    raw: true
+  });
+}
+
 function rowIsEmpty(cells: OpportunityCell[]) {
   return cells.every((cell) => !cell.text);
 }
@@ -202,7 +250,7 @@ export async function validateOpportunityFileSignature(filePath: string, fileNam
   }
 }
 
-async function profileXlsx(filePath: string, fileName: string) {
+async function profileXlsxStreaming(filePath: string, fileName: string) {
   const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
     entries: "emit",
     sharedStrings: "cache",
@@ -233,6 +281,36 @@ async function profileXlsx(filePath: string, fileName: string) {
     });
   }
   return classifyOpportunityWorkbook({ fileName, sheets, rowCount: totalRows });
+}
+
+async function profileXlsxFallback(filePath: string, fileName: string) {
+  const workbook = await readXlsxFallback(filePath);
+  const sheets: OpportunitySheetProfile[] = [];
+  let totalRows = 0;
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+    const rows = sheetJsRows(worksheet).filter((row) => !rowIsEmpty(row.cells));
+    if (!rows.length) continue;
+    totalRows += rows.length;
+    sheets.push({
+      sheetName,
+      rowCount: rows.length,
+      headerRows: headerProfileRows(rows.slice(0, MAX_PROFILE_ROWS_PER_SHEET))
+    });
+  }
+  return classifyOpportunityWorkbook({ fileName, sheets, rowCount: totalRows });
+}
+
+async function profileXlsx(filePath: string, fileName: string) {
+  try {
+    const streamed = await profileXlsxStreaming(filePath, fileName);
+    if (streamed.sheetCount > 0) return streamed;
+  } catch {
+    // Some valid XLSX writers order package entries in a way ExcelJS cannot stream.
+  }
+  return profileXlsxFallback(filePath, fileName);
 }
 
 async function profileCsv(filePath: string, fileName: string) {
@@ -415,12 +493,46 @@ async function parseXlsx(input: ParseOpportunityWorkbookInput, metrics: Opportun
   });
   const batch: CanonicalOpportunityRow[] = [];
   let originalIndex = 0;
-  for await (const worksheet of reader) {
-    const sheetName = (worksheet as { name?: string }).name ?? `Sheet ${metrics.sheets.length + 1}`;
-    async function* rows() {
-      for await (const row of worksheet) {
-        yield { rowNumber: row.number, cells: excelRowCells(row) };
+  try {
+    for await (const worksheet of reader) {
+      const sheetName = (worksheet as { name?: string }).name ?? `Sheet ${metrics.sheets.length + 1}`;
+      async function* rows() {
+        for await (const row of worksheet) {
+          yield { rowNumber: row.number, cells: excelRowCells(row) };
+        }
       }
+      await parseRows({
+        rows: rows(),
+        sheetName,
+        jobId: input.jobId,
+        fileId: input.fileId,
+        side: input.side,
+        fileName: input.fileName,
+        role: input.role,
+        metrics,
+        batch,
+        batchSize: input.batchSize ?? DEFAULT_PARSE_BATCH_SIZE,
+        onBatch: input.onBatch,
+        shouldCancel: input.shouldCancel,
+        nextIndex: () => originalIndex++
+      });
+    }
+  } catch (error) {
+    if (metrics.totalRows > 0) throw error;
+  }
+  if (metrics.totalRows > 0) {
+    if (batch.length) await input.onBatch(batch.splice(0, batch.length));
+    return;
+  }
+
+  metrics.sheets.length = 0;
+  const workbook = await readXlsxFallback(input.filePath);
+  originalIndex = 0;
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) continue;
+    async function* rows() {
+      for (const row of sheetJsRows(worksheet)) yield row;
     }
     await parseRows({
       rows: rows(),

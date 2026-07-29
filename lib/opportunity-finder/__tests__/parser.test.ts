@@ -2,8 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import * as XLSX from "xlsx";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseOpportunityWorkbook } from "@/lib/opportunity-finder/parser";
+import {
+  parseOpportunityWorkbook,
+  profileOpportunityWorkbook
+} from "@/lib/opportunity-finder/parser";
 import type { CanonicalOpportunityRow } from "@/lib/opportunity-finder/types";
 
 const temporaryPaths: string[] = [];
@@ -30,6 +34,16 @@ async function syntheticCsv(rows: unknown[][]) {
     `"${String(value ?? "").replace(/"/g, "\"\"")}"`
   ).join(",")).join("\r\n");
   await fs.promises.writeFile(filePath, csv, "utf8");
+  return filePath;
+}
+
+async function syntheticSheetJsWorkbook(sheetName: string, rows: unknown[][]) {
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "opportunity-sheetjs-test-"));
+  temporaryPaths.push(directory);
+  const filePath = path.join(directory, "synthetic-sheetjs.xlsx");
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), sheetName);
+  XLSX.writeFile(workbook, filePath);
   return filePath;
 }
 
@@ -106,5 +120,36 @@ describe("streaming opportunity workbook parser", () => {
       onBatch: async (batch) => rows.push(...batch)
     });
     expect(rows).toHaveLength(0);
+  });
+
+  it("profiles and parses XLSX files produced by a non-ExcelJS writer", async () => {
+    const filePath = await syntheticSheetJsWorkbook("Stock On Hand", [
+      ["MPN", "MFG", "STOCK QTY", "UNIT COST"],
+      ["0007-QA-01", "Luminara Circuits", 25, 1.25]
+    ]);
+    const profile = await profileOpportunityWorkbook(filePath, "inventory.xlsx");
+    expect(profile).toMatchObject({
+      detectedType: "stock",
+      sheetCount: 1,
+      rowCount: 2
+    });
+
+    const rows: CanonicalOpportunityRow[] = [];
+    const metrics = await parseOpportunityWorkbook({
+      filePath,
+      fileName: "inventory.xlsx",
+      fileId: "file-b",
+      jobId: "job",
+      side: "B",
+      role: "stock",
+      onBatch: async (batch) => rows.push(...batch)
+    });
+    expect(metrics.canonicalRows).toBe(1);
+    expect(rows[0]).toMatchObject({
+      displayMpn: "0007-QA-01",
+      normalizedMpn: "0007-QA-01",
+      availableQty: 25,
+      manufacturer: "Luminara Circuits"
+    });
   });
 });
