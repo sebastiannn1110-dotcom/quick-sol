@@ -138,6 +138,39 @@ describe("AIAssistantWidget streaming experience", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("continues with a stateless streamed answer when conversation memory is unavailable", async () => {
+    let streamedRequest: Record<string, unknown> | null = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/ai/conversations") {
+        return jsonResponse({ conversations: [], persistenceAvailable: false });
+      }
+      if (url === "/api/ai/assistant/stream") {
+        streamedRequest = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return streamResponse();
+      }
+      return jsonResponse({});
+    });
+
+    renderWidget();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir asistente IA" }));
+    fireEvent.change(screen.getByLabelText("Mensaje para el asistente de IA"), {
+      target: { value: "Stateless synthetic question" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar mensaje" }));
+
+    expect(await screen.findByText("Synthetic stock answer")).toBeTruthy();
+    expect(streamedRequest).toEqual(expect.objectContaining({
+      message: "Stateless synthetic question",
+      conversationId: null
+    }));
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/ai/conversations",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(document.body.textContent).not.toContain("No se pudo conectar");
+  });
+
   it("aborts an in-flight request from the cancel button without showing a connection error", async () => {
     let observedSignal: AbortSignal | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {

@@ -104,6 +104,8 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
   const dialogRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const conversationMemoryStatusRef = useRef<"unknown" | "available" | "unavailable">("unknown");
+  const conversationAvailabilityRequestRef = useRef<Promise<boolean> | null>(null);
 
   const ux = useMemo(() => {
     if (language === "en") {
@@ -169,15 +171,39 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
     ? ux[progressStage as keyof typeof ux] ?? progressStage
     : null;
 
-  const loadConversationList = useCallback(async () => {
-    try {
-      const response = await fetch("/api/ai/conversations", { cache: "no-store" });
-      if (!response.ok) return;
-      const payload = (await response.json()) as { conversations?: ConversationSummary[] };
-      setConversations(payload.conversations ?? []);
-    } catch {
-      // History is optional; the active assistant remains available.
+  const loadConversationList = useCallback(() => {
+    if (conversationAvailabilityRequestRef.current) {
+      return conversationAvailabilityRequestRef.current;
     }
+
+    const request = (async () => {
+      try {
+        const response = await fetch("/api/ai/conversations", { cache: "no-store" });
+        if (!response.ok) throw new Error("conversation_list_unavailable");
+        const payload = (await response.json()) as {
+          conversations?: ConversationSummary[];
+          persistenceAvailable?: boolean;
+        };
+        const available = payload.persistenceAvailable !== false;
+        conversationMemoryStatusRef.current = available ? "available" : "unavailable";
+        setConversations(available ? (payload.conversations ?? []) : []);
+        if (!available) setHistoryOpen(false);
+        return available;
+      } catch {
+        conversationMemoryStatusRef.current = "unavailable";
+        setConversations([]);
+        setHistoryOpen(false);
+        return false;
+      }
+    })();
+
+    conversationAvailabilityRequestRef.current = request;
+    void request.finally(() => {
+      if (conversationAvailabilityRequestRef.current === request) {
+        conversationAvailabilityRequestRef.current = null;
+      }
+    });
+    return request;
   }, []);
 
   useEffect(() => {
@@ -235,7 +261,21 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
   }
 
   async function ensureConversation(title: string, signal?: AbortSignal) {
-    return activeConversationId ?? createConversation(title, signal);
+    if (activeConversationId) return activeConversationId;
+    const available = conversationMemoryStatusRef.current === "available"
+      ? true
+      : conversationMemoryStatusRef.current === "unavailable"
+        ? false
+        : await loadConversationList();
+    if (!available) return null;
+    try {
+      return await createConversation(title, signal);
+    } catch {
+      conversationMemoryStatusRef.current = "unavailable";
+      setConversations([]);
+      setHistoryOpen(false);
+      return null;
+    }
   }
 
   async function loadConversation(conversationId: string) {
@@ -306,6 +346,7 @@ export default function AIAssistantWidget({ profile }: { profile: Profile | null
 
     try {
       const conversationId = await ensureConversation(payload.transcript || t("assistant.title"));
+      if (!conversationId) return;
       if (payload.transcript) {
         await appendStoredMessage(conversationId, {
           role: "user",

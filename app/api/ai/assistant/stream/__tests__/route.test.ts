@@ -126,6 +126,26 @@ describe("POST /api/ai/assistant/stream", () => {
     );
   });
 
+  it("answers without loading or persisting memory when no conversation is supplied", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(
+      request({
+        message: "Show the stateless synthetic summary",
+        language: "en"
+      })
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('event: completed');
+    expect(body).toContain('"answer":"Synthetic answer [redacted-id] [internal-path]"');
+    expect(loadOwnedConversation).not.toHaveBeenCalled();
+    expect(appendOwnedMessage).not.toHaveBeenCalled();
+    expect(answerAssistantQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({ history: [] })
+    );
+  });
+
   it("rejects an oversized message before invoking memory or the assistant", async () => {
     const { POST } = await import("../route");
     const response = await POST(

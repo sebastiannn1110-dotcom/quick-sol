@@ -40,6 +40,21 @@ describe("/api/ai/conversations ownership contract", () => {
     expect(listOwnedConversations).toHaveBeenCalledWith(supabase, ownerId, 30);
   });
 
+  it("degrades to an empty optional history when the memory migration is missing", async () => {
+    const { ConversationMemoryError } = await import("@/lib/ai/conversation-memory");
+    listOwnedConversations.mockRejectedValue(
+      new ConversationMemoryError("Synthetic migration missing", "migration_required")
+    );
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/ai/conversations"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      conversations: [],
+      persistenceAvailable: false
+    });
+  });
+
   it("rejects attempts to supply a different user id in the create body", async () => {
     const { POST } = await import("../route");
     const response = await POST(

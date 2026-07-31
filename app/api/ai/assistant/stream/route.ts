@@ -3,7 +3,8 @@ import { answerAssistantQuestion } from "@/lib/ai/assistantCore";
 import {
   appendOwnedMessage,
   loadOwnedConversation,
-  type AiMessageSourceType
+  type AiMessageSourceType,
+  type SafeHistoryMessage
 } from "@/lib/ai/conversation-memory";
 import { getAuthContext } from "@/lib/auth/context";
 import { detectAssistantLanguage } from "@/lib/ai/language-detection";
@@ -100,12 +101,11 @@ function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal) {
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
-  if (!context.supabase) return privateJson({ error: "Assistant history is unavailable." }, 503);
 
   const parsed = await parseAssistantRequest(request);
   if (!parsed.ok) return privateJson({ error: "Invalid assistant request.", code: parsed.code }, parsed.status);
-  if (!parsed.data.conversationId) {
-    return privateJson({ error: "A conversation is required.", code: "INVALID_PARAMETERS" }, 422);
+  if (parsed.data.conversationId && !context.supabase) {
+    return privateJson({ error: "Assistant history is unavailable." }, 503);
   }
 
   const rate = await checkPersistentRateLimit({
@@ -148,19 +148,22 @@ export async function POST(request: Request) {
 
       try {
         progress("validating");
-        const { safeHistory } = await raceWithAbort(
-          loadOwnedConversation(context.supabase!, context.profile.id, conversationId),
-          localAbort.signal
-        );
-        await raceWithAbort(
-          appendOwnedMessage(context.supabase!, context.profile.id, conversationId, {
-            role: "user",
-            content: message,
-            language,
-            sourceType: "user"
-          }),
-          localAbort.signal
-        );
+        let safeHistory: SafeHistoryMessage[] = [];
+        if (conversationId) {
+          safeHistory = (await raceWithAbort(
+            loadOwnedConversation(context.supabase!, context.profile.id, conversationId),
+            localAbort.signal
+          )).safeHistory;
+          await raceWithAbort(
+            appendOwnedMessage(context.supabase!, context.profile.id, conversationId, {
+              role: "user",
+              content: message,
+              language,
+              sourceType: "user"
+            }),
+            localAbort.signal
+          );
+        }
 
         progress("searching");
         progress("processing");
@@ -180,16 +183,18 @@ export async function POST(request: Request) {
         const metadata = sourceMetadata(result.sourceType, result.generatedWithAi);
         const answerText = safePublicText(result.answerText);
         const speechText = safePublicText(result.speechText);
-        await raceWithAbort(
-          appendOwnedMessage(context.supabase!, context.profile.id, conversationId, {
-            role: "assistant",
-            content: answerText,
-            language,
-            intent: result.intent,
-            sourceType: metadata.sourceType as AiMessageSourceType
-          }),
-          localAbort.signal
-        );
+        if (conversationId) {
+          await raceWithAbort(
+            appendOwnedMessage(context.supabase!, context.profile.id, conversationId, {
+              role: "assistant",
+              content: answerText,
+              language,
+              intent: result.intent,
+              sourceType: metadata.sourceType as AiMessageSourceType
+            }),
+            localAbort.signal
+          );
+        }
 
         progress("completed");
         send("completed", {

@@ -4,6 +4,7 @@ import { getAuthContext } from "@/lib/auth/context";
 import {
   AI_CONVERSATION_RETENTION_DAYS,
   AI_CONVERSATION_TITLE_MAX_CHARACTERS,
+  ConversationMemoryError,
   createOwnedConversation,
   listOwnedConversations
 } from "@/lib/ai/conversation-memory";
@@ -28,15 +29,20 @@ const createConversationSchema = z
 export async function GET(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
-  if (!context.supabase) return privateJson({ error: "AI conversation memory is unavailable." }, { status: 503 });
+  if (!context.supabase) {
+    return privateJson({ conversations: [], persistenceAvailable: false });
+  }
 
   const url = new URL(request.url);
   const requestedLimit = Number(url.searchParams.get("limit") ?? "30");
   const limit = Number.isInteger(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 50)) : 30;
   try {
     const conversations = await listOwnedConversations(context.supabase, context.profile.id, limit);
-    return privateJson({ conversations });
+    return privateJson({ conversations, persistenceAvailable: true });
   } catch (error) {
+    if (error instanceof ConversationMemoryError && error.code === "migration_required") {
+      return privateJson({ conversations: [], persistenceAvailable: false });
+    }
     return conversationMemoryErrorResponse(error);
   }
 }
