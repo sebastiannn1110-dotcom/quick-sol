@@ -1,48 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
-import AnalyticsCards from "@/components/AnalyticsCards";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n";
-import type { PlatformAnalyticsSummary } from "@/lib/types";
 
 const ADMIN_LINKS = [
-  { href: "/admin/clients", label: "clients.title", detail: "clients.description" },
+  { href: "/admin/clients", label: "clients.title", detail: "admin.links.clientsDetail" },
   { href: "/admin/users", label: "admin.links.users", detail: "admin.links.usersDetail" },
   { href: "/admin/uploads", label: "admin.links.uploads", detail: "admin.links.uploadsDetail" },
   { href: "/admin/stock-needs", label: "admin.links.stockNeeds", detail: "admin.links.stockNeedsDetail" },
   { href: "/admin/opportunities", label: "admin.links.opportunities", detail: "admin.links.opportunitiesDetail" },
   { href: "/admin/records", label: "admin.links.records", detail: "admin.links.recordsDetail" },
   { href: "/admin/search", label: "admin.links.search", detail: "admin.links.searchDetail" },
-  { href: "/admin/analytics", label: "admin.links.analytics", detail: "admin.links.analyticsDetail" },
-  { href: "/admin/traffic", label: "admin.links.traffic", detail: "admin.links.trafficDetail" },
-  { href: "/admin/import-errors", label: "admin.links.importErrors", detail: "admin.links.importErrorsDetail" },
-  { href: "/admin/logs", label: "admin.links.logs", detail: "admin.links.logsDetail" },
-  { href: "/admin/performance", label: "admin.links.performance", detail: "admin.links.performanceDetail" },
-  { href: "/admin/audit-logs", label: "admin.links.audit", detail: "admin.links.auditDetail" },
-  { href: "/admin/security", label: "admin.links.security", detail: "admin.links.securityDetail" },
   { href: "/admin/chat-audit", label: "admin.links.chatAudit", detail: "admin.links.chatAuditDetail" },
-  { href: "/admin/email-center", label: "admin.links.emailCenter", detail: "admin.links.emailCenterDetail" },
-  { href: "/admin/email-alerts", label: "admin.links.emailAlerts", detail: "admin.links.emailAlertsDetail" },
-  { href: "/categories", label: "admin.links.categories", detail: "admin.links.categoriesDetail" }
+  { href: "/admin/email-center", label: "admin.links.emailCenter", detail: "admin.links.emailCenterDetail" }
 ] satisfies Array<{ href: string; label: TranslationKey; detail: TranslationKey }>;
 
 export default function AdminPage() {
   const { t } = useLanguage();
-  const [analytics, setAnalytics] = useState<PlatformAnalyticsSummary | null>(null);
-
-  useEffect(() => {
-    async function loadAnalytics() {
-      const response = await fetch("/api/admin/analytics", { cache: "no-store" });
-      if (response.ok) {
-        const payload = (await response.json()) as { analytics: PlatformAnalyticsSummary };
-        setAnalytics(payload.analytics);
-      }
-    }
-    loadAnalytics();
-  }, []);
 
   return (
     <AdminGuard>
@@ -59,7 +35,6 @@ export default function AdminPage() {
             </Link>
           ))}
         </div>
-        {analytics ? <AnalyticsCards analytics={analytics} /> : null}
       </div>
     </AdminGuard>
   );

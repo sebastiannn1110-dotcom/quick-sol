@@ -10,7 +10,6 @@ import {
   MessageCircle,
   UserCircle,
   Search,
-  Settings,
   ShieldCheck,
   Upload,
   Users
@@ -38,7 +37,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/upload", labelKey: "nav.uploads", icon: Upload, roles: ["admin", "manager"] },
   { href: "/employees", labelKey: "nav.users", icon: Users, roles: ["admin", "manager"] },
   { href: "/records", labelKey: "nav.records", icon: Database, roles: ["admin", "manager"] },
-  { href: "/settings", labelKey: "nav.settings", icon: Settings, roles: ["admin", "manager"] },
   { href: "/admin/clients", labelKey: "nav.clientsAdmin", icon: Building2, roles: ["admin", "manager"] },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
 ];

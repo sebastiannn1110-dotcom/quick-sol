@@ -49,6 +49,11 @@ type AssignmentRow = {
   } | null;
 };
 
+type ClientPrivateImageRow = {
+  client_id: string;
+  identification_image_path: string | null;
+};
+
 type ClientListOptions = {
   clientId?: string | null;
   includeArchived?: boolean;
@@ -85,6 +90,29 @@ async function loadAssignments(supabase: SupabaseClient, clientIds: string[]) {
     .order("assigned_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as unknown as AssignmentRow[];
+}
+
+async function loadAuthorizedIdentificationImagePaths(
+  supabase: SupabaseClient,
+  clientIds: string[],
+  canViewPrivateIdentification: boolean
+) {
+  if (!canViewPrivateIdentification || !clientIds.length) {
+    return new Map<string, string | null>();
+  }
+
+  const { data, error } = await supabase
+    .from("client_private_details")
+    .select("client_id,identification_image_path")
+    .in("client_id", clientIds);
+  if (error) throw error;
+
+  return new Map(
+    ((data ?? []) as ClientPrivateImageRow[]).map((row) => [
+      row.client_id,
+      row.identification_image_path
+    ])
+  );
 }
 
 function assignmentsForClient(assignments: AssignmentRow[], clientId: string) {
@@ -127,6 +155,11 @@ export async function listClientSummaries(
       })
     : { records: [], profiles: [], importJobs: [], uploadIds: [] };
   const capabilities = clientCapabilities(role);
+  const identificationImagePaths = await loadAuthorizedIdentificationImagePaths(
+    supabase,
+    clients.map((client) => client.id),
+    capabilities.canViewPrivateIdentification
+  );
 
   return Promise.all(clients.map(async (client) => {
     const clientAssignments = assignmentsForClient(assignments, client.id);
@@ -143,6 +176,10 @@ export async function listClientSummaries(
     const mpns = new Set(records
       .map((record) => normalizePartNumberForMatch(record.mpn ?? record.mpn_quoted ?? null))
       .filter(Boolean));
+    const [logoUrl, authorizedIdentificationImageUrl] = await Promise.all([
+      signedAssetUrl(supabase, client.logo_path),
+      signedAssetUrl(supabase, identificationImagePaths.get(client.id) ?? null)
+    ]);
 
     return {
       id: client.id,
@@ -151,7 +188,8 @@ export async function listClientSummaries(
       industry: client.industry,
       region: client.region,
       website: client.website,
-      logoUrl: await signedAssetUrl(supabase, client.logo_path),
+      logoUrl,
+      authorizedIdentificationImageUrl,
       status: client.status,
       fileCount: clientAssignments.length,
       mpnCount: mpns.size,
@@ -175,11 +213,11 @@ export async function getClientDetail(
   if (clientCapabilities(role).canViewPrivateIdentification) {
     const { data } = await supabase
       .from("client_private_details")
-      .select("identification_image_path,internal_notes")
+      .select("internal_notes")
       .eq("client_id", clientId)
       .maybeSingle();
     privateDetails = {
-      identificationImageUrl: await signedAssetUrl(supabase, data?.identification_image_path ?? null),
+      identificationImageUrl: client.authorizedIdentificationImageUrl,
       internalNotes: data?.internal_notes ?? null
     };
   }

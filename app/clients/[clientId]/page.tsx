@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Building2, Pencil } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import ClientFiles from "@/components/clients/ClientFiles";
+import ClientImage from "@/components/clients/ClientImage";
 import ClientOpportunities from "@/components/clients/ClientOpportunities";
 import EmployeeGuard from "@/components/EmployeeGuard";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -57,7 +58,6 @@ export default function ClientDetailPage() {
     [t("clients.partialSales"), client.partialSaleCount],
     [t("clients.sourcingNeeded"), client.sourcingNeededCount],
     [t("clients.stockWithoutDemand"), client.stockWithoutDemandCount],
-    [t("opportunities.metrics.highConfidence"), `${client.highConfidenceCount}${client.highConfidenceTruncated ? "+" : ""}`],
     [t("clients.files"), client.fileCount],
     [t("clients.mpns"), client.mpnCount]
   ];
@@ -70,12 +70,12 @@ export default function ClientDetailPage() {
           {t("clientDetail.back")}
         </Link>
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center">
-          <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white">
-            {client.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={client.logoUrl} alt="" className="h-full w-full object-contain p-2" />
-            ) : <Building2 className="h-12 w-12 text-slate-300" />}
-          </div>
+          <ClientImage
+            logoUrl={client.logoUrl}
+            authorizedIdentificationImageUrl={client.authorizedIdentificationImageUrl}
+            alt={client.name}
+            className="flex h-24 w-24 shrink-0 items-center justify-center rounded-md border border-slate-200"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="break-words text-2xl font-semibold text-slate-950">{client.name}</h1>

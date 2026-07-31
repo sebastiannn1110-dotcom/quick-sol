@@ -11,6 +11,7 @@ export type AccountClient = {
   region: string | null;
   website: string | null;
   logoUrl: string | null;
+  authorizedIdentificationImageUrl: string | null;
   status: ClientStatus;
   fileCount: number;
   mpnCount: number;

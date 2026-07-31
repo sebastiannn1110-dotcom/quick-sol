@@ -25,7 +25,7 @@ describe("Phase 7.1 shared client and opportunity UI", () => {
     expect(source("components/opportunities/OpportunitiesDashboard.tsx")).toContain("metrics.highConfidence");
     expect(source("components/opportunities/OpportunitiesDashboard.tsx")).toContain("confidenceTruncated");
     expect(source("components/opportunities/OpportunitiesDashboard.tsx")).toContain('params.set("confidence"');
-    expect(source("components/clients/ClientCard.tsx")).toContain("highConfidenceCount");
+    expect(source("components/clients/ClientCard.tsx")).not.toContain("highConfidenceCount");
   });
 
   it("has a mobile card view and avoids a global horizontal table overflow", () => {

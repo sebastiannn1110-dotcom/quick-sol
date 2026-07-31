@@ -49,7 +49,6 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
         <div>
           <p className="text-sm font-medium text-brand-700">{t("clients.eyebrow")}</p>
           <h1 className="text-2xl font-semibold text-slate-950">{t("clients.title")}</h1>
-          <p className="text-sm text-slate-500">{t("clients.description")}</p>
         </div>
         {canManage ? (
           <Link href="/admin/clients/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
@@ -67,13 +66,12 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
               {t("clients.viewAllOpportunities")}
             </Link>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
               [t("opportunities.metrics.total"), opportunities.totals.totalOpportunities],
               [t("opportunities.metrics.immediate"), opportunities.totals.immediateSale],
               [t("opportunities.metrics.partial"), opportunities.totals.partialSale],
-              [t("opportunities.metrics.sourcing"), opportunities.totals.sourcingNeeded],
-              [t("opportunities.metrics.highConfidence"), `${opportunities.totals.highConfidence}${opportunities.meta.confidenceTruncated ? "+" : ""}`]
+              [t("opportunities.metrics.sourcing"), opportunities.totals.sourcingNeeded]
             ].map(([label, value]) => (
               <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
