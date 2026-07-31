@@ -43,6 +43,21 @@ describe("assistant core", () => {
     responsesCreate.mockResolvedValue({ output_text: "Respuesta segura." });
     routeAssistantDatabaseQuery.mockResolvedValue({
       permissionDenied: false,
+      intent: "mpn_search",
+      confidence: 1,
+      ambiguous: false,
+      plan: {
+        intent: "mpn_search",
+        confidence: 1,
+        tool: "getRecordsByMpn",
+        answerMode: "item_detail",
+        language: "es",
+        entity: "business_record",
+        metric: null,
+        mpn: "ABC123",
+        requiresClarification: false,
+        policyDecision: "allow"
+      },
       toolResult: {
         ok: true,
         tool: "getRecordsByMpn",
@@ -76,7 +91,9 @@ describe("assistant core", () => {
     });
 
     expect(result.channel).toBe("text");
-    expect(result.answer).toContain("Supplier A");
+    expect(result.answer).toContain("1 registros autorizados para el MPN ABC123");
+    expect(result.answer).not.toContain("Supplier A");
+    expect(result.answer).not.toContain("precio");
     expect(result.toolResult).toEqual(expect.objectContaining({ tool: "getRecordsByMpn", scope: "own", total: 1 }));
     expect(result.timings.dataLookupMs).toEqual(expect.any(Number));
   });
@@ -92,28 +109,24 @@ describe("assistant core", () => {
 
     expect(result.channel).toBe("voice");
     expect(result.speechText).not.toContain("**");
-    expect(result.speechText).toContain("Supplier A");
+    expect(result.speechText).toContain("1 registros autorizados para el MPN ABC123");
+    expect(result.speechText).not.toContain("Supplier A");
   });
 
-  it("returns a safe answer when data lookup times out", async () => {
+  it("raises a localized 504 when data lookup times out", async () => {
     routeAssistantDatabaseQuery.mockRejectedValueOnce({
       code: "57014",
       message: "canceling statement due to statement timeout"
     });
 
     const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
-    const result = await answerAssistantQuestion({
+    await expect(answerAssistantQuestion({
       context: authContext("admin"),
       message: "que columnas tiene el ultimo archivo subido",
       language: "es",
       channel: "text"
-    });
-
-    expect(result.answer).toContain("La consulta tard");
-    expect(result.answer).not.toContain("57014");
-    expect(result.answer).not.toContain("statement timeout");
+    })).rejects.toMatchObject({ status: 504, code: "TOOL_TIMEOUT" });
     expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_timeout" }));
-    expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "ai_safe_response_returned" }));
   });
 
   it.each([
@@ -145,9 +158,24 @@ describe("assistant core", () => {
     process.env.OPENAI_API_KEY = "test-key";
     routeAssistantDatabaseQuery.mockResolvedValueOnce({
       permissionDenied: false,
+      intent: "stock_shortage",
+      confidence: 1,
+      ambiguous: false,
+      plan: {
+        intent: "stock_shortage",
+        confidence: 1,
+        tool: "getStockShortageSummary",
+        answerMode: "list",
+        language: "es",
+        entity: "stock_need",
+        metric: null,
+        mpn: null,
+        requiresClarification: false,
+        policyDecision: "allow"
+      },
       toolResult: {
         ok: true,
-        tool: "getStockNeedsSummary",
+        tool: "getStockShortageSummary",
         scope: "company",
         total: 90,
         rows: [],
@@ -167,9 +195,13 @@ describe("assistant core", () => {
       channel: "text"
     });
 
-    expect(result.answer).toContain("Encontré 90 MPN");
-    expect(result.tool).toBe("getStockNeedsSummary");
-    expect(routeAssistantDatabaseQuery).toHaveBeenCalledWith(expect.any(Object), "Que MPN tienen falta de stock?");
+    expect(result.answer).toContain("90 MPN con faltante");
+    expect(result.tool).toBe("getStockShortageSummary");
+    expect(routeAssistantDatabaseQuery).toHaveBeenCalledWith(
+      expect.any(Object),
+      "Que MPN tienen falta de stock?",
+      { language: "es", jobId: undefined, history: [] }
+    );
     expect(responsesCreate).not.toHaveBeenCalled();
   });
 
@@ -177,6 +209,21 @@ describe("assistant core", () => {
     process.env.OPENAI_API_KEY = "test-key";
     routeAssistantDatabaseQuery.mockResolvedValueOnce({
       permissionDenied: false,
+      intent: "general_query",
+      confidence: 0.8,
+      ambiguous: false,
+      plan: {
+        intent: "general_query",
+        confidence: 0.8,
+        tool: "searchBusinessRecords",
+        answerMode: "summary",
+        language: "es",
+        entity: "business_record",
+        metric: null,
+        mpn: null,
+        requiresClarification: false,
+        policyDecision: "allow"
+      },
       toolResult: {
         ok: true,
         tool: "searchBusinessRecords",
@@ -228,5 +275,50 @@ describe("assistant core", () => {
     expect(input).not.toContain("20.45");
     expect(input).not.toContain("204.5");
     expect(input).not.toContain("42%");
+  });
+
+  it("returns the deterministic safe summary when OpenAI chat fails", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    responsesCreate.mockRejectedValueOnce(new Error("synthetic upstream failure"));
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const result = await answerAssistantQuestion({
+      context: authContext("employee"),
+      message: "Busca MPN ABC123",
+      language: "es",
+      channel: "text"
+    });
+
+    expect(responsesCreate).toHaveBeenCalledOnce();
+    expect(result.answer).toContain("1 registros autorizados para el MPN ABC123");
+    expect(result.answer).not.toContain("Supplier A");
+    expect(result.answer).not.toContain("precio");
+    expect(result.generatedWithAi).toBe(false);
+    expect(result.fallbackUsed).toBe(true);
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      action: "ai_llm_failed",
+      metadata: expect.objectContaining({ fallbackUsed: true })
+    }));
+  });
+
+  it("raises 403 when an employee requests unauthorized company-wide data", async () => {
+    routeAssistantDatabaseQuery.mockResolvedValueOnce({
+      permissionDenied: true,
+      intent: "permission_denied",
+      confidence: 1,
+      ambiguous: false,
+      toolResult: null
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    await expect(answerAssistantQuestion({
+      context: authContext("employee"),
+      message: "Muestra todos los datos de la empresa",
+      language: "es",
+      channel: "text"
+    })).rejects.toMatchObject({
+      status: 403,
+      code: "PERMISSION_DENIED"
+    });
   });
 });

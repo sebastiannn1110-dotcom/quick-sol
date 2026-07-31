@@ -28,8 +28,8 @@ describe("archived business record filters", () => {
   });
 
   it("keeps AI database tools active-only", () => {
-    expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 7);
-    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 1);
+    expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 6);
+    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 2);
     expectActiveBusinessRecordReads("lib/upload/structure-profile.ts", 1);
   });
 
@@ -41,7 +41,7 @@ describe("archived business record filters", () => {
   it("keeps admin and employee record views active-only", () => {
     expectActiveBusinessRecordReads("app/api/admin/records/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/admin/search/route.ts", 1);
-    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 1);
+    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 2);
     expect(source("app/api/admin/opportunities/route.ts")).toContain("loadSalesOpportunities");
     expect(source("lib/opportunities/service.ts")).toContain("loadStockNeedsInput");
     expect(businessRecordReadSegments("app/api/admin/opportunities/route.ts")).toHaveLength(0);

@@ -1,0 +1,150 @@
+{
+  "baselineScore": 58,
+  "finalScore": 90,
+  "absoluteImprovement": 32,
+  "relativeImprovementPercent": 55.17,
+  "dimensions": [
+    {
+      "name": "Seguridad y privacidad",
+      "before": 13,
+      "after": 19,
+      "max": 20,
+      "evidence": [
+        "Strict per-tool provider allowlists and an exact mocked OpenAI payload snapshot close the raw/internal/identity/finance disclosure boundary.",
+        "Hashed allowlisted logs, an escaped untrusted-data prompt boundary, server-controlled tools and read-only authenticated clients are covered by tests."
+      ],
+      "remainingGaps": [
+        "Conversation RLS and retention have not been applied or tested remotely.",
+        "Remote provider retention, environment variables and stdout retention are not verified."
+      ]
+    },
+    {
+      "name": "Integración con Opportunity Finder",
+      "before": 4,
+      "after": 13,
+      "max": 15,
+      "evidence": [
+        "The AI now reads owner-scoped persisted V2 jobs/results with status, pipeline, pagination and safe-filter enforcement without rerunning the matcher.",
+        "Set 01 AI, CSV and XLSX code paths agree in ES/EN/ZH on 11/9/5/8/2/2/1/1/1 and preserve MPN identity and allocation order."
+      ],
+      "remainingGaps": [
+        "Artifact-tool inspect/render was blocked by missing runtime sandboxPolicy.",
+        "Remote RLS and deployed UI/export parity are not verified."
+      ]
+    },
+    {
+      "name": "Exactitud de intención",
+      "before": 7,
+      "after": 10,
+      "max": 10,
+      "evidence": [
+        "A typed deterministic ES/EN/ZH catalog now owns aliases, priority, parameters, permission, server tool, confidence and clarification.",
+        "Fuzzy phrasing, ambiguity, help, Opportunity Finder concepts, hostile tool requests and text-preserving MPN extraction are regression-tested."
+      ],
+      "remainingGaps": []
+    },
+    {
+      "name": "Multidioma",
+      "before": 6,
+      "after": 9,
+      "max": 10,
+      "evidence": [
+        "Deterministic assistant, error, timeout, rate-limit, Opportunity Finder and voice states exist in ES, EN and ZH.",
+        "Question language overrides the UI fallback and equivalent Set 01 intents select the same tool and counts."
+      ],
+      "remainingGaps": [
+        "Native-speaker acceptance and browser visual rendering, including Chinese fonts, are not verified."
+      ]
+    },
+    {
+      "name": "Robustez de API",
+      "before": 7,
+      "after": 9,
+      "max": 10,
+      "evidence": [
+        "Strict schemas and mocked route tests cover the required 400/401/403/404/413/422/429/502/503/504 classes.",
+        "No-store, trace redaction, bounded timeouts, cancellation classification and the retry/fallback policy are tested."
+      ],
+      "remainingGaps": [
+        "Post-header SSE failures use a terminal event instead of a new HTTP status.",
+        "Production proxy limits and connection cancellation are not verified."
+      ]
+    },
+    {
+      "name": "Memoria, streaming y experiencia",
+      "before": 3,
+      "after": 9,
+      "max": 10,
+      "evidence": [
+        "Owner-only persistent-memory contracts, an eight-message safe window, deletion and isolation are implemented with an additive migration.",
+        "Ordered progress, cancellation, history, copy, new/delete conversation, evidence/source labels, dialog semantics and focus trapping are covered by route and RTL tests."
+      ],
+      "remainingGaps": [
+        "The migration and RLS policies are not applied remotely.",
+        "Browser visual and physical iPad behavior are not verified."
+      ]
+    },
+    {
+      "name": "Voz",
+      "before": 4,
+      "after": 4,
+      "max": 5,
+      "evidence": [
+        "Voice now has visible provider consent, early validation, timeouts, cancellation, no-store, sanitized TTS input and safe text fallback.",
+        "Mocked provider, route, playback, cancellation and responsive tests cover the required failure and success cases."
+      ],
+      "remainingGaps": [
+        "Real OpenAI and ElevenLabs behavior and retention are not verified.",
+        "Physical Safari, iPad and iPhone behavior is not certified."
+      ]
+    },
+    {
+      "name": "Rendimiento",
+      "before": 5,
+      "after": 7,
+      "max": 8,
+      "evidence": [
+        "Opportunity Finder uses persisted paginated results, and stock-needs uses one bounded safe-field query without raw payloads or per-upload N+1.",
+        "Explicit limits and a mocked deterministic P95 below two seconds are contract-tested."
+      ],
+      "remainingGaps": [
+        "Production latency, query plans, concurrency and memory are not measured."
+      ]
+    },
+    {
+      "name": "Observabilidad",
+      "before": 3,
+      "after": 4,
+      "max": 5,
+      "evidence": [
+        "Sanitized metrics now include success, failure, timeout, rate limit, dimensions, tokens, fallback, language and channel.",
+        "Successful info events persist, warn failures are counted and an additive bounded retention function is tested without scheduling it."
+      ],
+      "remainingGaps": [
+        "Retention migration and scheduling are not applied remotely.",
+        "Production dashboard, log sink retention and provider token reporting are not verified."
+      ]
+    },
+    {
+      "name": "Pruebas y QA",
+      "before": 6,
+      "after": 6,
+      "max": 7,
+      "evidence": [
+        "The final mocked suite passed 90 files and 416 tests versus 310 at baseline, adding 106 tests.",
+        "All requested local categories plus typecheck, lint, production build and Set 01 code-level parity passed."
+      ],
+      "remainingGaps": [
+        "Artifact-tool inspect/render and browser visual QA were blocked by missing runtime sandboxPolicy.",
+        "Remote RLS, live providers, physical devices and production load remain unverified."
+      ]
+    }
+  ],
+  "testsBefore": 310,
+  "testsAfter": 416,
+  "newTests": 106,
+  "remainingP0": 0,
+  "remainingP1": 2,
+  "remainingP2": 5,
+  "productionReady": false
+}

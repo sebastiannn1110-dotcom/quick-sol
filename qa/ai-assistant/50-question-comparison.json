@@ -1,0 +1,119 @@
+{
+  "before": {
+    "passed": 27,
+    "failed": 23,
+    "scorePercent": 54,
+    "unauthorizedRoutes": 3
+  },
+  "after": {
+    "passed": 50,
+    "failed": 0,
+    "scorePercent": 100,
+    "unauthorizedRoutes": 0
+  },
+  "improvement": {
+    "absoluteQuestions": 23,
+    "percentagePoints": 46
+  },
+  "categories": [
+    {
+      "category": "Ayuda y claridad",
+      "before": {
+        "passed": 2,
+        "total": 6
+      },
+      "after": {
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Stock y MPN",
+      "before": {
+        "passed": 5,
+        "total": 10
+      },
+      "after": {
+        "passed": 10,
+        "failed": 0,
+        "total": 10,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Opportunity Finder",
+      "before": {
+        "passed": 10,
+        "total": 14
+      },
+      "after": {
+        "passed": 14,
+        "failed": 0,
+        "total": 14,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Cargas y dashboard",
+      "before": {
+        "passed": 4,
+        "total": 6
+      },
+      "after": {
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Multidioma",
+      "before": {
+        "passed": 2,
+        "total": 4
+      },
+      "after": {
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Seguridad y privacidad",
+      "before": {
+        "passed": 3,
+        "total": 6
+      },
+      "after": {
+        "passed": 6,
+        "failed": 0,
+        "total": 6,
+        "scorePercent": 100
+      }
+    },
+    {
+      "category": "Memoria y ambigüedad",
+      "before": {
+        "passed": 1,
+        "total": 4
+      },
+      "after": {
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "scorePercent": 100
+      }
+    }
+  ],
+  "remainingFailures": [],
+  "security": {
+    "sensitiveLeaks": 0,
+    "hallucinations": 0,
+    "wrongLanguage": 0,
+    "unauthorizedAccess": 0,
+    "databaseCallsDuringDenials": 0
+  }
+}

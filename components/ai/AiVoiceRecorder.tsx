@@ -43,6 +43,7 @@ interface AiVoiceRecorderProps {
   onVoiceResult: (result: AiVoiceResult) => void;
   onErrorMessage: (message: string) => void;
   onPlayAudio?: (audioBase64: string, audioMimeType?: string) => Promise<void>;
+  cancelSignal?: AbortSignal;
 }
 
 const AUDIO_MIME_TYPES = [
@@ -162,7 +163,8 @@ export default function AiVoiceRecorder({
   onBusyChange,
   onVoiceResult,
   onErrorMessage,
-  onPlayAudio
+  onPlayAudio,
+  cancelSignal
 }: AiVoiceRecorderProps) {
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -177,6 +179,7 @@ export default function AiVoiceRecorder({
   const elapsedSecondsRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const progressTimersRef = useRef<number[]>([]);
+  const requestAbortRef = useRef<AbortController | null>(null);
 
   const busy = BUSY_STATES.has(recorderState);
 
@@ -212,6 +215,7 @@ export default function AiVoiceRecorder({
 
   useEffect(() => {
     return () => {
+      requestAbortRef.current?.abort();
       if (recorderRef.current && recorderRef.current.state !== "inactive") {
         recorderRef.current.stop();
       }
@@ -219,6 +223,28 @@ export default function AiVoiceRecorder({
       progressTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
+
+  useEffect(() => {
+    if (!cancelSignal) return;
+    const cancel = () => {
+      requestAbortRef.current?.abort();
+      requestAbortRef.current = null;
+      progressTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      progressTimersRef.current = [];
+      if (recorderRef.current && recorderRef.current.state !== "inactive") {
+        recorderRef.current.onstop = null;
+        recorderRef.current.stop();
+      }
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      recorderRef.current = null;
+      chunksRef.current = [];
+      setRecorderState("idle");
+      setHumanError("");
+    };
+    cancelSignal.addEventListener("abort", cancel, { once: true });
+    return () => cancelSignal.removeEventListener("abort", cancel);
+  }, [cancelSignal]);
 
   const statusLabel = useMemo(() => {
     if (humanError) return humanError;
@@ -291,9 +317,12 @@ export default function AiVoiceRecorder({
     });
 
     try {
+      const requestController = new AbortController();
+      requestAbortRef.current = requestController;
       const request = fetch("/api/ai/voice/ask", {
         method: "POST",
-        body: formData
+        body: formData,
+        signal: requestController.signal
       });
       setRecorderState("transcribing");
       startPerceivedRealtimeStates();
@@ -330,6 +359,10 @@ export default function AiVoiceRecorder({
       setRecorderState("idle");
     } catch (error) {
       clearProgressTimers();
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setRecorderState("idle");
+        return;
+      }
       const errorMessage = t("assistant.connection");
       setRecorderState("error");
       setHumanError(errorMessage);
@@ -340,6 +373,8 @@ export default function AiVoiceRecorder({
         { error: error instanceof Error ? error.message : "unknown_error" },
         "error"
       );
+    } finally {
+      requestAbortRef.current = null;
     }
   }
 

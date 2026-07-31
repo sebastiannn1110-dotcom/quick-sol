@@ -104,7 +104,10 @@ export async function logEvent(event: LogEvent) {
     console.log(line);
   }
 
-  if (["warn", "error", "fatal", "security", "audit"].includes(normalized.level)) {
+  if (
+    ["warn", "error", "fatal", "security", "audit"].includes(normalized.level) ||
+    (normalized.module === "ai" && normalized.level === "info")
+  ) {
     await persistSystemLog(normalized);
   }
 

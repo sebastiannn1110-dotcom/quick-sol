@@ -25,6 +25,7 @@ describe("API sensitive field permission integration", () => {
   it("protects AI tool payloads and LLM input from sensitive fields", () => {
     expect(source("lib/ai/database-tools.ts")).toContain("redactSensitiveFieldsForRole");
     expect(source("lib/ai/database-tools.ts")).toContain("SENSITIVE_DATA_DENIED_MESSAGE");
-    expect(source("lib/ai/assistantCore.ts")).toContain("redactSensitiveFieldsForLlm");
+    expect(source("lib/ai/assistantCore.ts")).toContain("sanitizeToolResultForLlm");
+    expect(source("lib/ai/tool-contracts.ts")).toContain("safeToolData");
   });
 });

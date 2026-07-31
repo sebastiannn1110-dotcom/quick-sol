@@ -1,0 +1,342 @@
+{
+  "schemaVersion": 1,
+  "assessment": "baseline-before",
+  "baseCommit": "49c3dbf74a5818aef073107d7a6f940374afed91",
+  "totalScore": 58,
+  "maxTotalScore": 100,
+  "status": "partial",
+  "scoringMethod": "Evidence-based review of the pre-change repository. Each dimension is scored only for capabilities implemented in code and supported by existing tests; production-only behavior and external providers are not treated as verified.",
+  "dimensions": [
+    {
+      "name": "Seguridad y privacidad",
+      "score": 13,
+      "maxScore": 20,
+      "status": "partial-high-risk",
+      "evidence": [
+        "The assistant endpoint resolves the authenticated Supabase user and active profile on the server.",
+        "Commercial queries use the authenticated Supabase client and database RLS rather than a service-role bypass.",
+        "Sensitive price, cost, GP, margin, commission and PO requests are rejected before normal tool routing for every role.",
+        "The LLM receives a redacted copy of tool data and full tool rows are not returned to the browser.",
+        "Redaction is blacklist-oriented and does not reliably remove UUIDs, emails, original filenames, raw_value or arbitrary free-text fields.",
+        "The router logs up to 500 characters of the user question and a tool summary, creating a content-retention risk.",
+        "Business-record content is not explicitly delimited and treated as untrusted instructions in the system prompt."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/assistantCore.test.ts",
+        "lib/ai/__tests__/assistantCore-commercial-redaction.test.ts",
+        "lib/ai/__tests__/ai-query-router-sensitive.test.ts",
+        "lib/ai/__tests__/ai-permissions.test.ts",
+        "lib/auth/__tests__/context.test.ts"
+      ],
+      "risks": [
+        "raw_value and unrecognized properties may be transmitted to OpenAI.",
+        "UUIDs, emails and filenames may be present in the provider context despite prompt instructions not to reveal them.",
+        "Questions, MPNs or business text may be retained in process logs.",
+        "Prompt injection embedded in imported data has no explicit structural defense."
+      ],
+      "responsibleFiles": [
+        "app/api/assistant/route.ts",
+        "lib/ai/assistantCore.ts",
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/database-tools.ts",
+        "lib/ai/ai-permissions.ts",
+        "lib/security/permissions.ts",
+        "lib/auth/context.ts",
+        "lib/logger/logger.ts",
+        "supabase/migrations/20260624000000_quiksol_platform.sql"
+      ]
+    },
+    {
+      "name": "Integración con Opportunity Finder",
+      "score": 4,
+      "maxScore": 15,
+      "status": "major-gap",
+      "evidence": [
+        "The assistant can produce an opportunities summary through the legacy aggregate opportunities engine.",
+        "The certified Opportunity Finder implementation and its persisted jobs/results exist elsewhere in the repository.",
+        "Assistant code does not query opportunity_finder_jobs or opportunity_finder_results.",
+        "Assistant responses do not consume pipelineVersion, exactMpnMatch, usableAvailabilityMatch or exactQuantityMatch.",
+        "The assistant may aggregate up to 30 historical uploads instead of reading the user's selected two-file comparison."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/database-tools-opportunities.test.ts",
+        "lib/opportunities/__tests__/opportunities.test.ts",
+        "lib/opportunity-finder/__tests__/matcher.test.ts",
+        "lib/opportunity-finder/__tests__/api.test.ts"
+      ],
+      "risks": [
+        "Assistant counts can disagree with the Opportunity Finder UI, CSV and XLSX.",
+        "Full sale, partial sale and exact-quantity concepts can be explained using legacy semantics.",
+        "The user may receive historical aggregate results when asking about the latest completed comparison."
+      ],
+      "responsibleFiles": [
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/database-tools.ts",
+        "lib/opportunities/opportunities.ts",
+        "lib/opportunity-finder/api.ts",
+        "lib/opportunity-finder/matcher.ts",
+        "supabase/migrations/20260727090000_opportunity_finder.sql"
+      ]
+    },
+    {
+      "name": "Exactitud de intención",
+      "score": 7,
+      "maxScore": 10,
+      "status": "functional-with-gaps",
+      "evidence": [
+        "Server-side deterministic routing prevents the model from freely choosing tools.",
+        "The router recognizes sensitive requests, stock needs, opportunities, MPN lookup, uploads, import errors, dashboard and employee summaries.",
+        "MPN extraction preserves punctuation, hyphens and leading zeros.",
+        "Routing is based on ordered regular expressions rather than a central typed intent catalog.",
+        "There is no confidence score, ambiguity handling or clarification path.",
+        "Help requests and unsupported formulations can fall through to business-record search.",
+        "English and Chinese alias coverage is uneven."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/ai-query-router.test.ts",
+        "lib/ai/__tests__/ai-query-router-sensitive.test.ts",
+        "lib/ai/__tests__/assistantCore.test.ts"
+      ],
+      "risks": [
+        "The first matching regular expression wins when requests contain multiple intents.",
+        "Minor phrasing variations can invoke generic search instead of the intended deterministic tool.",
+        "Opportunity Finder terms can be confused with legacy opportunity terms."
+      ],
+      "responsibleFiles": [
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/database-tools.ts",
+        "lib/ai/assistantCore.ts"
+      ]
+    },
+    {
+      "name": "Multidioma",
+      "score": 6,
+      "maxScore": 10,
+      "status": "partial",
+      "evidence": [
+        "The UI contains Spanish, English and simplified Chinese labels and persists the selected language.",
+        "Language detection recognizes es, en and zh with basic lexical and character heuristics.",
+        "The system prompt asks the provider to answer in the selected language.",
+        "The widget normally sends the UI language, so automatic detection is often bypassed.",
+        "Most deterministic summaries, permission denials and safe fallbacks are hardcoded in Spanish.",
+        "Chinese intent recognition is limited and can fall through to generic search."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/language-detection.test.ts",
+        "lib/ai/__tests__/response-normalizer.test.ts"
+      ],
+      "risks": [
+        "English and Chinese users can receive Spanish deterministic responses.",
+        "Equivalent questions in the three languages may select different tools.",
+        "Localized timeout, rate-limit and voice errors are incomplete."
+      ],
+      "responsibleFiles": [
+        "lib/ai/language-detection.ts",
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/database-tools.ts",
+        "lib/ai/assistantCore.ts",
+        "lib/i18n.ts",
+        "components/LanguageProvider.tsx",
+        "components/AIAssistantWidget.tsx"
+      ]
+    },
+    {
+      "name": "Robustez de API",
+      "score": 7,
+      "maxScore": 10,
+      "status": "functional-with-gaps",
+      "evidence": [
+        "The text and voice endpoints authenticate requests and apply per-user rate limiting.",
+        "Missing messages are rejected and inactive or unauthorized profiles return access errors.",
+        "Provider failures retain a deterministic text fallback when one exists.",
+        "The text endpoint does not enforce a 2000-character maximum or a strict request schema.",
+        "Language values fall back to Spanish rather than being rejected when invalid.",
+        "Unhandled assistant failures can be converted into HTTP 200 safe fallback responses.",
+        "No explicit OpenAI, ElevenLabs or general tool request timeout is configured."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/assistantCore.test.ts",
+        "lib/ai/__tests__/assistantCore-db-timeout.test.ts",
+        "lib/security/__tests__/persistent-rate-limit.test.ts",
+        "lib/auth/__tests__/context.test.ts"
+      ],
+      "risks": [
+        "Oversized requests can consume excessive tokens, memory or log capacity.",
+        "Clients cannot reliably distinguish an internal failure from a successful answer.",
+        "Slow external providers can leave requests open without bounded cancellation."
+      ],
+      "responsibleFiles": [
+        "app/api/assistant/route.ts",
+        "app/api/ai/assistant/route.ts",
+        "app/api/ai/voice/ask/route.ts",
+        "app/api/ai/voice/transcribe/route.ts",
+        "app/api/ai/voice/speak/route.ts",
+        "lib/ai/assistantCore.ts",
+        "lib/security/persistent-rate-limit.ts"
+      ]
+    },
+    {
+      "name": "Memoria, streaming y experiencia",
+      "score": 3,
+      "maxScore": 10,
+      "status": "major-gap",
+      "evidence": [
+        "A responsive floating widget provides message rendering, loading state, reset and voice controls.",
+        "Messages exist only in local React state and are lost on refresh.",
+        "Only the current question is sent to the server; the model receives no prior conversation context.",
+        "There is no persistent AI conversation schema, history view or conversation deletion.",
+        "Responses are returned as complete JSON with no token streaming or progress-event protocol.",
+        "There is no request cancellation, copy action, evidence list or generated-versus-deterministic indicator.",
+        "Accessibility is partial: buttons have labels, but the panel lacks dialog semantics, focus trapping and a live region."
+      ],
+      "existingTests": [
+        "No dedicated React Testing Library coverage for AIAssistantWidget was found in the pre-change baseline."
+      ],
+      "risks": [
+        "Users can assume the assistant remembers context that the model never receives.",
+        "Long requests cannot be cancelled and may continue after the widget closes.",
+        "Keyboard and screen-reader users receive incomplete interaction support."
+      ],
+      "responsibleFiles": [
+        "components/AIAssistantWidget.tsx",
+        "components/AppShell.tsx",
+        "app/api/assistant/route.ts",
+        "lib/ai/assistantCore.ts"
+      ]
+    },
+    {
+      "name": "Voz",
+      "score": 4,
+      "maxScore": 5,
+      "status": "functional-not-certified",
+      "evidence": [
+        "The implemented flow records audio, transcribes with OpenAI, calls the shared assistant core and synthesizes speech with ElevenLabs.",
+        "Audio type and a configurable size limit are validated, and a TTS failure preserves the text response.",
+        "No application database write of recorded audio was found.",
+        "Audio size is checked after formData parsing rather than before buffering.",
+        "The flow lacks explicit consent text, cancellation and provider timeouts.",
+        "Successful voice responses can expose an internal traceId.",
+        "Physical Safari, iPad and iPhone behavior is not verified."
+      ],
+      "existingTests": [
+        "lib/voice/__tests__/transcription.test.ts",
+        "lib/voice/__tests__/elevenlabs.test.ts",
+        "lib/voice/__tests__/voice-language.test.ts"
+      ],
+      "risks": [
+        "Large multipart bodies may be buffered before validation.",
+        "UUIDs, emails or unnecessary text may be sent to TTS.",
+        "Provider retention and real-device behavior remain unverified."
+      ],
+      "responsibleFiles": [
+        "components/ai/AiVoiceRecorder.tsx",
+        "components/ai/AiAudioPlayer.tsx",
+        "app/api/ai/voice/ask/route.ts",
+        "app/api/ai/voice/transcribe/route.ts",
+        "app/api/ai/voice/speak/route.ts",
+        "lib/voice/transcription.ts",
+        "lib/voice/elevenlabs.ts"
+      ]
+    },
+    {
+      "name": "Rendimiento",
+      "score": 5,
+      "maxScore": 8,
+      "status": "partial",
+      "evidence": [
+        "Tool results and examples are limited before being returned to the UI or serialized for the LLM.",
+        "The LLM data serialization has an approximate 14000-character cap.",
+        "Simple database tools use explicit result limits.",
+        "Stock-needs can query up to 20 uploads with 5000 records per upload.",
+        "Legacy opportunities can query up to 30 uploads with 5000 records per upload.",
+        "Both aggregate paths select raw_data and normalized_data and perform per-upload queries.",
+        "There is no assistant result cache, aggregate read model or explicit P95 performance test."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/assistantCore-db-timeout.test.ts",
+        "lib/ai/__tests__/database-tools-opportunities.test.ts",
+        "lib/stock-needs/__tests__/data-source.test.ts"
+      ],
+      "risks": [
+        "A single question can load 100000 to 150000 rows into application memory.",
+        "Per-upload queries create an N+1 pattern and database connection pressure.",
+        "Real production latency and memory use are not measured."
+      ],
+      "responsibleFiles": [
+        "lib/ai/database-tools.ts",
+        "lib/stock-needs/data-source.ts",
+        "lib/stock-needs/stock-needs.ts",
+        "lib/opportunities/opportunities.ts",
+        "lib/ai/assistantCore.ts"
+      ]
+    },
+    {
+      "name": "Observabilidad",
+      "score": 3,
+      "maxScore": 5,
+      "status": "partial-high-risk",
+      "evidence": [
+        "The assistant records structured stage, role, scope, tool and timing information.",
+        "Persistent rate limiting and sanitized logger infrastructure exist.",
+        "Successful info events are printed to stdout but are not inserted into system_logs.",
+        "Assistant failures logged as warn can be omitted by dashboards that count only error/fatal.",
+        "Questions and tool summaries can be included in logs.",
+        "Token usage, fallback use and complete latency metrics are not persisted.",
+        "A retention cleanup function exists, but no scheduling mechanism was found in the repository."
+      ],
+      "existingTests": [
+        "lib/logger/__tests__/logger.test.ts",
+        "lib/security/__tests__/persistent-rate-limit.test.ts"
+      ],
+      "risks": [
+        "Metrics can undercount successful requests and failures.",
+        "Logs may retain business content.",
+        "Retention of platform stdout and remote production configuration is unverifiable."
+      ],
+      "responsibleFiles": [
+        "lib/logger/logger.ts",
+        "lib/ai/assistantCore.ts",
+        "lib/ai/ai-query-router.ts",
+        "app/superadmin/ai/page.tsx",
+        "supabase/migrations/20260624000000_quiksol_platform.sql"
+      ]
+    },
+    {
+      "name": "Pruebas y QA",
+      "score": 6,
+      "maxScore": 7,
+      "status": "strong-unit-baseline",
+      "evidence": [
+        "The pre-change repository has unit coverage for assistant routing, commercial redaction, permission scope, language detection, response normalization, database timeouts, stock needs, legacy opportunities and voice helpers.",
+        "The full audited pre-change suite previously completed with 68 test files and 310 passing tests.",
+        "TypeScript no-emit validation and ESLint previously passed on this same baseline tree.",
+        "Opportunity Finder has independent matcher and API tests, including inventory allocation behavior.",
+        "There is no comprehensive HTTP endpoint, React UI, streaming, conversation-memory, adversarial prompt-injection or real-RLS integration suite.",
+        "External providers and physical mobile devices are not verified, appropriately leaving this dimension below full score."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/",
+        "lib/voice/__tests__/",
+        "lib/stock-needs/__tests__/",
+        "lib/opportunities/__tests__/",
+        "lib/opportunity-finder/__tests__/",
+        "lib/auth/__tests__/",
+        "lib/security/__tests__/"
+      ],
+      "risks": [
+        "Passing unit tests do not demonstrate deployed HTTP status behavior or remote RLS configuration.",
+        "There are no UI accessibility, cancellation or mobile-dimension tests.",
+        "The assistant is not contract-tested against persisted Opportunity Finder counts or the synthetic Set 01 files."
+      ],
+      "responsibleFiles": [
+        "lib/ai/__tests__/",
+        "lib/voice/__tests__/",
+        "lib/stock-needs/__tests__/",
+        "lib/opportunities/__tests__/",
+        "lib/opportunity-finder/__tests__/",
+        "vitest.config.ts",
+        "package.json"
+      ]
+    }
+  ]
+}

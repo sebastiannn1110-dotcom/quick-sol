@@ -1,0 +1,331 @@
+{
+  "schemaVersion": 1,
+  "assessment": "final-after",
+  "baseCommit": "49c3dbf74a5818aef073107d7a6f940374afed91",
+  "totalScore": 90,
+  "maxTotalScore": 100,
+  "status": "strong-not-production-verified",
+  "scoringMethod": "Evidence-based review of the hardened working tree. Credit is limited to implemented behavior supported by the final mocked test suite and local quality gates. Artifact-tool render/inspect, browser visual QA, physical Safari/iPad behavior, real providers, production latency, remote environment variables, executed migrations and remote RLS remain unverified and therefore prevent a full score or a production-ready verdict.",
+  "dimensions": [
+    {
+      "name": "Seguridad y privacidad",
+      "score": 19,
+      "maxScore": 20,
+      "status": "strong-with-remote-verification-pending",
+      "evidence": [
+        "Every provider-facing tool result passes through a strict per-tool field allowlist; unknown fields are dropped and only a sanitized counter is retained.",
+        "The exact mocked OpenAI payload snapshot excludes raw_data, normalized_data, raw_value, UUIDs, emails, filenames, storage paths, finance, customers, suppliers, notes and unknown properties.",
+        "Safe AI logging hashes the user identifier and retains only allowlisted operational metadata; tests prove that questions, answers, MPNs, filenames and sensitive values are absent.",
+        "The system prompt treats database and file content as untrusted data, escapes closing delimiters, forbids free SQL, protects permissions and does not let the model select a tool.",
+        "Sensitive finance requests are denied for every role, and AI data tools use the authenticated Supabase client without service-role bypasses or mutations.",
+        "Conversation memory is owner-scoped in code and in an additive migration with forced RLS and no admin bypass."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/privacy-boundary.test.ts",
+        "lib/ai/__tests__/safe-logging.test.ts",
+        "lib/ai/__tests__/adversarial-intents.test.ts",
+        "lib/ai/__tests__/performance-contracts.test.ts",
+        "lib/ai/__tests__/acceptance-access-boundaries.test.ts",
+        "lib/security/__tests__/api-permissions-integration.test.ts",
+        "lib/ai/__tests__/conversation-memory.test.ts"
+      ],
+      "risks": [
+        "The new conversation RLS policies and retention function have not been applied or exercised against a remote Supabase environment.",
+        "Remote environment configuration, provider retention behavior and production stdout retention were intentionally not verified."
+      ],
+      "responsibleFiles": [
+        "lib/ai/tool-contracts.ts",
+        "lib/ai/safe-logging.ts",
+        "lib/ai/assistantCore.ts",
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/database-tools.ts",
+        "lib/ai/conversation-memory.ts",
+        "supabase/migrations/20260730120000_ai_conversation_memory.sql",
+        "lib/logger/logger.ts"
+      ]
+    },
+    {
+      "name": "Integración con Opportunity Finder",
+      "score": 13,
+      "maxScore": 15,
+      "status": "strong-code-parity-visual-verification-pending",
+      "evidence": [
+        "The assistant now reads authenticated, owner-scoped opportunity_finder_jobs and opportunity_finder_results instead of recalculating the matcher.",
+        "The V2 tool enforces completed status, compatible pipelineVersion, explicit job ownership, server-controlled filters, pagination and hard limits.",
+        "It supports latest and selected jobs, general summary, full sale, partial sale, sourcing, inventory without demand, exact MPN, usable availability, exact quantity, review and invalid quantities.",
+        "The legacy aggregate engine is reachable only through an explicit historical-company intent and is not mixed with Opportunity Finder V2.",
+        "Set 01 code-level parity passed for AI, CSV and XLSX across ES, EN and ZH with 11 exact MPNs, 9 usable matches, 5 exact quantities, 8 full sales, 2 partial sales, 2 sourcing cases, 1 inventory-without-demand case, 1 review and 1 invalid quantity.",
+        "Tests preserve leading-zero and hyphenated MPN text and prove that stock is not reused across dated requirements."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/opportunity-finder-tool.test.ts",
+        "lib/ai/__tests__/opportunity-finder-set01-parity.test.ts",
+        "lib/ai/__tests__/performance-contracts.test.ts",
+        "lib/opportunity-finder/__tests__/"
+      ],
+      "risks": [
+        "Artifact-tool inspect and render could not run because the spreadsheet runtime lacked sandboxPolicy, so the physical Set 01 workbooks were not visually revalidated.",
+        "Owner isolation and persisted-result parity have not been exercised against remote RLS or a deployed UI/export flow."
+      ],
+      "responsibleFiles": [
+        "lib/ai/opportunity-finder-tool.ts",
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/intent-catalog.ts",
+        "lib/ai/database-tools.ts",
+        "lib/ai/__tests__/opportunity-finder-set01-parity.test.ts",
+        "lib/opportunity-finder/"
+      ]
+    },
+    {
+      "name": "Exactitud de intención",
+      "score": 10,
+      "maxScore": 10,
+      "status": "complete-code-and-tests",
+      "evidence": [
+        "A central typed catalog declares aliases in ES, EN and ZH, priority, parameters, server tool, permission, clarification and positive/negative examples for the required intents.",
+        "The deterministic router tolerates accents, case and small spelling variations, reports confidence and asks for clarification when candidates are close.",
+        "Help no longer falls through to business-record search, full-sale language is not treated as generic, and the model cannot override the server-selected tool.",
+        "MPN extraction preserves leading zeros and hyphens."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/intent-catalog.test.ts",
+        "lib/ai/__tests__/ai-query-router.test.ts",
+        "lib/ai/__tests__/adversarial-intents.test.ts",
+        "lib/ai/__tests__/opportunity-finder-set01-parity.test.ts"
+      ],
+      "risks": [
+        "Future business vocabulary additions will require catalog and regression-test maintenance."
+      ],
+      "responsibleFiles": [
+        "lib/ai/intent-catalog.ts",
+        "lib/ai/ai-query-router.ts",
+        "lib/ai/language-detection.ts"
+      ]
+    },
+    {
+      "name": "Multidioma",
+      "score": 9,
+      "maxScore": 10,
+      "status": "strong-with-human-and-visual-review-pending",
+      "evidence": [
+        "Deterministic help, Opportunity Finder, denial, empty, clarification, timeout, rate-limit, error and voice messages exist in Spanish, English and simplified Chinese.",
+        "Detectable question language takes precedence over the UI preference, which remains a fallback.",
+        "Equivalent ES, EN and ZH Opportunity Finder questions select the same server tool and return identical Set 01 counts.",
+        "Localized HTTP and voice-path tests cover the three supported languages without real provider calls."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/language-detection.test.ts",
+        "lib/ai/__tests__/intent-catalog.test.ts",
+        "lib/ai/__tests__/opportunity-finder-set01-parity.test.ts",
+        "app/api/assistant/__tests__/route.test.ts",
+        "app/api/ai/voice/__tests__/routes.test.ts"
+      ],
+      "risks": [
+        "No native-speaker acceptance review or browser visual inspection of all translated states was completed.",
+        "Remote font and rendering behavior for simplified Chinese remains unverified."
+      ],
+      "responsibleFiles": [
+        "lib/ai/messages.ts",
+        "lib/ai/intent-catalog.ts",
+        "lib/ai/language-detection.ts",
+        "lib/ai/opportunity-finder-tool.ts",
+        "lib/voice/safety.ts",
+        "components/AIAssistantWidget.tsx"
+      ]
+    },
+    {
+      "name": "Robustez de API",
+      "score": 9,
+      "maxScore": 10,
+      "status": "strong-local-contracts",
+      "evidence": [
+        "Strict schemas enforce JSON content type, non-empty input, a 2000-character ceiling, supported language and UUID-form job/conversation identifiers.",
+        "Mocked HTTP tests cover 400, 401, 403, 404, 413, 422, 429, 502, 503 and 504 responses with no-store headers and sanitized bodies.",
+        "Tool and provider operations have bounded configurable timeouts, one retry at most for eligible idempotent transient failures, and parent-signal cancellation.",
+        "User cancellation is distinguished from timeout, successful responses omit traceId and internal failures are not converted into normal HTTP 200 JSON success responses.",
+        "Voice routes validate Content-Length before multipart parsing when available and validate size, MIME and empty audio."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/request-schema.test.ts",
+        "lib/ai/__tests__/timeouts.test.ts",
+        "app/api/assistant/__tests__/route.test.ts",
+        "app/api/assistant/__tests__/acceptance-statuses.test.ts",
+        "app/api/ai/voice/__tests__/routes.test.ts"
+      ],
+      "risks": [
+        "Once an SSE response has started, a later failure must be represented by a terminal stream event rather than a new HTTP status.",
+        "Production proxy body limits, connection cancellation and rate-limit storage were not exercised end to end."
+      ],
+      "responsibleFiles": [
+        "lib/ai/request-schema.ts",
+        "lib/ai/timeouts.ts",
+        "lib/ai/assistantCore.ts",
+        "app/api/assistant/route.ts",
+        "app/api/ai/assistant/stream/route.ts",
+        "app/api/ai/voice/ask/route.ts",
+        "app/api/ai/voice/transcribe/route.ts",
+        "app/api/ai/voice/speak/route.ts"
+      ]
+    },
+    {
+      "name": "Memoria, streaming y experiencia",
+      "score": 9,
+      "maxScore": 10,
+      "status": "strong-migration-and-visual-verification-pending",
+      "evidence": [
+        "An additive migration defines owner-only conversations and messages, forced RLS, retention expiry, soft deletion and content constraints without tool payload columns or admin bypass.",
+        "The model receives at most the last eight safe messages under a total character cap and excludes deleted messages and prior tool data.",
+        "Owner-scoped no-store APIs support list, create, load, append and delete behavior; isolation tests use two synthetic users.",
+        "The SSE route emits ordered validation, search, processing, generation and completion progress and stops without persisting an assistant response after cancellation.",
+        "The widget supports cancellation, copy, new conversation, history, deletion, source/evidence labels and data-based versus AI-generated indicators.",
+        "React tests cover dialog semantics, accessible labels, aria-live behavior, Escape, focus trapping, keyboard navigation and bounded emulated iPad dimensions."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/conversation-memory.test.ts",
+        "app/api/ai/conversations/__tests__/route.test.ts",
+        "app/api/ai/assistant/stream/__tests__/route.test.ts",
+        "components/ai/__tests__/AIAssistantWidget.test.tsx"
+      ],
+      "risks": [
+        "The memory migration and RLS policies were not executed remotely, as required by the task constraints.",
+        "Browser visual QA was blocked by the unavailable browser runtime, and physical iPad behavior was not tested."
+      ],
+      "responsibleFiles": [
+        "supabase/migrations/20260730120000_ai_conversation_memory.sql",
+        "lib/ai/conversation-memory.ts",
+        "app/api/ai/conversations/",
+        "app/api/ai/assistant/stream/route.ts",
+        "components/AIAssistantWidget.tsx"
+      ]
+    },
+    {
+      "name": "Voz",
+      "score": 4,
+      "maxScore": 5,
+      "status": "hardened-not-real-device-or-provider-certified",
+      "evidence": [
+        "Visible localized consent identifies OpenAI transcription and ElevenLabs synthesis before use.",
+        "Audio routes apply early configurable size checks, MIME and empty-file validation, transcription-length limits, provider timeouts, cancellation and no-store responses.",
+        "TTS input removes UUIDs, emails and unnecessary sensitive text, successful responses omit traceId and no audio is written by the application.",
+        "Mocked tests cover valid and empty transcription, oversize and invalid MIME, OpenAI and ElevenLabs timeouts, disabled TTS, playback, cancellation, text fallback and emulated iPad dimensions."
+      ],
+      "existingTests": [
+        "lib/voice/__tests__/transcription.test.ts",
+        "lib/voice/__tests__/transcription-provider.test.ts",
+        "lib/voice/__tests__/elevenlabs.test.ts",
+        "app/api/ai/voice/__tests__/routes.test.ts",
+        "components/ai/__tests__/AiVoiceRecorder.test.tsx",
+        "components/ai/__tests__/AiAudioPlayer.test.tsx",
+        "components/ai/__tests__/AIAssistantWidget.test.tsx"
+      ],
+      "risks": [
+        "OpenAI and ElevenLabs were mocked and their live contracts, retention behavior and remote credentials were intentionally not verified.",
+        "MediaRecorder, playback and cancellation were not tested on physical Safari, iPad or iPhone hardware."
+      ],
+      "responsibleFiles": [
+        "lib/voice/safety.ts",
+        "lib/voice/transcription.ts",
+        "lib/voice/elevenlabs.ts",
+        "app/api/ai/voice/ask/route.ts",
+        "app/api/ai/voice/transcribe/route.ts",
+        "app/api/ai/voice/speak/route.ts",
+        "components/ai/AiVoiceRecorder.tsx",
+        "components/ai/AiAudioPlayer.tsx",
+        "components/AIAssistantWidget.tsx"
+      ]
+    },
+    {
+      "name": "Rendimiento",
+      "score": 7,
+      "maxScore": 8,
+      "status": "bounded-and-simulated",
+      "evidence": [
+        "Opportunity Finder reads persisted aggregate results with pagination and does not execute or import matcher code.",
+        "The AI stock-needs path selects only safe fields, excludes raw_data and normalized_data, applies database filters and uses one bounded query rather than per-upload N+1 queries.",
+        "Explicit row, page, example and serialization limits bound provider context and process memory.",
+        "The deterministic mocked P95 contract completes under two seconds and tests assert every tool's hard limit."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/performance-contracts.test.ts",
+        "lib/ai/__tests__/performance-p95.test.ts",
+        "lib/ai/__tests__/opportunity-finder-tool.test.ts",
+        "lib/stock-needs/__tests__/data-source.test.ts"
+      ],
+      "risks": [
+        "Real production P95, database plans, concurrent load and process memory were not measured.",
+        "Remote data distribution may require further indexing or limit tuning after staging load tests."
+      ],
+      "responsibleFiles": [
+        "lib/ai/opportunity-finder-tool.ts",
+        "lib/ai/database-tools.ts",
+        "lib/stock-needs/data-source.ts",
+        "lib/stock-needs/stock-needs.ts",
+        "lib/ai/assistantCore.ts"
+      ]
+    },
+    {
+      "name": "Observabilidad",
+      "score": 4,
+      "maxScore": 5,
+      "status": "strong-local-metrics-retention-not-applied",
+      "evidence": [
+        "Sanitized AI events track requests, success, error, timeout, cancellation, rate limit, intent, tool, provider, duration, token usage, fallback, language and text/voice channel.",
+        "Successful AI info events are persisted, warn-level failures contribute to error metrics and average latency includes the full accepted event set.",
+        "Metrics group by intent, tool, provider, language and channel without retaining questions or answers.",
+        "An additive reversible retention function validates a 1-to-365-day window, is service-role restricted and intentionally installs no remote schedule."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/safe-logging.test.ts",
+        "lib/ai/__tests__/observability.test.ts",
+        "lib/logger/__tests__/logger.test.ts",
+        "lib/security/__tests__/persistent-rate-limit.test.ts"
+      ],
+      "risks": [
+        "The retention migration was not executed and no remote schedule or operations runbook was installed.",
+        "Production dashboard completeness, log sink retention and provider token reporting remain unverified."
+      ],
+      "responsibleFiles": [
+        "lib/ai/safe-logging.ts",
+        "lib/logger/logger.ts",
+        "lib/superadmin/metrics.ts",
+        "supabase/migrations/20260730123000_ai_observability_retention.sql"
+      ]
+    },
+    {
+      "name": "Pruebas y QA",
+      "score": 6,
+      "maxScore": 7,
+      "status": "strong-local-suite-with-external-verification-gaps",
+      "evidence": [
+        "The final full mocked suite passed 90 test files and 416 tests, adding 106 tests over the 310-test baseline.",
+        "Unit, router, privacy, adversarial, HTTP, permission, Opportunity Finder, ES/EN/ZH, memory, streaming, UI, voice, logging, rate-limit and timeout coverage passed.",
+        "TypeScript typecheck, ESLint and the production build passed.",
+        "Acceptance tests cover all required HTTP statuses, owner isolation, manager scope, finance denial, provider payload privacy, read-only tools, cancellation and safe fallback.",
+        "Set 01 code-level AI, CSV and XLSX parity passed without changing the certified Opportunity Finder suite."
+      ],
+      "existingTests": [
+        "lib/ai/__tests__/",
+        "app/api/assistant/__tests__/",
+        "app/api/ai/assistant/stream/__tests__/",
+        "app/api/ai/conversations/__tests__/",
+        "app/api/ai/voice/__tests__/",
+        "components/ai/__tests__/",
+        "lib/opportunity-finder/__tests__/"
+      ],
+      "risks": [
+        "Artifact-tool inspect/render and browser visual QA were blocked by missing runtime sandboxPolicy support.",
+        "No remote RLS, live-provider, physical-device or production-load test was performed."
+      ],
+      "responsibleFiles": [
+        "lib/ai/__tests__/",
+        "app/api/assistant/__tests__/",
+        "app/api/ai/assistant/stream/__tests__/",
+        "app/api/ai/conversations/__tests__/",
+        "app/api/ai/voice/__tests__/",
+        "components/ai/__tests__/",
+        "vitest.config.ts",
+        "package.json"
+      ]
+    }
+  ]
+}

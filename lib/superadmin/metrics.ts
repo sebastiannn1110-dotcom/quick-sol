@@ -15,6 +15,21 @@ function numberValue(row: Row, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function metadata(row: Row) {
+  const value = row.metadata;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Row
+    : {};
+}
+
+function groupedCount(rows: Row[], key: string) {
+  return rows.reduce<Record<string, number>>((groups, row) => {
+    const value = text(metadata(row), key, "unknown");
+    groups[value] = (groups[value] ?? 0) + 1;
+    return groups;
+  }, {});
+}
+
 function hoursAgo(hours: number) {
   return new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 }
@@ -128,7 +143,7 @@ export async function buildSuperadminAi(service: SupabaseClient) {
   const since = hoursAgo(24);
   const { data, error } = await service
     .from("system_logs")
-    .select("created_at,level,action,message,duration_ms,user_email,metadata,error")
+    .select("created_at,level,action,message,duration_ms,status,metadata")
     .eq("module", "ai")
     .gte("created_at", since)
     .order("created_at", { ascending: false })
@@ -136,6 +151,20 @@ export async function buildSuperadminAi(service: SupabaseClient) {
   if (error) throw error;
   const logs = (data ?? []) as Row[];
   const durations = logs.map((row) => numberValue(row, "duration_ms")).filter((value) => value > 0);
+  const failed = (row: Row) =>
+    text(row, "status") === "failed" ||
+    ["warn", "error", "fatal", "security"].includes(text(row, "level")) ||
+    /failed|timeout|rate_limit/i.test(text(row, "action"));
+  const successful = (row: Row) =>
+    text(row, "status") === "completed" &&
+    !failed(row);
+  const tokens = logs.reduce<{ input: number; output: number }>(
+    (sum, row) => ({
+      input: sum.input + numberValue(metadata(row), "inputTokens"),
+      output: sum.output + numberValue(metadata(row), "outputTokens")
+    }),
+    { input: 0, output: 0 }
+  );
   return {
     env: {
       hasOpenIa: Boolean(process.env.OPEN_IA),
@@ -143,8 +172,19 @@ export async function buildSuperadminAi(service: SupabaseClient) {
       model: process.env.OPENAI_MODEL || "gpt-5.5"
     },
     total: logs.length,
-    failures: logs.filter((row) => ["error", "fatal"].includes(text(row, "level"))).length,
+    requests: logs.filter((row) => /started$/.test(text(row, "action"))).length,
+    successes: logs.filter(successful).length,
+    failures: logs.filter(failed).length,
+    timeouts: logs.filter((row) => /timeout/i.test(text(row, "action")) || metadata(row).timeout === true).length,
+    rateLimits: logs.filter((row) => /rate_limit/i.test(text(row, "action"))).length,
+    fallbackUses: logs.filter((row) => metadata(row).fallbackUsed === true).length,
     averageResponseMs: durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0,
+    tokens,
+    byIntent: groupedCount(logs, "intent"),
+    byTool: groupedCount(logs, "tool"),
+    byProvider: groupedCount(logs, "provider"),
+    byLanguage: groupedCount(logs, "language"),
+    byChannel: groupedCount(logs, "channel"),
     logs
   };
 }

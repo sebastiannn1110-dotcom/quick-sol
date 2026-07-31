@@ -4,16 +4,24 @@ import { getAuthContext } from "@/lib/auth/context";
 import { answerAssistantQuestion, AssistantConfigError } from "@/lib/ai/assistantCore";
 import type { AssistantLanguage } from "@/lib/ai/language-detection";
 import { detectAssistantLanguage } from "@/lib/ai/language-detection";
-import { logger } from "@/lib/logger/logger";
-import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { logSafeAiEvent } from "@/lib/ai/safe-logging";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { synthesizeSpeech } from "@/lib/voice/elevenlabs";
 import {
   normalizeLanguage,
-  transcribeAudio,
-  VoiceConfigError,
-  VoiceInputError
+  transcribeAudio
 } from "@/lib/voice/transcription";
+import {
+  languageFromRequest,
+  noStore,
+  requireContentType,
+  sanitizeTextForTts,
+  validateContentLength,
+  validateTranscript,
+  voiceMessage,
+  voiceRateLimitResponse,
+  VoiceRequestError
+} from "@/lib/voice/safety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +32,10 @@ interface VoiceTimings {
   llmMs: number;
   ttsMs: number;
   totalMs: number;
+}
+
+function json(payload: unknown, status = 200) {
+  return noStore(NextResponse.json(payload, { status }));
 }
 
 function getString(formData: FormData, key: string) {
@@ -45,35 +57,34 @@ async function logVoice(
   durationMs?: number,
   error?: unknown
 ) {
-  await logger[status === "failed" ? "warn" : "info"]({
-    traceId: context.requestMeta.traceId,
-    requestId: context.requestMeta.requestId,
-    userId: context.profile.id,
-    userEmail: context.profile.email,
-    userRole: context.profile.role,
-    route: context.requestMeta.route,
-    module: "voice",
+  void message;
+  const detectedLanguage =
+    metadata?.detectedLanguage === "en" || metadata?.detectedLanguage === "zh"
+      ? metadata.detectedLanguage
+      : "es";
+  await logSafeAiEvent(context, {
     action,
-    message,
     status,
     durationMs,
-    metadata,
-    error
+    error,
+    metadata: {
+      language: detectedLanguage,
+      channel: "voice",
+      provider: action.includes("tts") ? "elevenlabs" : action.includes("transcription") ? "openai" : "deterministic",
+      durationMs,
+      state: status,
+      timeout: error instanceof VoiceRequestError && error.status === 504
+    }
   });
 }
 
-function friendlyVoiceError(language: AssistantLanguage) {
-  if (language === "zh") return "语音生成失败了，但我已经用文字回答你。";
-  if (language === "en") return "I answered in text because voice generation failed.";
-  return "Te respondi por texto porque fallo la voz.";
-}
-
 export async function POST(request: Request) {
+  let responseLanguage = languageFromRequest(request);
   const context = await getAuthContext(request);
-  if (context instanceof NextResponse) return context;
+  if (context instanceof NextResponse) return noStore(context);
 
   if (process.env.ENABLE_VOICE_ASSISTANT === "false") {
-    return NextResponse.json({ error: "Voice assistant is disabled." }, { status: 503 });
+    return json({ error: voiceMessage(responseLanguage, "voice_disabled"), code: "voice_disabled" }, 503);
   }
 
   const rate = await checkPersistentRateLimit({
@@ -85,7 +96,7 @@ export async function POST(request: Request) {
   });
   if (!rate.allowed) {
     await logVoice(context, "voice_rate_limit_exceeded", "Voice rate limit exceeded.", "failed");
-    return rateLimitResponse(rate.resetAt);
+    return voiceRateLimitResponse(responseLanguage, rate.resetAt);
   }
 
   const totalStartedAt = performance.now();
@@ -98,16 +109,20 @@ export async function POST(request: Request) {
   };
 
   try {
-    const contentType = request.headers.get("content-type") ?? "";
+    validateContentLength(request);
+    const contentType = requireContentType(request, ["multipart/form-data", "application/json"]);
     let transcript = "";
     let detectedLanguage: AssistantLanguage = "es";
     let duration: number | null = null;
 
     if (contentType.includes("multipart/form-data")) {
-      const formData = await request.formData();
+      const formData = await request.formData().catch(() => {
+        throw new VoiceRequestError("invalid_body", 400);
+      });
       const audio = getAudio(formData);
       const textMessage = getString(formData, "message") || getString(formData, "transcript");
       const requestedLanguage = getString(formData, "language");
+      if (requestedLanguage) responseLanguage = normalizeLanguage(requestedLanguage);
 
       if (audio) {
         await logVoice(context, "voice_upload_received", "Voice upload received.", "completed", {
@@ -120,10 +135,11 @@ export async function POST(request: Request) {
           fileType: audio.type
         });
         const transcriptionStartedAt = performance.now();
-        const transcription = await transcribeAudio(audio);
+        const transcription = await transcribeAudio(audio, { signal: request.signal });
         timings.transcriptionMs = Math.round(performance.now() - transcriptionStartedAt);
         transcript = transcription.transcript;
         detectedLanguage = transcription.detectedLanguage;
+        responseLanguage = detectedLanguage;
         duration = transcription.duration;
 
         await logVoice(context, "ai_voice_transcription_done", "AI voice transcription completed.", "completed", {
@@ -132,16 +148,27 @@ export async function POST(request: Request) {
           transcriptionMs: timings.transcriptionMs
         }, timings.transcriptionMs);
       } else {
-        transcript = textMessage;
+        transcript = validateTranscript(textMessage);
         detectedLanguage = requestedLanguage ? normalizeLanguage(requestedLanguage) : detectAssistantLanguage(transcript);
+        responseLanguage = detectedLanguage;
       }
     } else {
-      const body = (await request.json().catch(() => null)) as { message?: string; transcript?: string; language?: string } | null;
-      transcript = body?.message?.trim() || body?.transcript?.trim() || "";
+      const body = (await request.json().catch(() => {
+        throw new VoiceRequestError("invalid_body", 400);
+      })) as { message?: unknown; transcript?: unknown; language?: unknown } | null;
+      if (
+        !body ||
+        (body.message !== undefined && typeof body.message !== "string") ||
+        (body.transcript !== undefined && typeof body.transcript !== "string")
+      ) {
+        throw new VoiceRequestError("invalid_body", 400);
+      }
+      const message = typeof body.message === "string" ? body.message : "";
+      const suppliedTranscript = typeof body.transcript === "string" ? body.transcript : "";
+      transcript = validateTranscript(message.trim() || suppliedTranscript.trim());
       detectedLanguage = body?.language ? normalizeLanguage(body.language) : detectAssistantLanguage(transcript);
+      responseLanguage = detectedLanguage;
     }
-
-    if (!transcript) return NextResponse.json({ error: "Audio or text message is required." }, { status: 400 });
 
     const answer = await answerAssistantQuestion({
       context,
@@ -158,15 +185,20 @@ export async function POST(request: Request) {
     let audioError: string | null = null;
 
     try {
+      if (process.env.ENABLE_VOICE_TTS === "false") {
+        throw new VoiceRequestError("tts_not_configured", 503);
+      }
+      const safeSpeechText = sanitizeTextForTts(answer.speechText);
+      if (!safeSpeechText) throw new VoiceRequestError("text_required", 400);
       await logVoice(context, "ai_tts_started", "AI text-to-speech started.", "started", {
         detectedLanguage,
-        textLength: answer.speechText.length
+        textLength: safeSpeechText.length
       });
       const ttsStartedAt = performance.now();
       const speech = await synthesizeSpeech({
-        text: answer.speechText,
+        text: safeSpeechText,
         language: detectedLanguage,
-        traceId: context.requestMeta.traceId
+        signal: request.signal
       });
       timings.ttsMs = Math.round(performance.now() - ttsStartedAt);
       audioBase64 = speech.audioBase64;
@@ -180,7 +212,7 @@ export async function POST(request: Request) {
       }, timings.ttsMs);
     } catch (error) {
       timings.ttsMs = Math.round(performance.now() - totalStartedAt) - timings.transcriptionMs - timings.dataLookupMs - timings.llmMs;
-      audioError = friendlyVoiceError(detectedLanguage);
+      audioError = voiceMessage(detectedLanguage, "voice_text_fallback");
       await logVoice(context, "ai_tts_failed", "AI text-to-speech failed; returning text only.", "failed", {
         detectedLanguage,
         ttsMs: Math.max(0, timings.ttsMs)
@@ -195,7 +227,7 @@ export async function POST(request: Request) {
       timings
     }, timings.totalMs);
 
-    return NextResponse.json({
+    return json({
       transcript,
       answerText: answer.answerText,
       speechText: answer.speechText,
@@ -208,16 +240,18 @@ export async function POST(request: Request) {
       audioBase64,
       audioMimeType,
       audioError,
-      timings,
-      traceId: context.requestMeta.traceId
+      timings
     });
   } catch (error) {
     timings.totalMs = Math.round(performance.now() - totalStartedAt);
     await logVoice(context, "ai_voice_failed", "AI voice request failed.", "failed", { timings }, timings.totalMs, error);
 
-    if (error instanceof VoiceInputError || error instanceof VoiceConfigError || error instanceof AssistantConfigError) {
-      return NextResponse.json({ error: error.message, timings }, { status: error.status });
+    if (error instanceof VoiceRequestError) {
+      return json({ error: voiceMessage(responseLanguage, error.code), code: error.code, timings }, error.status);
     }
-    return NextResponse.json({ error: "Voice assistant failed. Please try again.", timings }, { status: 502 });
+    if (error instanceof AssistantConfigError) {
+      return json({ error: voiceMessage(responseLanguage, "voice_failed"), code: "voice_failed", timings }, error.status);
+    }
+    return json({ error: voiceMessage(responseLanguage, "voice_failed"), code: "voice_failed", timings }, 502);
   }
 }

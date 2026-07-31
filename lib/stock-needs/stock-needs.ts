@@ -212,18 +212,28 @@ function coverageStatus(requiredQty: number | null, stockQty: number | null, has
   return "in_stock";
 }
 
-function isStockRecord(raw: JsonRecord, normalized: JsonRecord, template: string) {
-  return template.includes("inventario") || hasAny(raw, STOCK_QTY_ALIASES) || hasAny(normalized, ["on_hand"]);
+function isStockRecord(raw: JsonRecord, normalized: JsonRecord, template: string, record: StockNeedsRecord) {
+  return (
+    template.includes("inventario") ||
+    hasAny(raw, STOCK_QTY_ALIASES) ||
+    hasAny(normalized, ["on_hand"]) ||
+    record.on_hand !== null && record.on_hand !== undefined
+  );
 }
 
-function isNeedRecord(raw: JsonRecord, normalized: JsonRecord, template: string) {
+function isNeedRecord(raw: JsonRecord, normalized: JsonRecord, template: string, record: StockNeedsRecord) {
   if (template.includes("inventario")) return false;
-  const hasNeedQty = hasAny(raw, NEED_QTY_ALIASES) || hasAny(normalized, ["req_qty", "qty"]);
+  const hasNeedQty =
+    hasAny(raw, NEED_QTY_ALIASES) ||
+    hasAny(normalized, ["req_qty", "qty"]) ||
+    record.req_qty !== null && record.req_qty !== undefined ||
+    record.qty !== null && record.qty !== undefined;
   const hasNeedContext =
     hasAny(raw, CUSTOMER_ALIASES) ||
     hasAny(raw, REQUIRED_DATE_ALIASES) ||
     hasAny(raw, LEAD_TIME_ALIASES) ||
     hasAny(raw, STATUS_ALIASES) ||
+    Boolean(record.customer || record.client || record.earliest_shipping_date || record.lead_time_weeks) ||
     hasAny(raw, ["PriceBook", "Price Book", "GlobalPrice", "ContractGlobalPrice", "USD Extended Price", "USD Extended Price_2"]);
   return hasNeedQty && (hasNeedContext || template.includes("pricing") || template.includes("logistica") || template.includes("cotizacion"));
 }
@@ -313,8 +323,8 @@ export function buildStockNeedsResult(input: {
     const profile = profiles.get(record.upload_batch_id);
     if (!profile) missingProfiles.add(record.upload_batch_id);
     const template = uploadTemplate(profile, record);
-    const stockRecord = isStockRecord(raw, normalized, template);
-    const needRecord = isNeedRecord(raw, normalized, template);
+    const stockRecord = isStockRecord(raw, normalized, template, record);
+    const needRecord = isNeedRecord(raw, normalized, template, record);
     if (!stockRecord && !needRecord) continue;
 
     const existing = rows.get(key) ?? {
