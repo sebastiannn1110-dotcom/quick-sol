@@ -6,6 +6,7 @@ import {
   OPPORTUNITY_STRUCTURAL_HEADER_ALIASES,
   opportunityHeaderHasAlias
 } from "@/lib/opportunity-finder/aliases";
+import { detectOpportunityTemplate } from "@/lib/opportunity-finder/adapters";
 import type {
   OpportunityFileType,
   OpportunitySheetProfile,
@@ -35,7 +36,8 @@ function compactHeader(value: unknown) {
 }
 
 function headerMatchesTerm(header: string, term: string) {
-  return header === term || header.includes(term);
+  const normalizedTerm = normalizeOpportunityHeader(term);
+  return header === normalizedTerm;
 }
 
 export function opportunityHeaderScore(cells: unknown[]) {
@@ -79,6 +81,7 @@ export function classifyOpportunityWorkbook(input: {
   sheets: OpportunitySheetProfile[];
   rowCount: number;
 }): OpportunityWorkbookProfile {
+  const template = detectOpportunityTemplate(input.sheets);
   const headers = allNormalizedHeaders(input.sheets);
   const sheetNames = input.sheets.map((sheet) => normalizeOpportunityHeader(sheet.sheetName));
   const fileName = normalizeOpportunityHeader(input.fileName);
@@ -88,6 +91,8 @@ export function classifyOpportunityWorkbook(input: {
     ["excess", 0],
     ["supplier_offer", 0],
     ["received_history", 0],
+    ["purchase_history", 0],
+    ["quote_history", 0],
     ["sales_history", 0],
     ["financial", 0],
     ["unknown", 0]
@@ -97,6 +102,10 @@ export function classifyOpportunityWorkbook(input: {
   function add(type: OpportunityFileType, points: number, reason: string) {
     scores.set(type, (scores.get(type) ?? 0) + points);
     reasons.set(type, [...(reasons.get(type) ?? []), reason]);
+  }
+
+  if (template.forcedRole) {
+    add(template.forcedRole, 60, template.reasons[0] ?? `${template.templateType}_signature`);
   }
 
   if (
@@ -152,6 +161,27 @@ export function classifyOpportunityWorkbook(input: {
     add("received_history", 7, "actual_spend_context");
   }
 
+  if (
+    has(headers, "company") &&
+    has(headers, "facility") &&
+    has(headers, "global supplier name") &&
+    has(headers, "mfg partno") &&
+    has(headers, "total")
+  ) {
+    add("purchase_history", 30, "purchase_cube_columns");
+  }
+
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn) &&
+    has(headers, "mfg") &&
+    has(headers, "qty") &&
+    has(headers, "cost") &&
+    has(headers, "price") &&
+    has(headers, "gp")
+  ) {
+    add("quote_history", 30, "quote_database_columns");
+  }
+
   if (has(headers, "sales person") && has(headers, "item") && count(headers, ["unit price", "unit cost", "sales", "cost", "g p"]) >= 2) {
     add("sales_history", 20, "sales_report_columns");
   }
@@ -171,17 +201,40 @@ export function classifyOpportunityWorkbook(input: {
       ? "unknown"
       : winner[0];
   const classificationScore = detectedType === "unknown" ? winner?.[1] ?? 0 : winner[1];
+  const runnerUpScore = runnerUp?.[1] ?? 0;
+  const classificationConfidence = detectedType === "unknown"
+    ? "review" as const
+    : classificationScore >= 30 && classificationScore - runnerUpScore >= 8
+      ? "high" as const
+      : classificationScore >= 16
+        ? "medium" as const
+        : "low" as const;
+  const hiddenRowCount = input.sheets.reduce((sum, sheet) => sum + (sheet.hiddenRowCount ?? 0), 0);
+  const usefulRowCount = input.sheets.reduce(
+    (sum, sheet) => sum + (sheet.usefulRowCount ?? sheet.rowCount),
+    0
+  );
 
   return {
     fileName: input.fileName,
     sheetCount: input.sheets.length,
     rowCount: input.rowCount,
+    usefulRowCount,
+    hiddenRowCount,
     detectedType,
     classificationScore,
+    classificationConfidence,
     classificationReasons:
       detectedType === "unknown"
         ? ["insufficient_or_ambiguous_structure"]
         : (reasons.get(detectedType) ?? []).slice(0, 6),
+    templateType: template.templateType,
+    mappingVersion: template.mappingVersion,
+    warnings: template.templateType === "flex_shortage_shifted_offer"
+      ? ["shifted_column_mapping"]
+      : template.confidence === "medium"
+        ? ["template_mapping_requires_confirmation"]
+        : [],
     sheets: input.sheets
   };
 }

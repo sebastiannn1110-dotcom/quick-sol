@@ -8,18 +8,34 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import OpportunityCard from "@/components/opportunity-finder/OpportunityCard";
-import OpportunityFinder from "@/components/opportunity-finder/OpportunityFinder";
+import OpportunityFinder, {
+  futureValidityIso,
+  opportunityFileRequiresValidity
+} from "@/components/opportunity-finder/OpportunityFinder";
 import {
   buildOpportunityCsv,
   buildOpportunityExportWorkbook
 } from "@/app/api/opportunity-finder/jobs/[id]/export/route";
-import { resultDatabaseRow } from "@/lib/opportunity-finder/api";
+import {
+  OPPORTUNITY_RESULT_SELECT,
+  resultDatabaseRow
+} from "@/lib/opportunity-finder/api";
 import { matchOpportunityRows } from "@/lib/opportunity-finder/matcher";
 import { parseOpportunityWorkbook } from "@/lib/opportunity-finder/parser";
 import type {
   CanonicalOpportunityRow,
   OpportunityResult
 } from "@/lib/opportunity-finder/types";
+
+vi.mock("@/lib/opportunity-finder/pipeline", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/opportunity-finder/pipeline")>(
+    "@/lib/opportunity-finder/pipeline"
+  );
+  return {
+    ...actual,
+    sha256OpportunityFileContents: vi.fn(async () => "a".repeat(64))
+  };
+});
 
 const temporaryDirectories: string[] = [];
 
@@ -92,6 +108,31 @@ function databaseResult(result: OpportunityResult) {
 }
 
 describe("Opportunity Finder public privacy and terminology", () => {
+  it("requires explicit future validity for supplier files and detected embedded offers", () => {
+    const plainFile = { warnings: [], columnMappings: [] };
+    const embeddedFile = {
+      warnings: ["embedded_offer_columns_mapped"],
+      columnMappings: [{ canonicalField: "mpn" }]
+    };
+    expect(opportunityFileRequiresValidity(plainFile, "supplier_offer")).toBe(true);
+    expect(opportunityFileRequiresValidity(embeddedFile, "demand")).toBe(true);
+    expect(opportunityFileRequiresValidity(plainFile, "stock")).toBe(false);
+
+    const now = new Date("2026-08-08T12:00:00.000Z").getTime();
+    expect(futureValidityIso("2026-08-08T12:00:00.000Z", now)).toBeNull();
+    expect(futureValidityIso("not-a-date", now)).toBeNull();
+    expect(futureValidityIso("2026-08-09T12:00:00.000Z", now))
+      .toBe("2026-08-09T12:00:00.000Z");
+
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "components/opportunity-finder/OpportunityFinder.tsx"),
+      "utf8"
+    );
+    expect(source).toContain('type="datetime-local"');
+    expect(source).toContain("validThrough: opportunityFileRequiresValidity");
+    expect(source).toContain("!roleCompatibility?.compatible || offerValidityMissing");
+  });
+
   it("keeps a financial source out of canonical rows, API DTO, cards, CSV, and XLSX", async () => {
     const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "opportunity-privacy-"));
     temporaryDirectories.push(directory);
@@ -126,6 +167,13 @@ describe("Opportunity Finder public privacy and terminology", () => {
 
     const publicResult = resultDatabaseRow(databaseResult(stockOnly!));
     expect(publicResult.unitOfMeasure).toBeNull();
+    const candidateId = "00000000-0000-5000-8000-000000000123";
+    const promotedPublicResult = resultDatabaseRow({
+      ...databaseResult(stockOnly!),
+      candidate_id: candidateId
+    });
+    expect(OPPORTUNITY_RESULT_SELECT.split(",")).toContain("candidate_id");
+    expect(promotedPublicResult.candidateId).toBe(candidateId);
     expect(JSON.stringify(publicResult)).not.toContain("FINANCIAL_SENTINEL");
     const legacyPublicResult = resultDatabaseRow({
       ...databaseResult(stockOnly!),
@@ -140,16 +188,26 @@ describe("Opportunity Finder public privacy and terminology", () => {
     expect(csv).toContain("Disponibilidad utilizable");
     expect(csv).toContain("Cantidad exacta");
 
-    const exportWorkbook = buildOpportunityExportWorkbook([publicResult], "es");
+    const exportWorkbook = buildOpportunityExportWorkbook([promotedPublicResult], "es");
     const exportBuffer = await exportWorkbook.xlsx.writeBuffer();
     const reloaded = new ExcelJS.Workbook();
     await reloaded.xlsx.load(exportBuffer);
-    const exportedValues = reloaded.worksheets[0].getSheetValues();
+    const exportedValues = reloaded.worksheets.map((sheet) => sheet.getSheetValues());
     expect(JSON.stringify(exportedValues)).not.toContain("FINANCIAL_SENTINEL");
-    const unitColumn = (reloaded.worksheets[0].getRow(1).values as unknown[])
+    const offerSheet = reloaded.getWorksheet("Oferta sin demanda")!;
+    const unitColumn = (offerSheet.getRow(1).values as unknown[])
       .findIndex((value) => value === "Unidad");
     expect(unitColumn).toBeGreaterThan(0);
-    expect(reloaded.worksheets[0].getCell(2, unitColumn).value ?? null).toBeNull();
+    expect(offerSheet.getCell(2, unitColumn).value ?? null).toBeNull();
+    const candidateColumn = (offerSheet.getRow(1).values as unknown[])
+      .findIndex((value) => value === "ID candidato");
+    expect(candidateColumn).toBeGreaterThan(0);
+    expect(offerSheet.getCell(2, candidateColumn).value).toBe(candidateId);
+    const traceSheet = reloaded.getWorksheet("Trazabilidad y reglas")!;
+    const traceCandidateColumn = (traceSheet.getRow(1).values as unknown[])
+      .findIndex((value) => value === "ID candidato");
+    expect(traceCandidateColumn).toBeGreaterThan(0);
+    expect(traceSheet.getColumn(traceCandidateColumn).values).toContain(candidateId);
 
     render(
       <LanguageProvider>

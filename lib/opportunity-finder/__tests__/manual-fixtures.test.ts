@@ -45,11 +45,16 @@ const fixtureRoot = path.join(
 const certifiedSets: Array<{
   directory: string;
   availabilityRole: OpportunitySelectedRole;
+  validityOverrideExpiresAt?: string;
 }> = [
   { directory: "set-01-planned-po-stock", availabilityRole: "stock" },
   { directory: "set-02-customer-demand-inventory", availabilityRole: "stock" },
   { directory: "set-03-need-list-excess", availabilityRole: "excess" },
-  { directory: "set-04-rfq-supplier-offers", availabilityRole: "supplier_offer" },
+  {
+    directory: "set-04-rfq-supplier-offers",
+    availabilityRole: "supplier_offer",
+    validityOverrideExpiresAt: "2099-12-31T23:59:59.000Z"
+  },
   { directory: "set-05-demand-received-parts", availabilityRole: "received_history" }
 ];
 
@@ -64,6 +69,7 @@ async function parseFixture(input: {
   fileId: string;
   side: "A" | "B";
   role: OpportunitySelectedRole;
+  validityOverrideExpiresAt?: string;
 }) {
   const rows: CanonicalOpportunityRow[] = [];
   const metrics = await parseOpportunityWorkbook({
@@ -73,6 +79,7 @@ async function parseFixture(input: {
     jobId: "00000000-0000-4000-8000-000000000001",
     side: input.side,
     role: input.role,
+    validityOverrideExpiresAt: input.validityOverrideExpiresAt,
     onBatch: async (batch) => rows.push(...batch)
   });
   return { rows, metrics };
@@ -185,9 +192,10 @@ describe("Opportunity Finder certified manual fixtures", () => {
         parseFixture({
           filePath: availabilityPath,
           fileId: `00000000-0000-4000-8000-0000000000${setIndex}b`,
-          side: "B",
-          role: set.availabilityRole
-        })
+           side: "B",
+           role: set.availabilityRole,
+           validityOverrideExpiresAt: set.validityOverrideExpiresAt
+         })
       ]);
 
       expect(needProfile.detectedType).toBe("demand");

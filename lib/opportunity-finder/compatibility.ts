@@ -4,7 +4,12 @@ import type {
 } from "@/lib/opportunity-finder/types";
 
 const SUPPLY_ROLES = new Set<OpportunitySelectedRole>(["stock", "excess", "supplier_offer"]);
-const HISTORY_ROLES = new Set<OpportunitySelectedRole>(["received_history", "sales_history"]);
+const HISTORY_ROLES = new Set<OpportunitySelectedRole>([
+  "received_history",
+  "purchase_history",
+  "quote_history",
+  "sales_history"
+]);
 
 export function evaluateOpportunityCompatibility(
   roleA: OpportunitySelectedRole | null,
@@ -38,6 +43,8 @@ export function evaluateOpportunityCompatibility(
     excess: "demand_excess",
     supplier_offer: "demand_supplier_offer",
     received_history: "demand_received_history",
+    purchase_history: "demand_purchase_history",
+    quote_history: "demand_quote_history",
     sales_history: "demand_sales_history"
   } as const;
   const comparisonKind = kinds[otherRole as keyof typeof kinds];

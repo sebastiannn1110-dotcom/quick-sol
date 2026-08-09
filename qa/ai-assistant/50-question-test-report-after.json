@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2.0",
-  "generatedAt": "2026-07-31T05:18:23.147Z",
+  "generatedAt": "2026-08-09T02:19:04.896Z",
   "environment": {
     "transport": "local in-process HTTP Request/Response against app/api/assistant/route.ts",
     "providers": "synthetic in-memory doubles only",
@@ -65,7 +65,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 137.11,
+          "latencyMs": 222.09,
           "pass": true,
           "failureReason": ""
         }
@@ -101,7 +101,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 49.25,
+          "latencyMs": 49.02,
           "pass": true,
           "failureReason": ""
         }
@@ -137,7 +137,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 37.01,
+          "latencyMs": 38.83,
           "pass": true,
           "failureReason": ""
         }
@@ -173,7 +173,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 42.39,
+          "latencyMs": 64.29,
           "pass": true,
           "failureReason": ""
         }
@@ -209,7 +209,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 33.15,
+          "latencyMs": 42.69,
           "pass": true,
           "failureReason": ""
         }
@@ -245,7 +245,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 31.61,
+          "latencyMs": 45.33,
           "pass": true,
           "failureReason": ""
         }
@@ -281,7 +281,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 66.92,
+          "latencyMs": 79.04,
           "pass": true,
           "failureReason": ""
         }
@@ -319,7 +319,7 @@
             "business_records"
           ],
           "providerCalls": 0,
-          "latencyMs": 24.55,
+          "latencyMs": 41.05,
           "pass": true,
           "failureReason": ""
         }
@@ -357,7 +357,7 @@
             "business_records"
           ],
           "providerCalls": 0,
-          "latencyMs": 22.53,
+          "latencyMs": 43.05,
           "pass": true,
           "failureReason": ""
         }
@@ -396,7 +396,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 41.16,
+          "latencyMs": 50.99,
           "pass": true,
           "failureReason": ""
         }
@@ -432,7 +432,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 34.29,
+          "latencyMs": 40.91,
           "pass": true,
           "failureReason": ""
         }
@@ -468,7 +468,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 28.43,
+          "latencyMs": 30.44,
           "pass": true,
           "failureReason": ""
         }
@@ -507,7 +507,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 34.95,
+          "latencyMs": 36.72,
           "pass": true,
           "failureReason": ""
         }
@@ -546,7 +546,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 24.15,
+          "latencyMs": 21.01,
           "pass": true,
           "failureReason": ""
         }
@@ -582,7 +582,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 38.36,
+          "latencyMs": 47.76,
           "pass": true,
           "failureReason": ""
         }
@@ -618,7 +618,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 27.54,
+          "latencyMs": 72.3,
           "pass": true,
           "failureReason": ""
         }
@@ -657,7 +657,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 42.42,
+          "latencyMs": 50.49,
           "pass": true,
           "failureReason": ""
         }
@@ -696,7 +696,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 28.9,
+          "latencyMs": 21.56,
           "pass": true,
           "failureReason": ""
         }
@@ -735,7 +735,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 29.13,
+          "latencyMs": 21.08,
           "pass": true,
           "failureReason": ""
         }
@@ -774,7 +774,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 35.81,
+          "latencyMs": 49.68,
           "pass": true,
           "failureReason": ""
         }
@@ -813,7 +813,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 22.67,
+          "latencyMs": 18.92,
           "pass": true,
           "failureReason": ""
         }
@@ -852,7 +852,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 22.26,
+          "latencyMs": 26.26,
           "pass": true,
           "failureReason": ""
         }
@@ -891,7 +891,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 26.26,
+          "latencyMs": 22.95,
           "pass": true,
           "failureReason": ""
         }
@@ -930,7 +930,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 22.7,
+          "latencyMs": 23.06,
           "pass": true,
           "failureReason": ""
         }
@@ -969,7 +969,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 24.89,
+          "latencyMs": 26.69,
           "pass": true,
           "failureReason": ""
         }
@@ -1008,7 +1008,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 23.94,
+          "latencyMs": 42.58,
           "pass": true,
           "failureReason": ""
         }
@@ -1044,7 +1044,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 22.66,
+          "latencyMs": 21.97,
           "pass": true,
           "failureReason": ""
         }
@@ -1080,7 +1080,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 26.01,
+          "latencyMs": 20.38,
           "pass": true,
           "failureReason": ""
         }
@@ -1116,7 +1116,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 25.52,
+          "latencyMs": 31.22,
           "pass": true,
           "failureReason": ""
         }
@@ -1152,7 +1152,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 27.45,
+          "latencyMs": 33.29,
           "pass": true,
           "failureReason": ""
         }
@@ -1190,7 +1190,7 @@
             "upload_batches"
           ],
           "providerCalls": 0,
-          "latencyMs": 22.55,
+          "latencyMs": 17.61,
           "pass": true,
           "failureReason": ""
         }
@@ -1229,7 +1229,7 @@
             "business_records"
           ],
           "providerCalls": 0,
-          "latencyMs": 17.45,
+          "latencyMs": 22.38,
           "pass": true,
           "failureReason": ""
         }
@@ -1267,7 +1267,7 @@
             "import_errors"
           ],
           "providerCalls": 0,
-          "latencyMs": 25.94,
+          "latencyMs": 128.48,
           "pass": true,
           "failureReason": ""
         }
@@ -1309,7 +1309,7 @@
             "file_schema_profiles"
           ],
           "providerCalls": 0,
-          "latencyMs": 33.02,
+          "latencyMs": 216.25,
           "pass": true,
           "failureReason": ""
         }
@@ -1347,7 +1347,7 @@
             "upload_batches"
           ],
           "providerCalls": 0,
-          "latencyMs": 30.03,
+          "latencyMs": 65.21,
           "pass": true,
           "failureReason": ""
         }
@@ -1385,7 +1385,7 @@
             "business_records"
           ],
           "providerCalls": 0,
-          "latencyMs": 21.32,
+          "latencyMs": 31.69,
           "pass": true,
           "failureReason": ""
         }
@@ -1424,7 +1424,7 @@
             "opportunity_finder_results"
           ],
           "providerCalls": 0,
-          "latencyMs": 27.54,
+          "latencyMs": 57.66,
           "pass": true,
           "failureReason": ""
         }
@@ -1460,7 +1460,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 27.06,
+          "latencyMs": 75.55,
           "pass": true,
           "failureReason": ""
         }
@@ -1496,7 +1496,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 12.61,
+          "latencyMs": 19.37,
           "pass": true,
           "failureReason": ""
         }
@@ -1532,7 +1532,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 10.43,
+          "latencyMs": 16.19,
           "pass": true,
           "failureReason": ""
         }
@@ -1568,7 +1568,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 3.26,
+          "latencyMs": 5.95,
           "pass": true,
           "failureReason": ""
         },
@@ -1588,7 +1588,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.33,
+          "latencyMs": 2.51,
           "pass": true,
           "failureReason": ""
         },
@@ -1608,7 +1608,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 3.43,
+          "latencyMs": 4.32,
           "pass": true,
           "failureReason": ""
         }
@@ -1644,7 +1644,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.57,
+          "latencyMs": 7.3,
           "pass": true,
           "failureReason": ""
         },
@@ -1664,7 +1664,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 1.76,
+          "latencyMs": 4.38,
           "pass": true,
           "failureReason": ""
         },
@@ -1684,7 +1684,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.54,
+          "latencyMs": 2.37,
           "pass": true,
           "failureReason": ""
         }
@@ -1720,7 +1720,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.76,
+          "latencyMs": 2.99,
           "pass": true,
           "failureReason": ""
         },
@@ -1740,7 +1740,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.45,
+          "latencyMs": 2.93,
           "pass": true,
           "failureReason": ""
         },
@@ -1760,7 +1760,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.44,
+          "latencyMs": 3.5,
           "pass": true,
           "failureReason": ""
         }
@@ -1796,7 +1796,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.03,
+          "latencyMs": 2.34,
           "pass": true,
           "failureReason": ""
         },
@@ -1816,7 +1816,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.35,
+          "latencyMs": 2.66,
           "pass": true,
           "failureReason": ""
         },
@@ -1836,7 +1836,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.28,
+          "latencyMs": 2.35,
           "pass": true,
           "failureReason": ""
         }
@@ -1872,7 +1872,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.79,
+          "latencyMs": 2.91,
           "pass": true,
           "failureReason": ""
         },
@@ -1892,7 +1892,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.4,
+          "latencyMs": 2.9,
           "pass": true,
           "failureReason": ""
         },
@@ -1912,7 +1912,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.21,
+          "latencyMs": 2.79,
           "pass": true,
           "failureReason": ""
         }
@@ -1948,7 +1948,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.44,
+          "latencyMs": 3.56,
           "pass": true,
           "failureReason": ""
         },
@@ -1968,7 +1968,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 3.46,
+          "latencyMs": 2.16,
           "pass": true,
           "failureReason": ""
         },
@@ -1988,7 +1988,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 2.64,
+          "latencyMs": 3.58,
           "pass": true,
           "failureReason": ""
         }
@@ -2024,7 +2024,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 45.5,
+          "latencyMs": 89.84,
           "pass": true,
           "failureReason": ""
         }
@@ -2060,7 +2060,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 23.46,
+          "latencyMs": 26.99,
           "pass": true,
           "failureReason": ""
         }
@@ -2096,7 +2096,7 @@
           "commercialDatabaseCalls": 0,
           "databaseTables": [],
           "providerCalls": 0,
-          "latencyMs": 17.29,
+          "latencyMs": 17.5,
           "pass": true,
           "failureReason": ""
         }
@@ -2134,7 +2134,7 @@
             "business_records"
           ],
           "providerCalls": 0,
-          "latencyMs": 24.29,
+          "latencyMs": 31.09,
           "pass": true,
           "failureReason": ""
         }

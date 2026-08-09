@@ -5,8 +5,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildOpportunityCsv,
   buildOpportunityExportWorkbook,
+  classifyOpportunityForExport,
   exportHeaders,
-  exportRow
+  exportRow,
+  OPPORTUNITY_EXPORT_SHEET_NAMES
 } from "@/app/api/opportunity-finder/jobs/[id]/export/route";
 import {
   getOpportunityFinderAiSummary,
@@ -277,25 +279,39 @@ function stringMatrix(rows: unknown[][]) {
   return rows.map((row) => row.map((value) => String(value ?? "")));
 }
 
-async function xlsxMatrix(
+async function exportedWorkbook(
   results: OpportunityResult[],
-  language: Language
-): Promise<string[][]> {
-  const exported = buildOpportunityExportWorkbook(results, language);
+  language: Language,
+  output: OpportunityMatchOutput
+) {
+  const exported = buildOpportunityExportWorkbook(results, language, {
+    summary: output.summary,
+    jobId: JOB_ID,
+    pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION,
+    generatedAt: "2026-07-30T12:00:30.000Z"
+  });
   const buffer = await exported.xlsx.writeBuffer();
   const reloaded = new ExcelJS.Workbook();
   await reloaded.xlsx.load(buffer);
-  const sheet = reloaded.worksheets[0];
-  const columnCount = exportHeaders(language).length;
-  const rows: string[][] = [];
-  for (let rowNumber = 1; rowNumber <= sheet.rowCount; rowNumber += 1) {
-    const row: string[] = [];
-    for (let columnNumber = 1; columnNumber <= columnCount; columnNumber += 1) {
-      row.push(String(sheet.getCell(rowNumber, columnNumber).value ?? ""));
-    }
-    rows.push(row);
+  return reloaded;
+}
+
+function cellText(sheet: ExcelJS.Worksheet, row: number, column: number) {
+  return String(sheet.getCell(row, column).value ?? "");
+}
+
+function findResultRow(sheet: ExcelJS.Worksheet, resultId: string) {
+  for (let row = 2; row <= sheet.rowCount; row += 1) {
+    if (cellText(sheet, row, 2) === resultId) return row;
   }
-  return rows;
+  return null;
+}
+
+function summaryMetric(sheet: ExcelJS.Worksheet, metric: string) {
+  for (let row = 1; row <= sheet.rowCount; row += 1) {
+    if (cellText(sheet, row, 1) === metric) return Number(sheet.getCell(row, 2).value);
+  }
+  return null;
 }
 
 function countExportedTypes(rows: string[][], language: Language) {
@@ -425,14 +441,87 @@ describe("Opportunity Finder Set 01 assistant parity", () => {
       const csvRows = parseQuotedCsv(
         buildOpportunityCsv(persistedResults, language)
       );
-      const workbookRows = await xlsxMatrix(persistedResults, language);
+      const workbook = await exportedWorkbook(persistedResults, language, output);
 
       expect(csvRows).toEqual(stringMatrix(expectedRows));
-      expect(workbookRows).toEqual(stringMatrix(expectedRows));
       expect(countExportedTypes(csvRows, language)).toEqual(expectedTypeCounts);
-      expect(countExportedTypes(workbookRows, language)).toEqual(expectedTypeCounts);
       expect(csvRows.some((row) => row[1] === "0007-QA-006")).toBe(true);
-      expect(workbookRows.some((row) => row[1] === "0007-QA-006")).toBe(true);
+
+      expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+        ...OPPORTUNITY_EXPORT_SHEET_NAMES
+      ]);
+      expect(workbook.worksheets).toHaveLength(9);
+      expect(workbook.worksheets[0].name).toBe("Resumen");
+
+      const summarySheet = workbook.getWorksheet(OPPORTUNITY_EXPORT_SHEET_NAMES[0])!;
+      expect(summaryMetric(summarySheet, "Resultados exportados")).toBe(persistedResults.length);
+      expect(summaryMetric(summarySheet, "Oportunidades completas")).toBe(8);
+      expect(summaryMetric(summarySheet, "Oportunidades parciales")).toBe(2);
+      expect(summaryMetric(summarySheet, "Requiere sourcing")).toBe(2);
+      expect(summaryMetric(summarySheet, "Oferta sin demanda")).toBe(1);
+      expect(summaryMetric(summarySheet, "Posibles matches")).toBe(1);
+      expect(summaryMetric(summarySheet, "Filas rechazadas")).toBe(0);
+
+      const expectedSheetCounts = new Map<string, number>([
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[1], 8],
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[2], 2],
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[3], 2],
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[4], 1],
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[5], 1],
+        [OPPORTUNITY_EXPORT_SHEET_NAMES[6], 0]
+      ]);
+      for (const [sheetName, expectedCount] of expectedSheetCounts) {
+        expect(workbook.getWorksheet(sheetName)!.rowCount - 1).toBe(expectedCount);
+      }
+
+      const exportedResultIds: string[] = [];
+      for (const sheetName of OPPORTUNITY_EXPORT_SHEET_NAMES.slice(1, 7)) {
+        const sheet = workbook.getWorksheet(sheetName)!;
+        for (let row = 2; row <= sheet.rowCount; row += 1) {
+          const resultId = cellText(sheet, row, 2);
+          if (resultId) exportedResultIds.push(resultId);
+        }
+      }
+      expect(exportedResultIds.sort()).toEqual(
+        persistedResults.map((result) => result.id!).sort()
+      );
+
+      for (const result of persistedResults) {
+        const sheetName = classifyOpportunityForExport(result);
+        const sheet = workbook.getWorksheet(sheetName)!;
+        const row = findResultRow(sheet, result.id!);
+        expect(row, `${result.displayMpn} must be present in ${sheetName}`).not.toBeNull();
+        const rowNumber = row!;
+        const legacyRow = exportRow(result, language).map((value) => String(value ?? ""));
+
+        if (sheetName === OPPORTUNITY_EXPORT_SHEET_NAMES[5]) {
+          expect(cellText(sheet, rowNumber, 1)).toBe("Resultado en revisión");
+          expect(cellText(sheet, rowNumber, 4)).toBe(result.demandMpnOriginal ?? result.displayMpn);
+          expect(cellText(sheet, rowNumber, 6)).toBe(result.normalizedMpn);
+          expect(cellText(sheet, rowNumber, 14)).toBe(legacyRow[16]);
+          expect(cellText(sheet, rowNumber, 15)).toBe(result.reviewStatus ?? "");
+          continue;
+        }
+
+        expect(cellText(sheet, rowNumber, 1)).toBe(legacyRow[0]);
+        expect(cellText(sheet, rowNumber, 6)).toBe(result.displayMpn);
+        expect(cellText(sheet, rowNumber, 7)).toBe(result.normalizedMpn);
+        expect(cellText(sheet, rowNumber, 13)).toBe(String(result.requiredQty ?? ""));
+        expect(cellText(sheet, rowNumber, 14)).toBe(String(result.availableQty ?? ""));
+        expect(cellText(sheet, rowNumber, 15)).toBe(String(result.allocatedQty ?? ""));
+        expect(cellText(sheet, rowNumber, 17)).toBe(String(result.shortageQty ?? ""));
+        expect(cellText(sheet, rowNumber, 21)).toBe(legacyRow[2]);
+        expect(cellText(sheet, rowNumber, 22)).toBe(legacyRow[3]);
+        expect(cellText(sheet, rowNumber, 23)).toBe(legacyRow[4]);
+        expect(cellText(sheet, rowNumber, 27)).toBe(legacyRow[16]);
+        expect(cellText(sheet, rowNumber, 28)).toBe(legacyRow[17]);
+        expect(cellText(sheet, rowNumber, 29)).toBe(legacyRow[18]);
+      }
+
+      const leadingZeroSheet = workbook.getWorksheet("Oportunidades completas")!;
+      expect(Array.from({ length: leadingZeroSheet.rowCount - 1 }, (_, index) =>
+        cellText(leadingZeroSheet, index + 2, 6)
+      )).toContain("0007-QA-006");
     }
   });
 });

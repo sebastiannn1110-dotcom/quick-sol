@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  assertCanonicalOpportunityStorageReference,
+  isCanonicalOpportunityStorageReference,
   opportunityFinderMaxFileSizeBytes,
   opportunityFinderMaxRowsPerFile,
   safeOpportunityFileName,
@@ -8,6 +10,8 @@ import {
 } from "@/lib/opportunity-finder/validation";
 
 describe("Opportunity Finder upload validation", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("accepts the real large-workbook envelope without processing the file", () => {
     expect(validateOpportunityFileMetadata({
       fileName: "planned.xlsx",
@@ -47,6 +51,15 @@ describe("Opportunity Finder upload validation", () => {
     })).toBe("FILE_TOO_LARGE");
   });
 
+  it("uses the public size fallback but never exceeds the physical 64 MiB cap", () => {
+    vi.stubEnv("OPPORTUNITY_FINDER_MAX_FILE_SIZE_MB", "");
+    vi.stubEnv("NEXT_PUBLIC_OPPORTUNITY_FINDER_MAX_FILE_SIZE_MB", "48");
+    expect(opportunityFinderMaxFileSizeBytes()).toBe(48 * 1024 * 1024);
+
+    vi.stubEnv("OPPORTUNITY_FINDER_MAX_FILE_SIZE_MB", "128");
+    expect(opportunityFinderMaxFileSizeBytes()).toBe(64 * 1024 * 1024);
+  });
+
   it("sanitizes names and creates an owner/job/file scoped storage path", () => {
     expect(safeOpportunityFileName("..\\customer/plan?.xlsx")).toBe("..-customer-plan-.xlsx");
     expect(safeOpportunityStoragePath({
@@ -55,5 +68,35 @@ describe("Opportunity Finder upload validation", () => {
       fileId: "file",
       fileName: "plan.xlsx"
     })).toBe("owner/job/file.xlsx");
+  });
+
+  it("accepts only the canonical private bucket and owner/job/file path", () => {
+    const reference = {
+      ownerId: "68d74084-f3ca-41f0-b0dc-a9622a2c04d2",
+      jobId: "58e678bf-599f-4bcd-846f-667b06af2ab3",
+      fileId: "50c68859-b18d-46fc-8bf4-ebc5209dd47c",
+      originalFileName: "Demand.CSV",
+      storageBucket: "opportunity-finder",
+      storagePath: "68d74084-f3ca-41f0-b0dc-a9622a2c04d2/58e678bf-599f-4bcd-846f-667b06af2ab3/50c68859-b18d-46fc-8bf4-ebc5209dd47c.csv"
+    };
+
+    expect(isCanonicalOpportunityStorageReference(reference)).toBe(true);
+    expect(isCanonicalOpportunityStorageReference({
+      ...reference,
+      storageBucket: "private-customer-documents"
+    })).toBe(false);
+    expect(isCanonicalOpportunityStorageReference({
+      ...reference,
+      storagePath: `attacker/${reference.jobId}/${reference.fileId}.csv`
+    })).toBe(false);
+    expect(isCanonicalOpportunityStorageReference({
+      ...reference,
+      originalFileName: "payload.xlsm",
+      storagePath: `${reference.ownerId}/${reference.jobId}/${reference.fileId}.xlsm`
+    })).toBe(false);
+    expect(() => assertCanonicalOpportunityStorageReference({
+      ...reference,
+      storagePath: `${reference.ownerId}/${reference.jobId}/another-file.csv`
+    })).toThrow("OPPORTUNITY_STORAGE_REFERENCE_INVALID");
   });
 });

@@ -1,18 +1,21 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getAuthContext } from "@/lib/auth/context";
+import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import {
   opportunityFinderMaxFileSizeBytes,
+  OPPORTUNITY_FINDER_STORAGE_BUCKET,
   safeOpportunityFileName,
   safeOpportunityStoragePath,
   validateOpportunityFileMetadata
 } from "@/lib/opportunity-finder/validation";
 import {
   buildOpportunityFinderIdempotencyKey,
+  OPPORTUNITY_FINDER_CONTENT_SHA256_PATTERN,
   OPPORTUNITY_FINDER_PIPELINE_VERSION,
   opportunityFinderPipelineVersionFromKey
 } from "@/lib/opportunity-finder/pipeline";
+import { safeContextText } from "@/lib/opportunity-finder/normalization";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
@@ -23,12 +26,13 @@ const fileSchema = z.object({
   side: z.enum(["A", "B"]),
   fileName: z.string().trim().min(1).max(260),
   fileSize: z.number().int().positive(),
-  fileType: z.string().trim().max(180).optional().nullable()
+  fileType: z.string().trim().max(180).optional().nullable(),
+  contentSha256: z.string().regex(OPPORTUNITY_FINDER_CONTENT_SHA256_PATTERN)
 });
 
 const createSchema = z.object({
   files: z.array(fileSchema).length(2),
-  idempotencyKey: z.string().trim().min(1).max(240).optional().nullable()
+  clientContext: z.string().trim().max(160).optional().nullable()
 }).superRefine((value, context) => {
   if (new Set(value.files.map((file) => file.side)).size !== 2) {
     context.addIssue({
@@ -67,7 +71,12 @@ export async function POST(request: Request) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ errorCode: "EXACTLY_TWO_FILES_REQUIRED" }, { status: 400 });
+    const invalidHash = parsed.error.issues.some((issue) =>
+      issue.path.at(-1) === "contentSha256"
+    );
+    return NextResponse.json({
+      errorCode: invalidHash ? "FILE_HASH_INVALID" : "EXACTLY_TWO_FILES_REQUIRED"
+    }, { status: 400 });
   }
   for (const file of parsed.data.files) {
     const errorCode = validateOpportunityFileMetadata(file);
@@ -79,23 +88,21 @@ export async function POST(request: Request) {
   const service = createSupabaseServiceRoleClient();
   if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
-  const idempotencyKey = parsed.data.idempotencyKey
-    ? await buildOpportunityFinderIdempotencyKey({
-      attemptId: parsed.data.idempotencyKey,
-      files: parsed.data.files
-    })
-    : null;
+  const clientContext = safeContextText(parsed.data.clientContext, 160);
+  const idempotencyKey = await buildOpportunityFinderIdempotencyKey({
+    files: parsed.data.files,
+    clientContext
+  });
 
-  if (idempotencyKey) {
-    const { data: existing } = await context.supabase
-      .from("opportunity_finder_jobs")
-      .select("id,status,created_at,idempotency_key")
-      .eq("created_by", context.profile.id)
-      .eq("idempotency_key", idempotencyKey)
-      .maybeSingle();
-    if (existing) {
-      return existingComparisonResponse(existing);
-    }
+  const { data: existing } = await context.supabase
+    .from("opportunity_finder_jobs")
+    .select("id,status,created_at,idempotency_key")
+    .eq("tenant_id", context.profile.id)
+    .eq("created_by", context.profile.id)
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+  if (existing) {
+    return existingComparisonResponse(existing);
   }
 
   const jobId = crypto.randomUUID();
@@ -110,6 +117,7 @@ export async function POST(request: Request) {
         originalFileName,
         mimeType: file.fileType || null,
         sizeBytes: file.fileSize,
+        contentSha256: file.contentSha256,
         storagePath: safeOpportunityStoragePath({
           userId: context.profile.id,
           jobId,
@@ -119,21 +127,25 @@ export async function POST(request: Request) {
       };
     });
 
-  const { error: jobError } = await context.supabase
+  const { error: jobError } = await service
     .from("opportunity_finder_jobs")
     .insert({
       id: jobId,
       created_by: context.profile.id,
+      tenant_id: context.profile.id,
+      client_context: clientContext,
+      pipeline_version: OPPORTUNITY_FINDER_PIPELINE_VERSION,
       idempotency_key: idempotencyKey,
       status: "uploading",
       current_stage: "uploading",
       progress_percent: 0
     });
   if (jobError) {
-    if (idempotencyKey && jobError.code === "23505") {
+    if (jobError.code === "23505") {
       const { data: existing } = await context.supabase
         .from("opportunity_finder_jobs")
         .select("id,status,created_at,idempotency_key")
+        .eq("tenant_id", context.profile.id)
         .eq("created_by", context.profile.id)
         .eq("idempotency_key", idempotencyKey)
         .maybeSingle();
@@ -141,40 +153,42 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
   }
-  const { error: filesError } = await context.supabase
+  const { error: filesError } = await service
     .from("opportunity_finder_files")
     .insert(files.map((file) => ({
       id: file.id,
       job_id: jobId,
       side: file.side,
       original_file_name: file.originalFileName,
-      storage_bucket: "opportunity-finder",
+      storage_bucket: OPPORTUNITY_FINDER_STORAGE_BUCKET,
       storage_path: file.storagePath,
       mime_type: file.mimeType,
       size_bytes: file.sizeBytes,
+      content_sha256: file.contentSha256,
+      validation_status: "pending",
       parse_status: "pending_upload"
     })));
   if (filesError) {
-    await context.supabase.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
+    await service.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
     return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
   }
-  const { error: linkError } = await context.supabase
+  const { error: linkError } = await service
     .from("opportunity_finder_jobs")
     .update({ file_a_id: files[0].id, file_b_id: files[1].id })
     .eq("id", jobId)
     .eq("created_by", context.profile.id);
   if (linkError) {
-    await context.supabase.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
+    await service.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
     return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
   }
 
   const signedFiles = [];
   for (const file of files) {
     const { data, error } = await service.storage
-      .from("opportunity-finder")
+      .from(OPPORTUNITY_FINDER_STORAGE_BUCKET)
       .createSignedUploadUrl(file.storagePath);
     if (error || !data) {
-      await context.supabase.from("opportunity_finder_jobs").update({
+      await service.from("opportunity_finder_jobs").update({
         status: "failed",
         error_code: "SIGNED_UPLOAD_CREATE_FAILED"
       }).eq("id", jobId).eq("created_by", context.profile.id);
@@ -208,6 +222,11 @@ export async function POST(request: Request) {
       maxFileSizeBytes: opportunityFinderMaxFileSizeBytes(),
       pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
     }
+  });
+  await logAuditEvent(context, "opportunity_finder_job_created", "opportunity_finder_job", jobId, {
+    fileCount: 2,
+    totalSizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
+    pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
   });
   return NextResponse.json({
     jobId,

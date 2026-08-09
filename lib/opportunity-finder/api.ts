@@ -12,6 +12,10 @@ export const OPPORTUNITY_JOB_SELECT = [
   "id",
   "created_by",
   "idempotency_key",
+  "tenant_id",
+  "client_context",
+  "pipeline_version",
+  "content_pair_sha256",
   "status",
   "current_stage",
   "progress_percent",
@@ -44,6 +48,9 @@ export const OPPORTUNITY_FILE_SELECT = [
   "original_file_name",
   "mime_type",
   "size_bytes",
+  "actual_size_bytes",
+  "content_sha256",
+  "validation_status",
   "detected_type",
   "selected_role",
   "classification_score",
@@ -51,6 +58,14 @@ export const OPPORTUNITY_FILE_SELECT = [
   "sheet_profiles",
   "sheet_count",
   "row_count",
+  "useful_row_count",
+  "hidden_row_count",
+  "template_type",
+  "mapping_version",
+  "column_mappings",
+  "profile_warnings",
+  "profile_errors",
+  "validity_override_expires_at",
   "parse_status",
   "uploaded_at",
   "profiled_at",
@@ -61,23 +76,41 @@ export const OPPORTUNITY_FILE_SELECT = [
 
 export const OPPORTUNITY_RESULT_SELECT = [
   "id",
+  "candidate_id",
   "job_id",
   "opportunity_type",
   "exact_match",
+  "exact_mpn_match",
   "usable_availability_match",
   "exact_quantity_match",
+  "match_tier",
+  "confidence",
+  "match_explanation",
+  "review_status",
+  "demand_event_key",
+  "demand_mpn_original",
+  "supply_mpn_original",
   "display_mpn",
   "normalized_mpn",
   "manufacturer",
+  "manufacturer_canonical",
   "customer_context",
   "supplier_context",
   "required_qty",
   "available_qty",
   "allocated_qty",
+  "remaining_qty",
   "shortage_qty",
   "coverage_percent",
   "required_date",
   "unit_of_measure",
+  "moq",
+  "spq",
+  "date_code",
+  "coo",
+  "lead_time_weeks",
+  "condition",
+  "expires_at",
   "demand_file_id",
   "demand_file_name",
   "demand_sheet_name",
@@ -86,6 +119,9 @@ export const OPPORTUNITY_RESULT_SELECT = [
   "supply_sheet_name",
   "demand_source_rows",
   "supply_source_rows",
+  "demand_traces",
+  "supply_traces",
+  "allocations_trace",
   "reason_code",
   "action_code",
   "warnings",
@@ -151,35 +187,86 @@ export async function loadOwnedOpportunityJob(
   return data as unknown as Record<string, unknown> | null;
 }
 
+function nullableFiniteNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function resultDatabaseRow(
   row: Record<string, unknown>,
-  pipelineVersion: string | null = OPPORTUNITY_FINDER_PIPELINE_VERSION
+  pipelineVersion: string | null = OPPORTUNITY_FINDER_PIPELINE_VERSION,
+  protectedFields?: {
+    commercial?: Record<string, unknown> | null;
+    financial?: Record<string, unknown> | null;
+  }
 ) {
-  const exactMpnMatch = Boolean(row.exact_match);
+  const exactMpnMatch = row.exact_mpn_match === null || row.exact_mpn_match === undefined
+    ? Boolean(row.exact_match)
+    : Boolean(row.exact_mpn_match);
   const unitOfMeasure =
     pipelineVersion === OPPORTUNITY_FINDER_PIPELINE_VERSION
       ? row.unit_of_measure as string | null
       : null;
   return {
     id: row.id as string,
+    candidateId: typeof row.candidate_id === "string" ? row.candidate_id : null,
     jobId: row.job_id as string,
     opportunityType: row.opportunity_type as OpportunityType,
     exactMpnMatch,
     exactMatch: exactMpnMatch,
     usableAvailabilityMatch: Boolean(row.usable_availability_match),
     exactQuantityMatch: Boolean(row.exact_quantity_match),
+    matchTier: row.match_tier ?? null,
+    confidence: row.confidence ?? "low",
+    matchExplanation: row.match_explanation ?? "",
+    reviewStatus: row.review_status ?? "not_required",
+    demandEventKey: row.demand_event_key as string | null,
+    demandMpnOriginal: row.demand_mpn_original as string | null,
+    supplyMpnOriginal: row.supply_mpn_original as string | null,
     displayMpn: row.display_mpn as string,
     normalizedMpn: row.normalized_mpn as string,
     manufacturer: row.manufacturer as string | null,
+    manufacturerCanonical: row.manufacturer_canonical as string | null,
     customerContext: row.customer_context as string | null,
     supplierContext: row.supplier_context as string | null,
-    requiredQty: row.required_qty === null ? null : Number(row.required_qty),
-    availableQty: row.available_qty === null ? null : Number(row.available_qty),
-    allocatedQty: row.allocated_qty === null ? null : Number(row.allocated_qty),
-    shortageQty: row.shortage_qty === null ? null : Number(row.shortage_qty),
-    coveragePercent: row.coverage_percent === null ? null : Number(row.coverage_percent),
+    requiredQty: nullableFiniteNumber(row.required_qty),
+    availableQty: nullableFiniteNumber(row.available_qty),
+    allocatedQty: nullableFiniteNumber(row.allocated_qty),
+    remainingQty: nullableFiniteNumber(row.remaining_qty),
+    shortageQty: nullableFiniteNumber(row.shortage_qty),
+    coveragePercent: nullableFiniteNumber(row.coverage_percent),
     requiredDate: row.required_date as string | null,
     unitOfMeasure,
+    targetPrice: protectedFields?.commercial?.target_price == null
+      ? null
+      : Number(protectedFields.commercial.target_price),
+    offerPrice: protectedFields?.commercial?.offer_price == null
+      ? null
+      : Number(protectedFields.commercial.offer_price),
+    targetGapPercent: protectedFields?.commercial?.target_gap_percent == null
+      ? null
+      : Number(protectedFields.commercial.target_gap_percent),
+    currency: (protectedFields?.commercial?.currency as string | null | undefined) ?? null,
+    revenuePotential: protectedFields?.commercial?.revenue_potential == null
+      ? null
+      : Number(protectedFields.commercial.revenue_potential),
+    unitCost: protectedFields?.financial?.unit_cost == null
+      ? null
+      : Number(protectedFields.financial.unit_cost),
+    grossProfit: protectedFields?.financial?.gross_profit == null
+      ? null
+      : Number(protectedFields.financial.gross_profit),
+    grossMarginPercent: protectedFields?.financial?.gross_margin_percent == null
+      ? null
+      : Number(protectedFields.financial.gross_margin_percent),
+    moq: nullableFiniteNumber(row.moq),
+    spq: nullableFiniteNumber(row.spq),
+    dateCode: row.date_code as string | null,
+    coo: row.coo as string | null,
+    leadTimeWeeks: nullableFiniteNumber(row.lead_time_weeks),
+    condition: row.condition as string | null,
+    expiresAt: row.expires_at as string | null,
     demandFileId: row.demand_file_id as string | null,
     demandFileName: row.demand_file_name as string | null,
     demandSheetName: row.demand_sheet_name as string | null,
@@ -188,6 +275,9 @@ export function resultDatabaseRow(
     supplySheetName: row.supply_sheet_name as string | null,
     demandSourceRows: Number(row.demand_source_rows ?? 0),
     supplySourceRows: Number(row.supply_source_rows ?? 0),
+    demandTraces: row.demand_traces ?? [],
+    supplyTraces: row.supply_traces ?? [],
+    allocations: row.allocations_trace ?? [],
     reasonCode: row.reason_code as OpportunityReasonCode,
     actionCode: row.action_code as OpportunityActionCode,
     warnings: (row.warnings ?? []) as OpportunityWarningCode[]
@@ -201,6 +291,8 @@ export function roleValue(value: unknown): OpportunitySelectedRole | null {
     "excess",
     "supplier_offer",
     "received_history",
+    "purchase_history",
+    "quote_history",
     "sales_history",
     "ignore"
   ]);

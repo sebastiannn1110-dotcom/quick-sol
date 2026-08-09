@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/auth/context";
+import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { cleanUuid, loadOwnedOpportunityJob } from "@/lib/opportunity-finder/api";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export async function POST(
   request: Request,
@@ -18,30 +19,30 @@ export async function POST(
   if (!["failed", "cancelled"].includes(String(job.status ?? ""))) {
     return NextResponse.json({ errorCode: "JOB_NOT_RETRYABLE" }, { status: 409 });
   }
-  const { data: files } = await context.supabase
-    .from("opportunity_finder_files")
-    .select("profiled_at,selected_role,storage_deleted_at")
-    .eq("job_id", jobId);
-  if (files?.some((file) => file.storage_deleted_at)) {
-    return NextResponse.json({ errorCode: "SOURCE_FILE_EXPIRED" }, { status: 410 });
+  const service = createSupabaseServiceRoleClient();
+  if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
+  const { data: retriedJob, error } = await service.rpc("retry_opportunity_finder_job", {
+    job_id: jobId,
+    actor_id: context.profile.id
+  });
+  if (error) {
+    if (error.code === "P0002") {
+      return NextResponse.json({ errorCode: "JOB_NOT_FOUND" }, { status: 404 });
+    }
+    if (error.code === "55000") {
+      const sourceExpired = /source_file_expired/i.test(error.message ?? "");
+      return NextResponse.json({
+        errorCode: sourceExpired ? "SOURCE_FILE_EXPIRED" : "JOB_NOT_RETRYABLE"
+      }, { status: sourceExpired ? 410 : 409 });
+    }
+    return NextResponse.json({ errorCode: "JOB_RETRY_FAILED" }, { status: 500 });
   }
-  const readyForMatching = files?.length === 2 && files.every((file) => file.profiled_at && file.selected_role);
-  const { error } = await context.supabase
-    .from("opportunity_finder_jobs")
-    .update({
-      status: "queued",
-      current_stage: readyForMatching ? "normalizing_mpn" : "inspecting_sheets",
-      progress_percent: readyForMatching ? 26 : 2,
-      cancel_requested: false,
-      error_code: null,
-      attempts: 0,
-      next_retry_at: null,
-      locked_at: null,
-      locked_by: null,
-      heartbeat_at: null
-    })
-    .eq("id", jobId)
-    .eq("created_by", context.profile.id);
-  if (error) return NextResponse.json({ errorCode: "JOB_RETRY_FAILED" }, { status: 500 });
+  const committedJob = (Array.isArray(retriedJob) ? retriedJob[0] : retriedJob) as
+    | Record<string, unknown>
+    | null;
+  const readyForMatching = String(committedJob?.current_stage ?? "") === "normalizing_mpn";
+  await logAuditEvent(context, "opportunity_finder_job_retried", "opportunity_finder_job", jobId, {
+    readyForMatching
+  });
   return NextResponse.json({ jobId, status: "queued" });
 }

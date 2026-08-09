@@ -16,6 +16,7 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import OpportunityCard from "@/components/opportunity-finder/OpportunityCard";
 import { evaluateOpportunityCompatibility } from "@/lib/opportunity-finder/compatibility";
+import { sha256OpportunityFileContents } from "@/lib/opportunity-finder/pipeline";
 import {
   FILE_TYPE_LABELS,
   OPPORTUNITY_TYPE_LABELS,
@@ -28,8 +29,13 @@ import type {
   OpportunityFileType,
   OpportunityJobStage,
   OpportunityJobStatus,
+  OpportunityColumnMapping,
+  OpportunityConfidence,
+  OpportunityRejectedRow,
   OpportunityResult,
   OpportunitySelectedRole,
+  OpportunitySheetProfile,
+  OpportunitySourceTrace,
   OpportunitySummary,
   OpportunityType
 } from "@/lib/opportunity-finder/types";
@@ -44,9 +50,19 @@ type ApiFile = {
   selectedRole: OpportunitySelectedRole | null;
   classificationScore: number;
   classificationReasons: string[];
-  sheets: Array<{ sheetName: string; rowCount: number }>;
+  sheets: OpportunitySheetProfile[];
   sheetCount: number;
   rowCount: number;
+  usefulRowCount: number;
+  hiddenRowCount: number;
+  templateType: string | null;
+  mappingVersion: string | null;
+  columnMappings: OpportunityColumnMapping[];
+  warnings: string[];
+  errors: string[];
+  actualSizeBytes: number | null;
+  contentVerified: boolean;
+  validationStatus: string | null;
   parseStatus: string;
   storageDeletedAt: string | null;
 };
@@ -63,6 +79,7 @@ type ApiJob = {
   processedRows: number;
   resultCount: number;
   warningCount: number;
+  clientContext: string | null;
   summary: Partial<OpportunitySummary>;
   errorCode: string | null;
   pipelineVersion: string | null;
@@ -79,7 +96,19 @@ type JobResponse = {
     demandDisplayMpn: string;
     supplyDisplayMpn: string;
     reasonCode: string;
+    matchTier?: string | null;
+    confidence?: OpportunityConfidence;
+    explanation?: string | null;
+    reviewStatus?: "not_required" | "pending" | "approved" | "rejected";
+    manufacturerCompatible?: boolean;
+    demandTrace?: OpportunitySourceTrace | null;
+    supplyTrace?: OpportunitySourceTrace | null;
   }>;
+  rejectedRows: Array<OpportunityRejectedRow & { id: string }>;
+  capabilities: {
+    canViewPricing: boolean;
+    canViewFinancials: boolean;
+  };
   page: { offset: number; limit: number; total: number };
 };
 
@@ -133,6 +162,9 @@ const ROLE_OPTIONS: OpportunitySelectedRole[] = [
   "excess",
   "supplier_offer",
   "received_history",
+  "purchase_history",
+  "quote_history",
+  "sales_history",
   "ignore"
 ];
 
@@ -151,12 +183,59 @@ const SUMMARY_KEYS: Array<keyof OpportunitySummary> = [
   "reviewRequired",
   "missingMpnRows",
   "invalidQuantityRows",
-  "possibleMatches"
+  "possibleMatches",
+  "rejectedRows",
+  "demandEvents",
+  "demandPartOptions",
+  "supplyLots"
 ];
+
+const TERMINAL_STATUSES: OpportunityJobStatus[] = [
+  "completed",
+  "completed_with_warnings",
+  "failed",
+  "cancelled"
+];
+
+const configuredClientMaxFileSizeMb = Number(
+  process.env.NEXT_PUBLIC_OPPORTUNITY_FINDER_MAX_FILE_SIZE_MB
+);
+const CLIENT_MAX_FILE_SIZE_MB = Number.isFinite(configuredClientMaxFileSizeMb) &&
+  configuredClientMaxFileSizeMb > 0
+  ? Math.min(configuredClientMaxFileSizeMb, 64)
+  : 64;
 
 function formatBytes(value: number) {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function profileConfidence(score: number): OpportunityConfidence {
+  const normalized = score > 1 ? score / 100 : score;
+  if (normalized >= 0.8) return "high";
+  if (normalized >= 0.55) return "medium";
+  return normalized > 0 ? "low" : "review";
+}
+
+function displayCode(value: string | null | undefined) {
+  return value ? value.replaceAll("_", " ") : "—";
+}
+
+export function opportunityFileRequiresValidity(
+  file: Pick<ApiFile, "warnings" | "columnMappings">,
+  role: OpportunitySelectedRole | "" | null | undefined
+) {
+  return role === "supplier_offer" ||
+    file.warnings.includes("embedded_offer_columns_mapped") ||
+    file.columnMappings.some((mapping) => mapping.canonicalField.startsWith("embeddedOffer."));
+}
+
+export function futureValidityIso(value: string | null | undefined, now = Date.now()) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) && timestamp > now
+    ? new Date(timestamp).toISOString()
+    : null;
 }
 
 function localFileError(file: File | null) {
@@ -166,7 +245,7 @@ function localFileError(file: File | null) {
     return "FILE_TYPE_BLOCKED";
   }
   if (![".xlsx", ".csv"].includes(extension)) return "FILE_EXTENSION_INVALID";
-  if (file.size > 64 * 1024 * 1024) return "FILE_TOO_LARGE";
+  if (file.size > CLIENT_MAX_FILE_SIZE_MB * 1024 * 1024) return "FILE_TOO_LARGE";
   return null;
 }
 
@@ -221,7 +300,7 @@ async function readPayload<T>(response: Response) {
 }
 
 function suggestedRole(type: OpportunityFileType): OpportunitySelectedRole | "" {
-  return type === "financial" || type === "unknown" || type === "sales_history" ? "" : type;
+  return type === "financial" || type === "unknown" ? "" : type;
 }
 
 function FileDropzone({
@@ -256,7 +335,9 @@ function FileDropzone({
         <UploadCloud className="h-9 w-9 text-brand-600" aria-hidden="true" />
         <h2 className="mt-3 text-base font-bold text-slate-950">{title}</h2>
         <p className="mt-1 text-sm text-slate-500">{text.dropPrompt}</p>
-        <p className="mt-1 text-xs text-slate-400">{text.accepted}</p>
+        <p className="mt-1 text-xs text-slate-400">
+          {text.accepted.replace("64", String(CLIENT_MAX_FILE_SIZE_MB))}
+        </p>
         <input
           ref={inputRef}
           type="file"
@@ -303,16 +384,19 @@ export default function OpportunityFinder() {
   const text = opportunityFinderCopy(language);
   const [localFiles, setLocalFiles] = useState<[File | null, File | null]>([null, null]);
   const [uploadProgress, setUploadProgress] = useState<[number, number]>([0, 0]);
+  const [clientContext, setClientContext] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [data, setData] = useState<JobResponse | null>(null);
   const [roles, setRoles] = useState<Record<string, OpportunitySelectedRole | "">>({});
+  const [validThroughByFile, setValidThroughByFile] = useState<Record<string, string>>({});
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState("");
   const [compatibilityReason, setCompatibilityReason] = useState("");
   const [reusedComparison, setReusedComparison] = useState<ReusedComparison | null>(null);
-  const uploadAttemptIdRef = useRef("");
+  const [reviewingIds, setReviewingIds] = useState<Set<string>>(new Set());
+  const [reviewNotice, setReviewNotice] = useState("");
 
   function errorMessage(code: string) {
     const errors = text.errors as Record<string, string>;
@@ -332,26 +416,54 @@ export default function OpportunityFinder() {
     return params.toString();
   }
 
-  async function loadJob(nextFilters = appliedFilters, offset = 0, append = false) {
-    if (!jobId) return;
-    const response = await fetch(`/api/opportunity-finder/jobs/${jobId}?${resultQuery(nextFilters, offset)}`, { cache: "no-store" });
+  async function loadJob(
+    nextFilters = appliedFilters,
+    offset = 0,
+    append = false,
+    preserveLoaded = false,
+    targetJobId = jobId
+  ) {
+    if (!targetJobId) return;
+    const response = await fetch(`/api/opportunity-finder/jobs/${targetJobId}?${resultQuery(nextFilters, offset)}`, { cache: "no-store" });
     const payload = await readPayload<JobResponse>(response);
-    setData((current) => append && current ? {
+    const normalized: JobResponse = {
       ...payload,
-      results: [...current.results, ...payload.results]
-    } : payload);
+      results: payload.results ?? [],
+      possibleMatches: payload.possibleMatches ?? [],
+      rejectedRows: payload.rejectedRows ?? [],
+      capabilities: payload.capabilities ?? { canViewPricing: false, canViewFinancials: false }
+    };
+    setData((current) => {
+      if (!current || (!append && !preserveLoaded)) return normalized;
+      const candidates = append
+        ? [...current.results, ...normalized.results]
+        : [...normalized.results, ...current.results];
+      const seen = new Set<string>();
+      const results = candidates.filter((result, index) => {
+        const key = result.id ?? `${result.opportunityType}:${result.normalizedMpn}:${index}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return { ...normalized, results };
+    });
     if (payload.job.errorCode) setErrorCode(payload.job.errorCode);
   }
 
   useEffect(() => {
     if (!jobId) return;
     void loadJob().catch((error) => setErrorCode(error instanceof Error ? error.message : "default"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, appliedFilters]);
+
+  useEffect(() => {
+    if (!jobId || (data && TERMINAL_STATUSES.includes(data.job.status))) return;
     const timer = window.setInterval(() => {
-      void loadJob().catch(() => undefined);
+      void loadJob(appliedFilters, 0, false, true).catch(() => undefined);
     }, 2500);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, appliedFilters]);
+  }, [jobId, data?.job.status, appliedFilters]);
 
   useEffect(() => {
     if (data?.job.status !== "awaiting_roles") return;
@@ -374,6 +486,13 @@ export default function OpportunityFinder() {
     return evaluateOpportunityCompatibility(roles[fileA.id] || null, roles[fileB.id] || null);
   }, [data?.files, roles]);
 
+  const offerValidityMissing = useMemo(() => (
+    data?.files.some((file) =>
+      opportunityFileRequiresValidity(file, roles[file.id]) &&
+      !futureValidityIso(validThroughByFile[file.id])
+    ) ?? false
+  ), [data?.files, roles, validThroughByFile]);
+
   const activeStep = useMemo(() => {
     if (!data) return 0;
     if (
@@ -394,7 +513,10 @@ export default function OpportunityFinder() {
     setErrorCode("");
     setUploadProgress([0, 0]);
     try {
-      if (!uploadAttemptIdRef.current) uploadAttemptIdRef.current = crypto.randomUUID();
+      const contentHashes: [string, string] = [
+        await sha256OpportunityFileContents(localFiles[0]!),
+        await sha256OpportunityFileContents(localFiles[1]!)
+      ];
       const initiateResponse = await fetch("/api/opportunity-finder/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -403,9 +525,10 @@ export default function OpportunityFinder() {
             side: index === 0 ? "A" : "B",
             fileName: file!.name,
             fileSize: file!.size,
-            fileType: file!.type || null
+            fileType: file!.type || null,
+            contentSha256: contentHashes[index]
           })),
-          idempotencyKey: uploadAttemptIdRef.current
+          clientContext: clientContext.trim() || undefined
         })
       });
       const initiate = await readPayload<{ jobId: string; files: SignedFile[] }>(initiateResponse);
@@ -423,7 +546,7 @@ export default function OpportunityFinder() {
       }));
       const profileResponse = await fetch(`/api/opportunity-finder/jobs/${initiate.jobId}/profile`, { method: "POST" });
       await readPayload(profileResponse);
-      await loadJob();
+      await loadJob(appliedFilters, 0, false, false, initiate.jobId);
     } catch (error) {
       const apiError = error as OpportunityApiError;
       if (apiError.reusedExistingJob && apiError.jobId && apiError.status) {
@@ -449,6 +572,10 @@ export default function OpportunityFinder() {
       setCompatibilityReason(roleCompatibility?.reasonCode ?? "unknown_role");
       return;
     }
+    if (offerValidityMissing) {
+      setErrorCode("OFFER_VALIDITY_REQUIRED");
+      return;
+    }
     setLoading(true);
     setErrorCode("");
     try {
@@ -456,7 +583,13 @@ export default function OpportunityFinder() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          files: data.files.map((file) => ({ id: file.id, role: roles[file.id] }))
+          files: data.files.map((file) => ({
+            id: file.id,
+            role: roles[file.id],
+            validThrough: opportunityFileRequiresValidity(file, roles[file.id])
+              ? futureValidityIso(validThroughByFile[file.id])
+              : null
+          }))
         })
       });
       await readPayload(response);
@@ -495,15 +628,18 @@ export default function OpportunityFinder() {
   function reset() {
     setLocalFiles([null, null]);
     setUploadProgress([0, 0]);
+    setClientContext("");
     setJobId(null);
     setData(null);
     setRoles({});
+    setValidThroughByFile({});
     setFilters(EMPTY_FILTERS);
     setAppliedFilters(EMPTY_FILTERS);
     setErrorCode("");
     setCompatibilityReason("");
     setReusedComparison(null);
-    uploadAttemptIdRef.current = "";
+    setReviewingIds(new Set());
+    setReviewNotice("");
   }
 
   async function deleteJob() {
@@ -531,8 +667,64 @@ export default function OpportunityFinder() {
     setAppliedFilters({ ...filters });
   }
 
+  async function decideReview(
+    entityType: "result" | "possible_match",
+    entityId: string,
+    decision: "approved" | "rejected"
+  ) {
+    if (!jobId) return;
+    setReviewNotice("");
+    setReviewingIds((current) => new Set(current).add(entityId));
+    try {
+      const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entityType, entityId, decision })
+      });
+      const payload = await readPayload<{ reviewStatus: "approved" | "rejected" }>(response);
+      setData((current) => {
+        if (!current) return current;
+        if (entityType === "result") {
+          return {
+            ...current,
+            results: current.results.map((result) => result.id === entityId
+              ? { ...result, reviewStatus: payload.reviewStatus }
+              : result)
+          };
+        }
+        return {
+          ...current,
+          possibleMatches: current.possibleMatches.map((match) => match.id === entityId
+            ? { ...match, reviewStatus: payload.reviewStatus }
+            : match)
+        };
+      });
+      setReviewNotice(text.review.saved);
+    } catch (error) {
+      setErrorCode(error instanceof Error ? error.message : "default");
+      setReviewNotice(text.review.failed);
+    } finally {
+      setReviewingIds((current) => {
+        const next = new Set(current);
+        next.delete(entityId);
+        return next;
+      });
+    }
+  }
+
   const currentCompatibilityReason = compatibilityReason || (!roleCompatibility?.compatible ? roleCompatibility?.reasonCode : "");
   const summary = data?.job.summary ?? {};
+  const resultGroups = data ? [
+    { key: "full", title: text.categories.full, results: data.results.filter((result) => result.opportunityType === "full_sale") },
+    { key: "partial", title: text.categories.partial, results: data.results.filter((result) => result.opportunityType === "partial_sale") },
+    { key: "sourcing", title: text.categories.sourcing, results: data.results.filter((result) => result.opportunityType === "sourcing_needed") },
+    { key: "supplyOnly", title: text.categories.supplyOnly, results: data.results.filter((result) => result.opportunityType === "supply_without_demand") },
+    {
+      key: "other",
+      title: text.categories.other,
+      results: data.results.filter((result) => !["full_sale", "partial_sale", "sourcing_needed", "supply_without_demand"].includes(result.opportunityType))
+    }
+  ] : [];
 
   return (
     <div className="min-w-0 space-y-6 overflow-x-hidden">
@@ -582,7 +774,6 @@ export default function OpportunityFinder() {
               progress={uploadProgress[0]}
               disabled={loading}
               onFile={(file) => {
-                uploadAttemptIdRef.current = "";
                 setLocalFiles((current) => [file, current[1]]);
               }}
             />
@@ -592,10 +783,24 @@ export default function OpportunityFinder() {
               progress={uploadProgress[1]}
               disabled={loading}
               onFile={(file) => {
-                uploadAttemptIdRef.current = "";
                 setLocalFiles((current) => [current[0], file]);
               }}
             />
+          </div>
+          <div className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4">
+            <label htmlFor="opportunity-client-context" className="block text-sm font-semibold text-slate-800">
+              {text.clientContext}
+            </label>
+            <input
+              id="opportunity-client-context"
+              value={clientContext}
+              maxLength={160}
+              disabled={loading}
+              onChange={(event) => setClientContext(event.target.value)}
+              placeholder={text.clientContextPlaceholder}
+              className="focus-ring mt-2 min-h-11 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-950"
+            />
+            <p className="mt-1 text-xs leading-5 text-slate-500">{text.clientContextHelp}</p>
           </div>
           <button
             type="button"
@@ -615,12 +820,78 @@ export default function OpportunityFinder() {
             {data.files.map((file) => (
               <div key={file.id} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="break-words text-base font-bold text-slate-950">{file.originalFileName}</p>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-sm lg:grid-cols-3">
                   <div><dt className="text-xs font-semibold text-slate-500">{text.detectedType}</dt><dd className="mt-1 font-medium text-slate-900">{FILE_TYPE_LABELS[language][file.detectedType]}</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.sheets}</dt><dd className="mt-1 font-medium text-slate-900">{file.sheetCount}</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.rows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.rowCount)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.usefulSheets}</dt><dd className="mt-1 font-medium text-slate-900">{(file.sheets ?? []).filter((sheet) => Number(sheet.usefulRowCount ?? sheet.rowCount) > 0).length}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.usefulRows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.usefulRowCount ?? file.rowCount)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.hiddenRows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.hiddenRowCount ?? 0)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.template}</dt><dd className="mt-1 break-words font-medium capitalize text-slate-900">{displayCode(file.templateType)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.mappingVersion}</dt><dd className="mt-1 break-words font-medium text-slate-900">{file.mappingVersion ?? "—"}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.confidence}</dt><dd className="mt-1 font-medium capitalize text-slate-900">{profileConfidence(file.classificationScore)} · {file.classificationScore > 1 ? Math.round(file.classificationScore) : Math.round(file.classificationScore * 100)}%</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.validation}</dt><dd className="mt-1 inline-flex items-center gap-1 font-medium text-emerald-700"><Check className="h-4 w-4" />{text.valid}</dd></div>
                 </dl>
+                {file.classificationReasons?.length ? (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.reasons}</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
+                      {file.classificationReasons.map((reason, index) => <li key={`${reason}-${index}`} className="break-words">{displayCode(reason)}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                {file.warnings?.length || file.errors?.length ? (
+                  <div className="mt-4 space-y-2" role={file.errors?.length ? "alert" : "status"}>
+                    {file.warnings?.length ? <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900"><span className="font-bold">{text.profile.warnings}:</span> {file.warnings.map(displayCode).join(" · ")}</p> : null}
+                    {file.errors?.length ? <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-900"><span className="font-bold">{text.profile.errors}:</span> {file.errors.map(displayCode).join(" · ")}</p> : null}
+                  </div>
+                ) : null}
+                <div className="mt-4 space-y-2">
+                  {(file.sheets ?? []).map((sheet) => {
+                    const mappings = sheet.headerRows?.flatMap((header) => header.columnMappings ?? []) ?? [];
+                    const previewRows = sheet.previewRows ?? [];
+                    const previewHeaders = Array.from(new Set(previewRows.flatMap((row) => Object.keys(row.values)))).slice(0, 6);
+                    return (
+                      <details key={sheet.sheetName} className="rounded-lg border border-slate-200 bg-white p-3">
+                        <summary className="focus-ring cursor-pointer rounded text-sm font-semibold text-slate-900">
+                          {sheet.sheetName} · {new Intl.NumberFormat(locale).format(sheet.usefulRowCount ?? sheet.rowCount)} {text.profile.usefulRows.toLowerCase()}
+                        </summary>
+                        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div><dt className="font-semibold text-slate-500">{text.profile.visibleRows}</dt><dd className="mt-0.5 text-slate-900">{Math.max(0, (sheet.usefulRowCount ?? sheet.rowCount ?? 0) - (sheet.hiddenRowCount ?? 0))}</dd></div>
+                          <div><dt className="font-semibold text-slate-500">{text.profile.hiddenRows}</dt><dd className="mt-0.5 text-slate-900">{sheet.hiddenRowCount ?? 0}</dd></div>
+                          <div className="col-span-2"><dt className="font-semibold text-slate-500">{text.profile.headerRow}</dt><dd className="mt-0.5 break-words text-slate-900">{(sheet.headerRows ?? []).map((header) => `${header.rowNumber}: ${header.headers.join(" · ")}`).join(" | ") || "—"}</dd></div>
+                        </dl>
+                        <div className="mt-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.mappings}</p>
+                          {(mappings.length ? mappings : file.columnMappings ?? []).length ? (
+                            <ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                              {(mappings.length ? mappings : file.columnMappings ?? []).map((mapping, index) => (
+                                <li key={`${mapping.canonicalField}-${mapping.sourceColumn}-${index}`} className="break-words rounded bg-slate-50 px-2 py-1.5 text-slate-700">
+                                  <span className="font-semibold">{mapping.canonicalField}</span> ← {mapping.sourceHeader} ({mapping.sourceColumn}) · {mapping.confidence}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : <p className="mt-1 text-xs text-slate-500">{text.profile.noMappings}</p>}
+                        </div>
+                        {previewRows.length ? (
+                          <div className="mt-3">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.preview}</p>
+                            <div className="mt-2 overflow-x-auto rounded border border-slate-200">
+                              <table className="min-w-full text-left text-xs">
+                                <thead className="bg-slate-50 text-slate-600"><tr><th className="px-2 py-1.5">#</th>{previewHeaders.map((header) => <th key={header} className="whitespace-nowrap px-2 py-1.5">{header}</th>)}</tr></thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {previewRows.slice(0, 5).map((row) => <tr key={row.rowNumber}><td className="whitespace-nowrap px-2 py-1.5 font-semibold">{row.rowNumber}{row.hidden ? "*" : ""}</td>{previewHeaders.map((header) => <td key={header} className="max-w-48 break-words px-2 py-1.5 text-slate-700">{row.values[header] ?? ""}</td>)}</tr>)}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : null}
+                        {sheet.warnings?.length ? <p className="mt-3 text-xs text-amber-800"><span className="font-bold">{text.profile.warnings}:</span> {sheet.warnings.map(displayCode).join(" · ")}</p> : null}
+                        {sheet.errors?.length ? <p className="mt-2 text-xs text-red-800"><span className="font-bold">{text.profile.errors}:</span> {sheet.errors.map(displayCode).join(" · ")}</p> : null}
+                      </details>
+                    );
+                  })}
+                </div>
                 <label className="mt-4 grid gap-1 text-sm font-semibold text-slate-700">
                   {text.selectedRole}
                   <select
@@ -632,6 +903,29 @@ export default function OpportunityFinder() {
                     {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{ROLE_LABELS[language][role]}</option>)}
                   </select>
                 </label>
+                {opportunityFileRequiresValidity(file, roles[file.id]) ? (
+                  <label className="mt-4 grid gap-1 text-sm font-semibold text-slate-700">
+                    {text.offerValidity}
+                    <input
+                      type="datetime-local"
+                      value={validThroughByFile[file.id] ?? ""}
+                      onChange={(event) => setValidThroughByFile((current) => ({
+                        ...current,
+                        [file.id]: event.target.value
+                      }))}
+                      aria-invalid={!futureValidityIso(validThroughByFile[file.id])}
+                      required
+                      className="focus-ring min-h-11 rounded-lg border border-slate-300 bg-white px-3 font-normal text-slate-950"
+                    />
+                    <span className={`text-xs font-normal ${
+                      futureValidityIso(validThroughByFile[file.id]) ? "text-slate-500" : "text-amber-700"
+                    }`}>
+                      {futureValidityIso(validThroughByFile[file.id])
+                        ? text.offerValidityHelp
+                        : text.offerValidityRequired}
+                    </span>
+                  </label>
+                ) : null}
               </div>
             ))}
           </div>
@@ -645,7 +939,7 @@ export default function OpportunityFinder() {
             <button type="button" onClick={swapRoles} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />{text.swapRoles}
             </button>
-            <button type="button" disabled={loading || !roleCompatibility?.compatible} onClick={() => void confirmRoles()} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">
+            <button type="button" disabled={loading || !roleCompatibility?.compatible || offerValidityMissing} onClick={() => void confirmRoles()} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">
               <Search className="h-4 w-4" aria-hidden="true" />{text.find}
             </button>
           </div>
@@ -743,9 +1037,30 @@ export default function OpportunityFinder() {
                 <a href={`/api/opportunity-finder/jobs/${jobId}/export?format=xlsx&lang=${language}`} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-3 text-sm font-semibold text-white"><Download className="h-4 w-4" />{text.exportXlsx}</a>
               </div>
             </div>
+            {reviewNotice ? <p role="status" className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-900">{reviewNotice}</p> : null}
             {data.results.length ? (
-              <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-                {data.results.map((result) => <OpportunityCard key={result.id} result={result} jobId={jobId!} />)}
+              <div className="mt-4 space-y-6">
+                {resultGroups.filter((group) => group.results.length).map((group) => (
+                  <section key={group.key} aria-labelledby={`opportunity-group-${group.key}`}>
+                    <div className="flex items-center gap-2">
+                      <h3 id={`opportunity-group-${group.key}`} className="text-base font-bold text-slate-900">{group.title}</h3>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{group.results.length}</span>
+                    </div>
+                    <div className="mt-3 grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {group.results.map((result) => (
+                        <OpportunityCard
+                          key={result.id}
+                          result={result}
+                          jobId={jobId!}
+                          canViewPricing={data.capabilities.canViewPricing}
+                          canViewFinancials={data.capabilities.canViewFinancials}
+                          reviewing={Boolean(result.id && reviewingIds.has(result.id))}
+                          onReview={result.id ? (decision) => decideReview("result", result.id!, decision) : undefined}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{text.noResults}</div>
@@ -762,14 +1077,53 @@ export default function OpportunityFinder() {
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {data.possibleMatches.map((match) => (
                   <div key={match.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm text-slate-700">
-                    <span className="font-bold">{match.demandDisplayMpn}</span>
-                    <span className="mx-2 text-amber-600">↔</span>
-                    <span className="font-bold">{match.supplyDisplayMpn}</span>
+                    <p><span className="font-bold">{match.demandDisplayMpn}</span><span className="mx-2 text-amber-600">↔</span><span className="font-bold">{match.supplyDisplayMpn}</span></p>
+                    <p className="mt-1 text-xs capitalize text-slate-500">{displayCode(match.matchTier)} · {displayCode(match.confidence)} · {displayCode(match.reviewStatus ?? "pending")}</p>
+                    {match.explanation ? <p className="mt-2 text-xs leading-5 text-slate-600">{match.explanation}</p> : null}
+                    {match.demandTrace || match.supplyTrace ? (
+                      <div className="mt-2 space-y-1 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
+                        {match.demandTrace ? (
+                          <p><span className="font-semibold text-slate-700">{text.card.demandSource}:</span> {[match.demandTrace.fileName, match.demandTrace.sheetName, `${text.card.row} ${match.demandTrace.sourceRow}`].filter(Boolean).join(" · ")}</p>
+                        ) : null}
+                        {match.supplyTrace ? (
+                          <p><span className="font-semibold text-slate-700">{text.card.supplySource}:</span> {[match.supplyTrace.fileName, match.supplyTrace.sheetName, `${text.card.row} ${match.supplyTrace.sourceRow}`].filter(Boolean).join(" · ")}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="mt-3 grid grid-cols-2 gap-2" aria-label={text.review.title}>
+                      <button type="button" disabled={reviewingIds.has(match.id)} onClick={() => void decideReview("possible_match", match.id, "approved")} className="focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-emerald-300 px-2 text-xs font-semibold text-emerald-800 disabled:opacity-50"><Check className="h-3.5 w-3.5" aria-hidden="true" />{text.review.approve}</button>
+                      <button type="button" disabled={reviewingIds.has(match.id)} onClick={() => void decideReview("possible_match", match.id, "rejected")} className="focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-red-300 px-2 text-xs font-semibold text-red-800 disabled:opacity-50"><CircleX className="h-3.5 w-3.5" aria-hidden="true" />{text.review.reject}</button>
+                    </div>
                   </div>
                 ))}
               </div>
             </section>
           ) : null}
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <h2 className="font-bold text-slate-950">{text.rejectedTitle}</h2>
+            <p className="mt-1 text-sm text-slate-600">{text.rejectedDescription}</p>
+            {data.rejectedRows.length ? (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr><th className="px-3 py-2">{text.filters.file}</th><th className="px-3 py-2">{text.sheets}</th><th className="px-3 py-2">{text.card.row}</th><th className="px-3 py-2">{text.card.reason}</th><th className="px-3 py-2">{text.profile.source}</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {data.rejectedRows.map((row) => (
+                      <tr key={row.id}>
+                        <td className="max-w-56 break-words px-3 py-2 font-medium text-slate-800">{row.fileName}</td>
+                        <td className="max-w-44 break-words px-3 py-2 text-slate-700">{row.sheetName}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">{row.sourceRow}{row.hidden ? "*" : ""}</td>
+                        <td className="max-w-56 break-words px-3 py-2 text-slate-700">{displayCode(row.reasonCode)}</td>
+                        <td className="max-w-56 break-words px-3 py-2 text-slate-600">{[row.sourceColumn, row.fieldName, row.safeRawValue].filter(Boolean).join(" · ") || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="mt-3 text-sm text-slate-500">{text.noRejectedRows}</p>}
+          </section>
 
           <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
             <button type="button" onClick={reset} className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700"><RotateCcw className="h-4 w-4" />{text.startAnother}</button>

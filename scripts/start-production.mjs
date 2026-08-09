@@ -27,6 +27,18 @@ const processes = [
       },
     ),
   },
+  {
+    name: "opportunity-finder-cleanup",
+    child: spawn(
+      nodeExecutable,
+      [tsxCli, "scripts/cleanup-opportunity-finder.ts", "--loop"],
+      {
+        cwd: root,
+        env: process.env,
+        stdio: "inherit",
+      },
+    ),
+  },
 ];
 
 let stopping = false;

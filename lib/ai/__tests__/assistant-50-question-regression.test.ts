@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { AuthContext } from "@/lib/auth/context";
+import { OPPORTUNITY_FINDER_PIPELINE_VERSION } from "@/lib/opportunity-finder/pipeline";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
 
@@ -388,7 +389,7 @@ function buildTables(): Tables {
     opportunity_finder_jobs: (Object.keys(JOB_IDS) as Role[]).map((role) => ({
       id: JOB_IDS[role],
       created_by: USER_IDS[role],
-      idempotency_key: `opportunity-finder:v2:${"a".repeat(64)}`,
+      idempotency_key: `opportunity-finder:v${OPPORTUNITY_FINDER_PIPELINE_VERSION}:${"a".repeat(64)}`,
       status: "completed",
       matched_mpns: 11,
       result_count: 14,
