@@ -42,6 +42,31 @@ const createSchema = z.object({
   }
 });
 
+const OPPORTUNITY_FINDER_MIGRATION_ERROR_CODES = new Set([
+  "42P01",
+  "42703",
+  "42883",
+  "PGRST202",
+  "PGRST204",
+  "PGRST205"
+]);
+
+function databaseFailureResponse(error: unknown) {
+  const record = error && typeof error === "object"
+    ? error as { code?: unknown; message?: unknown }
+    : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  const migrationRequired = OPPORTUNITY_FINDER_MIGRATION_ERROR_CODES.has(code)
+    || /could not find|does not exist|schema cache|undefined (column|table|function)/i.test(message);
+
+  return NextResponse.json({
+    errorCode: migrationRequired
+      ? "OPPORTUNITY_FINDER_MIGRATION_REQUIRED"
+      : "JOB_CREATE_FAILED"
+  }, { status: migrationRequired ? 503 : 500 });
+}
+
 function existingComparisonResponse(existing: {
   id: string;
   status: string;
@@ -94,13 +119,14 @@ export async function POST(request: Request) {
     clientContext
   });
 
-  const { data: existing } = await context.supabase
+  const { data: existing, error: existingError } = await context.supabase
     .from("opportunity_finder_jobs")
     .select("id,status,created_at,idempotency_key")
     .eq("tenant_id", context.profile.id)
     .eq("created_by", context.profile.id)
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
+  if (existingError) return databaseFailureResponse(existingError);
   if (existing) {
     return existingComparisonResponse(existing);
   }
@@ -151,7 +177,7 @@ export async function POST(request: Request) {
         .maybeSingle();
       if (existing) return existingComparisonResponse(existing);
     }
-    return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
+    return databaseFailureResponse(jobError);
   }
   const { error: filesError } = await service
     .from("opportunity_finder_files")
@@ -170,7 +196,7 @@ export async function POST(request: Request) {
     })));
   if (filesError) {
     await service.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
-    return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
+    return databaseFailureResponse(filesError);
   }
   const { error: linkError } = await service
     .from("opportunity_finder_jobs")
@@ -179,7 +205,7 @@ export async function POST(request: Request) {
     .eq("created_by", context.profile.id);
   if (linkError) {
     await service.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
-    return NextResponse.json({ errorCode: "JOB_CREATE_FAILED" }, { status: 500 });
+    return databaseFailureResponse(linkError);
   }
 
   const signedFiles = [];

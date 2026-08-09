@@ -42,6 +42,7 @@ function createRequest(body: Record<string, unknown> = requestBody) {
 function createSupabaseMock(input: {
   existing: Record<string, unknown>;
   conflictOnInsert?: boolean;
+  lookupError?: { code: string; message: string } | null;
 }) {
   const maybeSingle = vi.fn();
   if (input.conflictOnInsert) {
@@ -49,7 +50,10 @@ function createSupabaseMock(input: {
       .mockResolvedValueOnce({ data: null, error: null })
       .mockResolvedValueOnce({ data: input.existing, error: null });
   } else {
-    maybeSingle.mockResolvedValue({ data: input.existing, error: null });
+    maybeSingle.mockResolvedValue({
+      data: input.lookupError ? null : input.existing,
+      error: input.lookupError ?? null
+    });
   }
   const query: Record<string, ReturnType<typeof vi.fn>> = {};
   query.eq = vi.fn(() => query);
@@ -244,6 +248,25 @@ describe("POST /api/opportunity-finder/jobs idempotency", () => {
     expect(response.status).toBe(400);
     expect(payload).toEqual({ errorCode: "FILE_HASH_INVALID" });
     expect(mock.supabase.from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["42703", "column opportunity_finder_jobs.tenant_id does not exist"],
+    ["PGRST204", "Could not find the pipeline_version column in the schema cache"],
+    ["PGRST205", "Could not find the table in the schema cache"]
+  ])("reports the missing advanced migration for database error %s", async (code, message) => {
+    const mock = createSupabaseMock({
+      existing: {},
+      lookupError: { code, message }
+    });
+    const { POST } = await configureRoute(mock.supabase);
+
+    const response = await POST(createRequest());
+    const payload = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(payload).toEqual({ errorCode: "OPPORTUNITY_FINDER_MIGRATION_REQUIRED" });
+    expect(mock.table.insert).not.toHaveBeenCalled();
   });
 
   it("stores each declared hash as pending verification without returning either hash", async () => {
