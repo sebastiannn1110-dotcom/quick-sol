@@ -2061,7 +2061,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog, extensions, public
 as $$
 declare
   input_job_id alias for $1;
@@ -2649,7 +2649,7 @@ returns uuid
 language sql
 immutable
 parallel safe
-set search_path = pg_catalog, public
+set search_path = pg_catalog, extensions, public
 as $$
   with normalized as (
     select nullif(lower(btrim($1)), '') as key_value
@@ -4296,7 +4296,7 @@ create or replace function public.replace_opportunity_finder_job_output(
 returns public.opportunity_finder_jobs
 language plpgsql
 security definer
-set search_path = pg_catalog, public
+set search_path = pg_catalog, extensions, public
 as $$
 declare
   input_job_id alias for $1;

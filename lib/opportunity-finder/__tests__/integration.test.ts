@@ -60,6 +60,19 @@ describe("Opportunity Finder access and isolation integration", () => {
     expect(component).not.toContain("idempotencyKey:");
   });
 
+  it("resolves pgcrypto digest from Supabase's trusted extensions schema", () => {
+    const migration = source("supabase/migrations/20260808120000_opportunity_finder_advanced.sql");
+    for (const functionName of [
+      "materialize_opportunity_finder_entities",
+      "opportunity_finder_candidate_uuid",
+      "replace_opportunity_finder_job_output"
+    ]) {
+      const definition = migration.split(`create or replace function public.${functionName}`)[1]
+        ?.split("as $$")[0];
+      expect(definition).toContain("set search_path = pg_catalog, extensions, public");
+    }
+  });
+
   it("requires exactly two files and queues background work instead of parsing in HTTP", () => {
     const createRoute = source("app/api/opportunity-finder/jobs/route.ts");
     const profileRoute = source("app/api/opportunity-finder/jobs/[id]/profile/route.ts");
