@@ -349,6 +349,15 @@ async function readPayload<T>(response: Response) {
   return payload;
 }
 
+export function isAbortError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
 function suggestedRole(type: OpportunityFileType): OpportunitySelectedRole | "" {
   return type === "financial" || type === "unknown" ? "" : type;
 }
@@ -541,7 +550,9 @@ export default function OpportunityFinder() {
 
   useEffect(() => {
     if (!jobId) return;
-    void loadJob().catch((error) => setErrorCode(error instanceof Error ? error.message : "default"));
+    void loadJob().catch((error) => {
+      if (!isAbortError(error)) setErrorCode(error instanceof Error ? error.message : "default");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, appliedFilters]);
 
@@ -579,7 +590,7 @@ export default function OpportunityFinder() {
         }
         schedule(2500);
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (isAbortError(error)) return;
         failures += 1;
         schedule(Math.min(2500 * 2 ** failures, 15000));
       } finally {

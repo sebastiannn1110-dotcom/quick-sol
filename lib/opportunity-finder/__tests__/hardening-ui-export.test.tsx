@@ -10,6 +10,7 @@ import { LanguageProvider } from "@/components/LanguageProvider";
 import OpportunityCard from "@/components/opportunity-finder/OpportunityCard";
 import OpportunityFinder, {
   futureValidityIso,
+  isAbortError,
   opportunityFileRequiresValidity
 } from "@/components/opportunity-finder/OpportunityFinder";
 import {
@@ -108,6 +109,14 @@ function databaseResult(result: OpportunityResult) {
 }
 
 describe("Opportunity Finder public privacy and terminology", () => {
+  it("treats browser and cross-realm AbortError values as expected cancellation", () => {
+    expect(isAbortError(new DOMException("cancelled", "AbortError"))).toBe(true);
+    const crossRealmAbort = new Error("signal is aborted without reason");
+    crossRealmAbort.name = "AbortError";
+    expect(isAbortError(crossRealmAbort)).toBe(true);
+    expect(isAbortError(new Error("network failed"))).toBe(false);
+  });
+
   it("requires explicit future validity for supplier files and detected embedded offers", () => {
     const plainFile = { warnings: [], columnMappings: [] };
     const embeddedFile = {
