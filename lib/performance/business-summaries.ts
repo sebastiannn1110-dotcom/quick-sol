@@ -9,6 +9,7 @@ import {
 } from "@/lib/stock-needs/stock-needs";
 
 const RECONCILIATION_PAGE_SIZE = 1000;
+export const BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE = 500;
 const RECORD_SELECT = `id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,created_at,${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`;
 
 export type BusinessMpnSummaryRow = {
@@ -79,18 +80,31 @@ function objectValue(record: StockNeedsRecord, aliases: string[]) {
   return null;
 }
 
+function parsedEntityDate(value: unknown) {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string" && /^\d{5}(?:\.\d+)?$/.test(value.trim())
+      ? Number(value)
+      : null;
+  const parsed = numeric !== null && numeric > 25569 && numeric < 80000
+    ? new Date((numeric - 25569) * 86_400_000)
+    : new Date(String(value));
+  if (!Number.isFinite(parsed.getTime())) return null;
+  const year = parsed.getUTCFullYear();
+  return year >= 1900 && year <= 9999 ? parsed : null;
+}
+
 function entityDate(record: StockNeedsRecord) {
   const value = objectValue(record, ["required_date", "Required Date", "RequiredDate", "Need Date", "Demand Date", "earliest_shipping_date"]);
   if (value === null) return null;
-  const parsed = new Date(String(value));
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+  return parsedEntityDate(value)?.toISOString().slice(0, 10) ?? null;
 }
 
 function entityTimestamp(record: StockNeedsRecord, aliases: string[]) {
   const value = objectValue(record, aliases);
   if (value === null) return null;
-  const parsed = new Date(String(value));
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  return parsedEntityDate(value)?.toISOString() ?? null;
 }
 
 function entityText(record: StockNeedsRecord, aliases: string[], max = 40) {
@@ -310,10 +324,20 @@ export async function loadCompleteUploadRecords(
   return records;
 }
 
+export function businessSummaryPublishChunks<T>(rows: T[], chunkSize = BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE) {
+  if (!rows.length) return [] as T[][];
+  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
+  const chunks: T[][] = [];
+  for (let index = 0; index < rows.length; index += safeChunkSize) {
+    chunks.push(rows.slice(index, index + safeChunkSize));
+  }
+  return chunks;
+}
+
 export async function rebuildBusinessUploadSummary(supabase: SupabaseClient, uploadBatchId: string) {
   const versionResult = await supabase
     .from("business_upload_versions")
-    .select("data_version,dirty")
+    .select("owner_id,data_version,dirty")
     .eq("upload_batch_id", uploadBatchId)
     .single();
   if (versionResult.error) throw versionResult.error;
@@ -337,18 +361,37 @@ export async function rebuildBusinessUploadSummary(supabase: SupabaseClient, upl
     importJobs: (jobsResult.data ?? []) as StockNeedsImportJob[]
   });
   const version = Number(versionResult.data.data_version);
-  const entityPublish = await supabase.rpc("replace_business_upload_opportunity_entities_v1", {
+  const entityChunks = businessSummaryPublishChunks(opportunityEntities);
+  for (const entityRows of entityChunks.length ? entityChunks : [[]]) {
+    const entityPublish = await supabase.rpc("replace_business_upload_opportunity_entities_v1", {
+      target_upload_batch_id: uploadBatchId,
+      expected_data_version: version,
+      entity_rows: entityRows
+    });
+    if (entityPublish.error) throw entityPublish.error;
+  }
+
+  const summaryRows = rows.map((row) => ({
+    ...row,
+    upload_batch_id: uploadBatchId,
+    owner_id: versionResult.data.owner_id,
+    data_version: version
+  }));
+  for (const summaryChunk of businessSummaryPublishChunks(summaryRows)) {
+    const summaryPublish = await supabase
+      .from("business_mpn_summaries")
+      .upsert(summaryChunk, { onConflict: "upload_batch_id,data_version,normalized_mpn" });
+    if (summaryPublish.error) throw summaryPublish.error;
+  }
+
+  // Finalization is deliberately separate from chunk publication. The RPC
+  // locks and rechecks the source version, then makes the complete set visible.
+  const finalize = await supabase.rpc("replace_business_upload_summary_v1", {
     target_upload_batch_id: uploadBatchId,
     expected_data_version: version,
-    entity_rows: opportunityEntities
+    summary_rows: []
   });
-  if (entityPublish.error) throw entityPublish.error;
-  const publish = await supabase.rpc("replace_business_upload_summary_v1", {
-    target_upload_batch_id: uploadBatchId,
-    expected_data_version: version,
-    summary_rows: rows
-  });
-  if (publish.error) throw publish.error;
+  if (finalize.error) throw finalize.error;
   return {
     rebuilt: true,
     version,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildBusinessMpnSummaryRows, buildBusinessOpportunityEntityRows, loadCompleteUploadRecords } from "@/lib/performance/business-summaries";
+import {
+  BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
+  buildBusinessMpnSummaryRows,
+  buildBusinessOpportunityEntityRows,
+  businessSummaryPublishChunks,
+  loadCompleteUploadRecords
+} from "@/lib/performance/business-summaries";
 import { buildSalesOpportunitiesResult } from "@/lib/opportunities/opportunities";
 import { buildStockNeedsResult, type StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
 
@@ -63,6 +69,23 @@ describe("versioned business summaries", () => {
     expect(entities.map((row) => row.entity_key)).toHaveLength(new Set(entities.map((row) => row.entity_key)).size);
   });
 
+  it("converts Excel serial dates before publishing PostgreSQL timestamps", () => {
+    const records = [{
+      id: "10000000-0000-4000-8000-000000000004",
+      upload_batch_id: "upload",
+      raw_data: { MPN: "ABC-2", QTY: 10, "Valid Until": 46228 },
+      upload_batches: { detected_category: "supplier_offer" }
+    }] as StockNeedsRecord[];
+    const profiles = [{ upload_batch_id: "upload", detected_template: "supplier_offer" }];
+
+    const [entity] = buildBusinessOpportunityEntityRows({ records, profiles });
+
+    expect(entity).toMatchObject({
+      entity_kind: "supplier_offer",
+      expires_at: "2026-07-25T00:00:00.000Z"
+    });
+  });
+
   it("keeps canonical first-value metadata when records arrive newest first", () => {
     const records = [
       {
@@ -100,5 +123,18 @@ describe("versioned business summaries", () => {
     const result = await loadCompleteUploadRecords(supabase as never, "00000000-0000-4000-8000-000000000001");
     expect(result).toHaveLength(count);
     expect(new Set(result.map((row) => row.id)).size).toBe(count);
+  });
+
+  it("publishes large derived datasets in bounded chunks", () => {
+    const rows = Array.from({ length: BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE * 2 + 1 }, (_, index) => index);
+    const chunks = businessSummaryPublishChunks(rows);
+
+    expect(chunks.map((chunk) => chunk.length)).toEqual([
+      BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
+      BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
+      1
+    ]);
+    expect(chunks.flat()).toEqual(rows);
+    expect(businessSummaryPublishChunks([])).toEqual([]);
   });
 });
