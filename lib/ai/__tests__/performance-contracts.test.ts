@@ -32,7 +32,9 @@ describe("AI read-only and performance contracts", () => {
 
   it("does not permit writes from assistant data tools", () => {
     const tools = source("lib/ai/database-tools.ts");
-    expect(tools).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
+    expect(tools).toContain('.rpc("get_dashboard_summary_v1")');
+    const withoutAllowlistedReadRpc = tools.replace('.rpc("get_dashboard_summary_v1")', "");
+    expect(withoutAllowlistedReadRpc).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
     expect(tools).not.toContain("ensureUploadStructureProfile");
   });
 });

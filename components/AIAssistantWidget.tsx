@@ -84,9 +84,15 @@ function sourceFromStoredMessage(sourceType: string | undefined) {
   return null;
 }
 
-export default function AIAssistantWidget({ profile }: { profile: Profile | null }) {
+export default function AIAssistantWidget({
+  profile,
+  initialOpen = false
+}: {
+  profile: Profile | null;
+  initialOpen?: boolean;
+}) {
   const { language, t } = useLanguage();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);

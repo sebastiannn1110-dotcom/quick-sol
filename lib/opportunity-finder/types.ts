@@ -21,6 +21,9 @@ export type OpportunitySelectedRole =
   | "sales_history"
   | "ignore";
 
+export type OpportunityComparisonMode = "single_file" | "two_files";
+export type OpportunityDatasetScope = "own" | "team" | "company";
+
 export type OpportunityJobStatus =
   | "uploading"
   | "queued"
@@ -195,6 +198,7 @@ export interface OpportunityFileDescriptor {
   parseStatus: string;
   contentSha256?: string | null;
   tenantId?: string | null;
+  sourceKind?: "uploaded" | "platform_snapshot";
 }
 
 export interface OpportunitySourceTrace {

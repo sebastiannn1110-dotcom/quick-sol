@@ -267,6 +267,24 @@ class FakeSupabase {
     return new FakeQuery(this, table);
   }
 
+  async rpc(name: string) {
+    if (name !== "get_dashboard_summary_v1") {
+      return { data: null, error: { code: "PGRST202", message: `Unknown RPC ${name}` } };
+    }
+    const activeRecords = (this.tables.business_records ?? []).filter((row) => row.archived_at == null);
+    const activeUploads = (this.tables.upload_batches ?? []).filter((row) => row.status !== "archived");
+    return {
+      data: [{
+        total_records: activeRecords.length,
+        total_uploads: activeUploads.length,
+        records_with_errors: activeRecords.filter((row) => row.has_errors === true).length,
+        records_missing_mpn: activeRecords.filter((row) => row.mpn == null).length,
+        data_version: 1
+      }],
+      error: null
+    };
+  }
+
   nextUuid() {
     const suffix = String(this.sequence++).padStart(12, "0");
     return `f0000000-0000-4000-8000-${suffix}`;
@@ -633,14 +651,21 @@ function csvCell(value: unknown) {
   return `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
 }
 
+function reportOutputPath(relativePath: string) {
+  const isolatedRoot = process.env.QA_ASSISTANT_REPORT_DIR;
+  if (!isolatedRoot) return resolve(process.cwd(), relativePath);
+  const reportName = relativePath.replace(/^qa[\\/]ai-assistant[\\/]/, "");
+  return resolve(isolatedRoot, reportName);
+}
+
 function writeJson(relativePath: string, value: unknown) {
-  const path = resolve(process.cwd(), relativePath);
+  const path = reportOutputPath(relativePath);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 function writeText(relativePath: string, value: string) {
-  const path = resolve(process.cwd(), relativePath);
+  const path = reportOutputPath(relativePath);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, value.endsWith("\n") ? value : `${value}\n`, "utf8");
 }

@@ -6,7 +6,7 @@ const CLIENT_ID = "7e9093e5-6881-40f3-9aee-7a9b495b301c";
 
 function queryResult(result: { data: unknown; error: unknown }) {
   const builder: Record<string, unknown> = {};
-  for (const method of ["select", "order", "limit", "eq", "is", "in"]) {
+  for (const method of ["select", "order", "limit", "eq", "is", "in", "range"]) {
     builder[method] = vi.fn(() => builder);
   }
   builder.then = (
@@ -52,6 +52,10 @@ function createSupabaseFixture() {
   return {
     supabase: {
       from,
+      rpc: vi.fn(async () => ({
+        data: [{ client_id: CLIENT_ID, summary_ready: true, mpn_count: 0, opportunity_count: 0 }],
+        error: null
+      })),
       storage: { from: vi.fn(() => ({ createSignedUrl })) }
     } as unknown as SupabaseClient,
     from,
@@ -70,15 +74,16 @@ describe("client summary images", () => {
     expect(fixture.createSignedUrl).not.toHaveBeenCalled();
   });
 
-  it("returns only a signed identification URL for an authorized manager", async () => {
+  it("returns only an authenticated lazy identification URL for an authorized manager", async () => {
     const fixture = createSupabaseFixture();
     const [client] = await listClientSummaries(fixture.supabase, "manager");
 
     expect(client.logoUrl).toBeNull();
     expect(client.authorizedIdentificationImageUrl)
-      .toBe(`https://signed.example.test/${encodeURIComponent(`${CLIENT_ID}/identification/synthetic.png`)}`);
+      .toBe(`/api/clients/${CLIENT_ID}/image?kind=identification`);
     expect(fixture.from).toHaveBeenCalledWith("client_private_details");
     expect(client).not.toHaveProperty("identification_image_path");
     expect(client).not.toHaveProperty("logo_path");
+    expect(fixture.createSignedUrl).not.toHaveBeenCalled();
   });
 });

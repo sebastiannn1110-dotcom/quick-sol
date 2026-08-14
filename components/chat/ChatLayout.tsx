@@ -8,11 +8,13 @@ import ConversationList, { conversationTitle } from "@/components/chat/Conversat
 import CreateGroupDialog from "@/components/chat/CreateGroupDialog";
 import type { ChatConversation, ChatMessage, ChatUser } from "@/components/chat/types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useProfile } from "@/components/ProfileProvider";
 
 export default function ChatLayout() {
+  const { profile } = useProfile();
   const searchParams = useSearchParams();
   const requestedConversationId = searchParams.get("conversation") ?? "";
-  const [currentUser, setCurrentUser] = useState<ChatUser | null>(null);
+  const currentUser = profile as ChatUser | null;
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -47,11 +49,7 @@ export default function ChatLayout() {
   useEffect(() => {
     async function initialLoad() {
       setLoading(true);
-      const [profileResponse, usersResponse] = await Promise.all([
-        fetch("/api/me", { cache: "no-store" }),
-        fetch("/api/chat/users", { cache: "no-store" })
-      ]);
-      if (profileResponse.ok) setCurrentUser((await profileResponse.json()).profile);
+      const usersResponse = await fetch("/api/chat/users", { cache: "no-store" });
       if (usersResponse.ok) setUsers((await usersResponse.json()).users ?? []);
       await loadConversations();
       setLoading(false);

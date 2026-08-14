@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Mail, MessageCircle, Search } from "lucide-react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
+import { useProfile } from "@/components/ProfileProvider";
 
 interface EmployeeWithCounts extends Profile {
   uploadCount: number;
@@ -23,7 +24,7 @@ interface EmployeeDetailPayload {
 }
 
 function EmployeesContent() {
-  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  const { profile: currentUser } = useProfile();
   const [employees, setEmployees] = useState<EmployeeWithCounts[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
@@ -35,11 +36,7 @@ function EmployeesContent() {
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
-    const [meResponse, employeesResponse] = await Promise.all([
-      fetch("/api/me", { cache: "no-store" }),
-      fetch("/api/employees", { cache: "no-store" })
-    ]);
-    if (meResponse.ok) setCurrentUser(((await meResponse.json()) as { profile: Profile }).profile);
+    const employeesResponse = await fetch("/api/employees", { cache: "no-store" });
     if (employeesResponse.ok) {
       const payload = (await employeesResponse.json()) as { employees: EmployeeWithCounts[] };
       setEmployees(payload.employees ?? []);

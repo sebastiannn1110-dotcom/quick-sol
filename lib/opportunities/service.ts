@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getClientDetail, listClientUploadIds } from "@/lib/clients/data-source";
 import {
   buildSalesOpportunitiesResult,
+  formatOpportunityReason,
+  formatRecommendedAction,
   type OpportunityType,
   type SalesOpportunitiesResult,
   type SalesOpportunityFilters
@@ -96,6 +98,10 @@ function attachAccountClients(result: SalesOpportunitiesResult, assignments: Ass
   };
 }
 
+function isMissingSummaryRpc(error: { code?: string | null; message?: string | null }) {
+  return ["PGRST202", "42883"].includes(error.code ?? "") || /get_sales_opportunities_page_v1/i.test(error.message ?? "");
+}
+
 export async function loadSalesOpportunities(
   supabase: SupabaseClient,
   role: UserRole,
@@ -108,11 +114,37 @@ export async function loadSalesOpportunities(
     uploadIds = await listClientUploadIds(supabase, filters.clientId);
   }
 
+  const summary = await supabase.rpc("get_sales_opportunities_page_v1", {
+    p_limit: filters.limit ?? 50,
+    p_offset: filters.offset ?? 0,
+    p_q: filters.q ?? null,
+    p_mpn: filters.mpn ?? null,
+    p_customer: filters.customer ?? null,
+    p_supplier: filters.supplier ?? null,
+    p_manufacturer: filters.manufacturer ?? null,
+    p_opportunity_type: filters.opportunityType ?? null,
+    p_upload_batch_id: filters.uploadBatchId ?? null,
+    p_client_id: filters.clientId ?? null
+  });
+  if (!summary.error && summary.data && (summary.data as { summaryReady?: boolean }).summaryReady) {
+    const fast = summary.data as unknown as SalesOpportunitiesResult & { summaryReady: boolean };
+    fast.items = fast.items.map((item) => ({
+      ...item,
+      reason: formatOpportunityReason(item),
+      recommendedAction: formatRecommendedAction(item)
+    }));
+    const pageUploadIds = Array.from(new Set(fast.items.flatMap((item) => item.sourceUploads.map((upload) => upload.uploadBatchId))));
+    const assignments = await loadAccountClientAssignments(supabase, pageUploadIds);
+    return enrichOpportunitiesWithConfidence(attachAccountClients(fast, assignments), filters.confidence);
+  }
+  if (summary.error && !isMissingSummaryRpc(summary.error)) throw summary.error;
+
   const input = await loadStockNeedsInput(supabase, {
     filters: { uploadBatchId: filters.uploadBatchId },
     uploadIds,
     maxUploads: uploadIds ? Math.min(Math.max(uploadIds.length, 1), 50) : 30,
-    recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000
+    recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000,
+    complete: true,
   });
   const result = buildSalesOpportunitiesResult({
     records: input.records,

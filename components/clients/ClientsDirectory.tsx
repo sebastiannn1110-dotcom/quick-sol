@@ -5,17 +5,18 @@ import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import ClientGrid from "@/components/clients/ClientGrid";
 import { useLanguage } from "@/components/LanguageProvider";
+import { useProfile } from "@/components/ProfileProvider";
 import { EMPTY_OPPORTUNITIES_RESULT } from "@/components/opportunities/opportunity-ui";
 import type { AccountClient } from "@/lib/clients/clients";
 import type { SalesOpportunitiesWithConfidenceResult } from "@/lib/opportunities/quality";
-import type { Profile } from "@/lib/types";
 
 export default function ClientsDirectory({ adminMode = false }: { adminMode?: boolean }) {
   const { t } = useLanguage();
   const [clients, setClients] = useState<AccountClient[]>([]);
   const [opportunities, setOpportunities] = useState<SalesOpportunitiesWithConfidenceResult>(EMPTY_OPPORTUNITIES_RESULT);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { profile } = useProfile();
   const [loading, setLoading] = useState(true);
+  const [opportunitiesLoading, setOpportunitiesLoading] = useState(!adminMode);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -23,16 +24,10 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
       setLoading(true);
       setError("");
       try {
-        const [clientsResponse, profileResponse, opportunitiesResponse] = await Promise.all([
-          fetch(`/api/clients${adminMode ? "?includeArchived=true" : ""}`, { cache: "no-store" }),
-          fetch("/api/me", { cache: "no-store" }),
-          fetch("/api/opportunities?limit=200", { cache: "no-store" })
-        ]);
+        const clientsResponse = await fetch(`/api/clients${adminMode ? "?includeArchived=true" : ""}`, { cache: "no-store" });
         if (!clientsResponse.ok) throw new Error();
         const payload = await clientsResponse.json() as { clients: AccountClient[] };
         setClients(payload.clients);
-        if (profileResponse.ok) setProfile((await profileResponse.json() as { profile: Profile }).profile);
-        if (opportunitiesResponse.ok) setOpportunities(await opportunitiesResponse.json() as SalesOpportunitiesWithConfidenceResult);
       } catch {
         setError(t("clients.error"));
       } finally {
@@ -41,6 +36,27 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
     }
     void load();
   }, [adminMode, t]);
+
+  useEffect(() => {
+    if (adminMode) return;
+    const controller = new AbortController();
+    async function loadSummary() {
+      setOpportunitiesLoading(true);
+      try {
+        const response = await fetch("/api/opportunities/summary", {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) return;
+        const payload = await response.json() as Pick<SalesOpportunitiesWithConfidenceResult, "totals">;
+        setOpportunities((current) => ({ ...current, totals: payload.totals }));
+      } finally {
+        if (!controller.signal.aborted) setOpportunitiesLoading(false);
+      }
+    }
+    void loadSummary();
+    return () => controller.abort();
+  }, [adminMode]);
 
   const canManage = profile?.role === "admin" || profile?.role === "manager";
   return (
@@ -75,7 +91,9 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
             ].map(([label, value]) => (
               <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
-                <p className="mt-2 text-xl font-semibold text-slate-950">{value}</p>
+                <p className="mt-2 text-xl font-semibold text-slate-950">
+                  {opportunitiesLoading ? <span className="inline-block h-6 w-12 animate-pulse rounded bg-slate-200" aria-label="Loading" /> : value}
+                </p>
               </div>
             ))}
           </div>

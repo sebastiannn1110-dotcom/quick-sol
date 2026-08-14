@@ -39,6 +39,11 @@ export interface OpportunityExportOptions {
   jobId?: string | null;
   pipelineVersion?: string | null;
   generatedAt?: Date | string;
+  comparisonMode?: "single_file" | "two_files";
+  uploadedRole?: string | null;
+  existingEntityCount?: number | null;
+  datasetVersion?: string | null;
+  analyzedAt?: Date | string | null;
 }
 
 type ExportCellValue = string | number | boolean | Date | null;
@@ -480,6 +485,13 @@ function addSummarySheet(
   styleHeader(sheet, metadataStart);
   addSafeRow(sheet, ["Job", options.jobId ?? results[0]?.jobId ?? null, ""]);
   addSafeRow(sheet, ["Versión de pipeline", options.pipelineVersion ?? null, ""]);
+  addSafeRow(sheet, ["Modo de comparación", options.comparisonMode === "single_file" ? "Un archivo vs Base QuikSol" : "Dos archivos", ""]);
+  addSafeRow(sheet, ["Rol detectado", options.uploadedRole ?? null, ""]);
+  addSafeRow(sheet, ["Entidades existentes consideradas", options.existingEntityCount ?? 0, ""]);
+  addSafeRow(sheet, ["Snapshot / versión", options.datasetVersion ?? null, ""]);
+  addSafeRow(sheet, ["Fecha de análisis", options.analyzedAt instanceof Date
+    ? options.analyzedAt.toISOString()
+    : options.analyzedAt ?? options.generatedAt ?? new Date().toISOString(), ""]);
   addSafeRow(sheet, ["Generado en", options.generatedAt instanceof Date
     ? options.generatedAt.toISOString()
     : options.generatedAt ?? new Date().toISOString(), ""]);
@@ -1142,6 +1154,13 @@ export class OpportunityStreamingExportWriter {
     addCommittedSafeRow(this.summarySheet, ["Metadato", "Valor", ""], "header");
     addCommittedSafeRow(this.summarySheet, ["Job", this.options.jobId ?? null, ""]);
     addCommittedSafeRow(this.summarySheet, ["Versión de pipeline", this.options.pipelineVersion ?? null, ""]);
+    addCommittedSafeRow(this.summarySheet, ["Modo de comparación", this.options.comparisonMode === "single_file" ? "Un archivo vs Base QuikSol" : "Dos archivos", ""]);
+    addCommittedSafeRow(this.summarySheet, ["Rol detectado", this.options.uploadedRole ?? null, ""]);
+    addCommittedSafeRow(this.summarySheet, ["Entidades existentes consideradas", this.options.existingEntityCount ?? 0, ""]);
+    addCommittedSafeRow(this.summarySheet, ["Snapshot / versión", this.options.datasetVersion ?? null, ""]);
+    addCommittedSafeRow(this.summarySheet, ["Fecha de análisis", this.options.analyzedAt instanceof Date
+      ? this.options.analyzedAt.toISOString()
+      : this.options.analyzedAt ?? this.options.generatedAt ?? new Date().toISOString(), ""]);
     addCommittedSafeRow(this.summarySheet, [
       "Generado en",
       this.options.generatedAt instanceof Date

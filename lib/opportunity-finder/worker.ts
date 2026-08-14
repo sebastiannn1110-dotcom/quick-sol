@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { evaluateOpportunityCompatibility } from "@/lib/opportunity-finder/compatibility";
 import { matchOpportunityRows } from "@/lib/opportunity-finder/matcher";
 import { safeContextText } from "@/lib/opportunity-finder/normalization";
+import { manufacturerIdentity, mpnIdentity } from "@/lib/opportunity-finder/normalization";
 import { OPPORTUNITY_FINDER_PIPELINE_VERSION } from "@/lib/opportunity-finder/pipeline";
 import {
   parseOpportunityWorkbook,
@@ -67,6 +68,13 @@ export type OpportunityFinderJobRow = {
   locked_by?: string | null;
   lock_token?: string | null;
   processing_fence?: number | string | null;
+  comparison_mode?: "single_file" | "two_files";
+  uploaded_role?: OpportunitySelectedRole | null;
+  opposite_dataset_role?: "demand" | "stock" | null;
+  snapshot_status?: "not_required" | "pending" | "ready" | "failed";
+  dataset_snapshot_id?: string | null;
+  dataset_version?: string | null;
+  performance_metrics?: Record<string, unknown> | null;
 };
 
 type OpportunityWorkerFence = {
@@ -103,6 +111,7 @@ type OpportunityFinderFileRow = {
   validity_override_expires_at?: string | null;
   content_sha256?: string | null;
   actual_size_bytes?: number | null;
+  source_kind?: "uploaded" | "platform_snapshot";
 };
 
 class OpportunityFinderCancelledError extends Error {
@@ -206,7 +215,7 @@ async function requireNotCancelled(supabase: SupabaseClient, jobId: string) {
 async function loadJobFiles(supabase: SupabaseClient, jobId: string) {
   const { data, error } = await supabase
     .from("opportunity_finder_files")
-    .select("id,job_id,side,original_file_name,storage_bucket,storage_path,mime_type,size_bytes,detected_type,selected_role,validity_override_expires_at,content_sha256,actual_size_bytes")
+    .select("id,job_id,side,original_file_name,storage_bucket,storage_path,mime_type,size_bytes,detected_type,selected_role,validity_override_expires_at,content_sha256,actual_size_bytes,source_kind")
     .eq("job_id", jobId)
     .order("side", { ascending: true });
   if (error) throw error;
@@ -260,6 +269,10 @@ async function downloadJobFiles(
     await fs.promises.rm(tempDirectory, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+function uploadedJobFiles(files: OpportunityFinderFileRow[]) {
+  return files.filter((file) => file.source_kind !== "platform_snapshot");
 }
 
 async function profileFiles(
@@ -326,6 +339,159 @@ async function profileFiles(
     lock_token: null,
     heartbeat_at: null
   }, fence);
+}
+
+async function discoverSingleFileCandidates(
+  supabase: SupabaseClient,
+  job: OpportunityFinderJobRow,
+  files: OpportunityFinderFileRow[],
+  localFiles: Map<string, string>
+) {
+  const fence = jobFence(job);
+  const uploadedFile = uploadedJobFiles(files)[0];
+  const role = job.uploaded_role ?? uploadedFile?.selected_role ?? null;
+  if (!uploadedFile || !role || role === "ignore") throw new Error("OPPORTUNITY_SINGLE_ROLE_MISSING");
+  const { error: resetError } = await supabase.rpc("reset_opportunity_finder_job_attempt", {
+    job_id: job.id,
+    worker_id: fence.workerId,
+    lock_token: fence.lockToken,
+    processing_fence: fence.processingFence
+  });
+  if (resetError) throw resetError;
+  const parseStartedAt = performance.now();
+  await updateJob(supabase, job.id, {
+    status: "parsing",
+    current_stage: "normalizing_mpn",
+    progress_percent: 32
+  }, fence);
+  const metrics = await parseOpportunityWorkbook({
+    filePath: localFiles.get(uploadedFile.id)!,
+    fileName: uploadedFile.original_file_name,
+    fileId: uploadedFile.id,
+    jobId: job.id,
+    side: uploadedFile.side,
+    role,
+    validityOverrideExpiresAt: uploadedFile.validity_override_expires_at ?? null,
+    onBatch: async (rows) => {
+      await updateHeartbeat(supabase, job.id, fence);
+      await insertCanonicalRows(supabase, rows, fence);
+      await requireNotCancelled(supabase, job.id);
+    },
+    shouldCancel: () => isCancelled(supabase, job.id)
+  });
+  const parseMs = Math.round((performance.now() - parseStartedAt) * 10) / 10;
+  const { error: parsedStatusError } = await supabase
+    .from("opportunity_finder_files")
+    .update({
+      parse_status: "parsed",
+      parsed_at: nowIso(),
+      row_count: metrics.totalRows,
+      hidden_row_count: metrics.hiddenRows
+    })
+    .eq("id", uploadedFile.id)
+    .eq("job_id", job.id);
+  if (parsedStatusError) throw parsedStatusError;
+  await updateJob(supabase, job.id, {
+    status: "awaiting_roles",
+    current_stage: "finding_matches",
+    progress_percent: 50,
+    processed_rows: metrics.totalRows,
+    total_rows_a: metrics.totalRows,
+    performance_metrics: { parseTimeMs: parseMs },
+    attempts: 0,
+    locked_at: null,
+    locked_by: null,
+    lock_token: null
+  }, fence);
+}
+
+async function insertSingleFileSnapshotRows(
+  supabase: SupabaseClient,
+  job: OpportunityFinderJobRow,
+  files: OpportunityFinderFileRow[],
+  fence: OpportunityWorkerFence
+) {
+  if (job.comparison_mode !== "single_file") return 0;
+  if (job.snapshot_status !== "ready" || !job.dataset_snapshot_id) {
+    throw new Error("OPPORTUNITY_DATASET_SNAPSHOT_NOT_READY");
+  }
+  const virtualFile = files.find((file) => file.source_kind === "platform_snapshot");
+  if (!virtualFile) throw new Error("OPPORTUNITY_VIRTUAL_FILE_MISSING");
+  let offset = 0;
+  let originalIndex = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("opportunity_finder_dataset_snapshot_rows")
+      .select("id,role,source_key,source_upload_id,source_data_version,normalized_mpn,display_mpn,manufacturer,customer_context,supplier_context,required_qty,available_qty,excess_qty,required_date,unit_of_measure,lead_time_weeks,moq,spq,date_code,coo,condition,expires_at,is_active_demand,is_live_supply,quality_flags")
+      .eq("job_id", job.id)
+      .eq("snapshot_id", job.dataset_snapshot_id)
+      .order("normalized_mpn", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + QUERY_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as Array<Record<string, unknown>>;
+    const canonical = page.map((row): CanonicalOpportunityRow => {
+      originalIndex += 1;
+      const identity = mpnIdentity(row.display_mpn ?? row.normalized_mpn);
+      const manufacturer = typeof row.manufacturer === "string" ? row.manufacturer : null;
+      const manufacturerData = manufacturerIdentity(manufacturer);
+      const role = row.role as "demand" | "stock" | "excess" | "supplier_offer";
+      const sourceKey = String(row.source_key);
+      return {
+        jobId: job.id,
+        fileId: virtualFile.id,
+        side: virtualFile.side,
+        fileName: virtualFile.original_file_name,
+        sheetName: "Base autorizada",
+        sourceRow: originalIndex,
+        originalIndex,
+        recordRole: role,
+        recordKind: role === "demand" ? "demand_option" : "supply_lot",
+        templateType: "generic",
+        mappingVersion: "platform-summary-v1",
+        sourceColumns: {
+          origin: "Base QuikSol autorizada",
+          datasetVersion: job.dataset_version ?? "",
+          sourceKey
+        },
+        sourceCellRefs: {},
+        rawRow: {},
+        ...identity,
+        manufacturer,
+        manufacturerCanonical: manufacturerData.canonical || null,
+        manufacturerAliasVersion: manufacturerData.aliasVersion,
+        snapshotKey: job.dataset_snapshot_id,
+        demandEventKey: role === "demand" ? sourceKey : null,
+        demandEventSourceId: role === "demand" ? sourceKey : null,
+        supplyLotKey: role === "demand" ? null : sourceKey,
+        optionOrdinal: role === "demand" ? 1 : null,
+        isPrimaryOption: role === "demand" ? true : null,
+        isApprovedAlternate: role === "demand" ? false : null,
+        isActiveDemand: Boolean(row.is_active_demand),
+        customerContext: typeof row.customer_context === "string" ? row.customer_context : null,
+        supplierContext: typeof row.supplier_context === "string" ? row.supplier_context : null,
+        requiredQty: nullableNumber(row.required_qty),
+        availableQty: nullableNumber(row.available_qty),
+        excessQty: nullableNumber(row.excess_qty),
+        requiredDate: typeof row.required_date === "string" ? row.required_date : null,
+        requiredDateQuality: row.required_date ? "valid" : "missing",
+        unitOfMeasure: typeof row.unit_of_measure === "string" ? row.unit_of_measure : null,
+        leadTimeWeeks: nullableNumber(row.lead_time_weeks),
+        moq: nullableNumber(row.moq),
+        spq: nullableNumber(row.spq),
+        dateCode: typeof row.date_code === "string" ? row.date_code : null,
+        coo: typeof row.coo === "string" ? row.coo : null,
+        condition: typeof row.condition === "string" ? row.condition : null,
+        expiresAt: typeof row.expires_at === "string" ? row.expires_at : null,
+        isLiveSupply: Boolean(row.is_live_supply),
+        qualityFlags: (Array.isArray(row.quality_flags) ? row.quality_flags : []) as CanonicalOpportunityRow["qualityFlags"]
+      };
+    });
+    await insertCanonicalRows(supabase, canonical, fence);
+    if (page.length < QUERY_PAGE_SIZE) break;
+    offset += page.length;
+  }
+  return originalIndex;
 }
 
 function rowInsert(row: CanonicalOpportunityRow, fence: OpportunityWorkerFence) {
@@ -773,15 +939,17 @@ async function loadCurrentComparisonSupplyRows(
   jobId: string,
   files: OpportunityFinderFileRow[],
   primaryRole: OpportunitySelectedRole,
-  fence: OpportunityWorkerFence
+  fence: OpportunityWorkerFence,
+  roles?: OpportunitySelectedRole[]
 ) {
-  const [primaryRows, embeddedOffers] = await Promise.all([
-    loadCanonicalRowsByRole(supabase, jobId, files, primaryRole, fence),
-    primaryRole === "supplier_offer"
-      ? Promise.resolve([] as CanonicalOpportunityRow[])
-      : loadCanonicalRowsByRole(supabase, jobId, files, "supplier_offer", fence)
-  ]);
-  return uniqueSupplyRows([...primaryRows, ...embeddedOffers]);
+  const requestedRoles = roles ?? Array.from(new Set([
+    primaryRole,
+    ...(primaryRole === "supplier_offer" ? [] : ["supplier_offer" as const])
+  ]));
+  const roleRows = await Promise.all(requestedRoles.map((role) =>
+    loadCanonicalRowsByRole(supabase, jobId, files, role, fence)
+  ));
+  return uniqueSupplyRows(roleRows.flat());
 }
 
 function emptyOpportunitySummary(): OpportunitySummary {
@@ -826,6 +994,7 @@ async function matchCanonicalRowsIncrementally(input: {
   roleA: OpportunitySelectedRole;
   roleB: OpportunitySelectedRole;
   supplyRole: OpportunitySelectedRole;
+  supplyRoles?: OpportunitySelectedRole[];
   missingMpnRows: number;
   invalidQuantityRows: number;
   rejectedRows: number;
@@ -847,7 +1016,8 @@ async function matchCanonicalRowsIncrementally(input: {
       input.jobId,
       input.files,
       input.supplyRole,
-      fence
+      fence,
+      input.supplyRoles
     )
   ]);
   const supplyRows = rawSupplyRows.map((row) => attachMaterializedEntityIds(row, identities));
@@ -978,6 +1148,7 @@ async function matchCanonicalRowsByEvent(input: {
   roleA: OpportunitySelectedRole;
   roleB: OpportunitySelectedRole;
   supplyRole: OpportunitySelectedRole;
+  supplyRoles?: OpportunitySelectedRole[];
   missingMpnRows: number;
   invalidQuantityRows: number;
   rejectedRows: number;
@@ -1000,7 +1171,8 @@ async function matchCanonicalRowsByEvent(input: {
       input.jobId,
       input.files,
       input.supplyRole,
-      fence
+      fence,
+      input.supplyRoles
     )
   ]);
   const demandRows = rawDemandRows.map((row) => attachMaterializedEntityIds(
@@ -1377,6 +1549,7 @@ async function parseAndMatch(
   files: OpportunityFinderFileRow[],
   localFiles: Map<string, string>
 ) {
+  const parseStartedAt = performance.now();
   const roleA = job.file_a_role ?? files.find((file) => file.side === "A")?.selected_role ?? null;
   const roleB = job.file_b_role ?? files.find((file) => file.side === "B")?.selected_role ?? null;
   const compatibility = evaluateOpportunityCompatibility(roleA, roleB);
@@ -1407,7 +1580,7 @@ async function parseAndMatch(
 
   const metrics: OpportunityParseMetrics[] = [];
   let processedFiles = 0;
-  for (const file of files) {
+  for (const file of uploadedJobFiles(files)) {
     const role = file.side === "A" ? roleA : roleB;
     await requireNotCancelled(supabase, job.id);
     const { error: parsingStatusError } = await supabase
@@ -1461,6 +1634,14 @@ async function parseAndMatch(
     }, fence);
   }
 
+  const existingEntityCount = await insertSingleFileSnapshotRows(supabase, job, files, fence);
+  if (job.comparison_mode === "single_file") {
+    await updateJob(supabase, job.id, {
+      total_rows_b: existingEntityCount,
+      processed_rows: metrics.reduce((sum, item) => sum + item.totalRows, 0) + existingEntityCount
+    }, fence);
+  }
+
   await requireNotCancelled(supabase, job.id);
   const { error: materializeError } = await supabase.rpc(
     "materialize_opportunity_finder_entities",
@@ -1502,8 +1683,13 @@ async function parseAndMatch(
     lockToken: fence.lockToken,
     workerId: fence.workerId,
     processingFence: fence.processingFence,
-    customerContext: job.client_context ?? null
+    customerContext: job.client_context ?? null,
+    supplyRoles: job.comparison_mode === "single_file" && roleA === "demand"
+      ? ["stock", "excess", "supplier_offer"] as OpportunitySelectedRole[]
+      : undefined
   };
+  const parseTimeMs = Math.round((performance.now() - parseStartedAt) * 10) / 10;
+  const matchingStartedAt = performance.now();
   const output = (eventRowCount ?? 0) > 0
     ? await matchCanonicalRowsByEvent(matcherInput)
     : await matchCanonicalRowsIncrementally(matcherInput);
@@ -1511,7 +1697,36 @@ async function parseAndMatch(
     current_stage: "generating_opportunities",
     progress_percent: 90
   }, fence);
+  const matchingTimeMs = Math.round((performance.now() - matchingStartedAt) * 10) / 10;
+  const persistenceStartedAt = performance.now();
   await commitMatchOutputStage(supabase, outputStage, output.summary, output.warningCount);
+  const persistenceTimeMs = Math.round((performance.now() - persistenceStartedAt) * 10) / 10;
+  const { error: performanceError } = await supabase.rpc("record_opportunity_finder_performance", {
+    job_id: job.id,
+    worker_id: fence.workerId,
+    lock_token: fence.lockToken,
+    processing_fence: fence.processingFence,
+    metrics: {
+      parseTimeMs,
+      matchingTimeMs,
+      assignmentTimeMs: persistenceTimeMs,
+      persistenceTimeMs,
+      totalWorkerTimeMs: Math.round((performance.now() - parseStartedAt) * 10) / 10
+    }
+  });
+  if (performanceError) {
+    await logger.warn({
+      traceId: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      route: "opportunity-finder-worker",
+      method: "WORKER",
+      module: "opportunity-finder",
+      action: "performance_metrics_persist_failed",
+      message: "Opportunity Finder completed, but performance metrics could not be persisted.",
+      status: "failed",
+      metadata: { jobId: job.id, errorCode: performanceError.code ?? "unknown" }
+    });
+  }
 }
 
 export async function claimNextOpportunityFinderJob(
@@ -1547,7 +1762,8 @@ export async function processOpportunityFinderJob(
   let tempDirectory: string | null = null;
   try {
     const files = await loadJobFiles(supabase, job.id);
-    for (const file of files) {
+    const uploadedFiles = uploadedJobFiles(files);
+    for (const file of uploadedFiles) {
       assertCanonicalOpportunityStorageReference({
         ownerId: job.created_by,
         jobId: job.id,
@@ -1557,7 +1773,7 @@ export async function processOpportunityFinderJob(
         storagePath: file.storage_path
       });
     }
-    const downloaded = await downloadJobFiles(supabase, files, job.id);
+    const downloaded = await downloadJobFiles(supabase, uploadedFiles, job.id);
     tempDirectory = downloaded.tempDirectory;
     const localFiles = new Map(downloaded.downloaded.map((item) => [item.file.id, item.localPath]));
     const hashedFiles: Array<{ side: "A" | "B"; digest: string }> = [];
@@ -1616,10 +1832,12 @@ export async function processOpportunityFinderJob(
       action: "job_processing_started",
       message: "Opportunity Finder job processing started.",
       status: "started",
-      metadata: { jobId: job.id, stage: job.current_stage, fileCount: files.length }
+      metadata: { jobId: job.id, stage: job.current_stage, fileCount: uploadedFiles.length }
     });
     if (["inspecting_sheets", "detecting_headers"].includes(job.current_stage)) {
-      await profileFiles(supabase, job, files, localFiles);
+      await profileFiles(supabase, job, uploadedFiles, localFiles);
+    } else if (job.comparison_mode === "single_file" && job.snapshot_status === "pending") {
+      await discoverSingleFileCandidates(supabase, job, files, localFiles);
     } else {
       await parseAndMatch(supabase, job, files, localFiles);
     }

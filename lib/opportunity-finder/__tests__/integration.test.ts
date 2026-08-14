@@ -52,7 +52,7 @@ describe("Opportunity Finder access and isolation integration", () => {
   it("derives idempotency from browser-computed file bytes", () => {
     const component = source("components/opportunity-finder/OpportunityFinder.tsx");
     const pipeline = source("lib/opportunity-finder/pipeline.ts");
-    expect(component).toContain("await sha256OpportunityFileContents(localFiles[0]!)");
+    expect(component).toContain("selectedFiles.map((file) => sha256OpportunityFileContents(file!))");
     expect(pipeline).toContain("await file.arrayBuffer()");
     expect(pipeline).toContain('crypto.subtle.digest("SHA-256"');
     expect(component).toContain("contentSha256: contentHashes[index]");
@@ -73,10 +73,11 @@ describe("Opportunity Finder access and isolation integration", () => {
     }
   });
 
-  it("requires exactly two files and queues background work instead of parsing in HTTP", () => {
+  it("validates one/two-file modes and queues background work instead of parsing in HTTP", () => {
     const createRoute = source("app/api/opportunity-finder/jobs/route.ts");
     const profileRoute = source("app/api/opportunity-finder/jobs/[id]/profile/route.ts");
-    expect(createRoute).toContain("z.array(fileSchema).length(2)");
+    expect(createRoute).toContain('comparisonMode: z.enum(["single_file", "two_files"])');
+    expect(createRoute).toContain("z.array(fileSchema).min(1).max(2)");
     expect(createRoute).toContain("createSignedUploadUrl");
     expect(createRoute).not.toContain("parseOpportunityWorkbook");
     expect(profileRoute).toContain('status: "queued"');

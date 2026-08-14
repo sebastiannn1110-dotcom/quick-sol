@@ -574,6 +574,11 @@ async function writeStreamingXlsx(input: {
   permissions: { includePricing: boolean; includeFinancials: boolean };
   language: Language;
   summary?: Record<string, unknown>;
+  comparisonMode?: "single_file" | "two_files";
+  uploadedRole?: string | null;
+  existingEntityCount?: number | null;
+  datasetVersion?: string | null;
+  analyzedAt?: string | null;
 }) {
   const firstRestricted = await loadRestrictedPage({
     jobId: input.jobId,
@@ -590,7 +595,12 @@ async function writeStreamingXlsx(input: {
     includePricing: effectivePermissions.includePricing,
     includeFinancials: effectivePermissions.includeFinancials,
     jobId: input.jobId,
-    pipelineVersion: input.pipelineVersion
+    pipelineVersion: input.pipelineVersion,
+    comparisonMode: input.comparisonMode,
+    uploadedRole: input.uploadedRole,
+    existingEntityCount: input.existingEntityCount,
+    datasetVersion: input.datasetVersion,
+    analyzedAt: input.analyzedAt
   });
 
   try {
@@ -726,7 +736,12 @@ export async function GET(
       ? await writeStreamingCsv(common)
       : await writeStreamingXlsx({
         ...common,
-        summary: resultId ? undefined : job.summary_json as Record<string, unknown> | undefined
+        summary: resultId ? undefined : job.summary_json as Record<string, unknown> | undefined,
+        comparisonMode: job.comparison_mode === "single_file" ? "single_file" : "two_files",
+        uploadedRole: typeof job.uploaded_role === "string" ? job.uploaded_role : null,
+        existingEntityCount: Number(job.existing_entity_count ?? 0),
+        datasetVersion: typeof job.dataset_version === "string" ? job.dataset_version : null,
+        analyzedAt: typeof job.completed_at === "string" ? job.completed_at : null
       });
     const file = await stat(temporary.filename);
 

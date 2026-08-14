@@ -1003,6 +1003,25 @@ export async function getImportErrors(context: AuthContext, uploadId?: string) {
 
 export async function getDashboardSummary(context: AuthContext) {
   const supabase = requireSupabase(context);
+  const [counter, latest] = await Promise.all([
+    supabase.rpc("get_dashboard_summary_v1"),
+    getLatestUpload(context)
+  ]);
+  const versioned = Array.isArray(counter.data) ? counter.data[0] : counter.data;
+  if (!counter.error && versioned) {
+    const row = versioned as Record<string, unknown>;
+    const data = {
+      totalRecords: Number(row.total_records ?? 0),
+      totalUploads: Number(row.total_uploads ?? 0),
+      recordsWithErrors: Number(row.records_with_errors ?? 0),
+      recordsMissingMpn: Number(row.records_missing_mpn ?? 0),
+      latestUpload: latest.data,
+      dataVersion: Number(row.data_version ?? 0),
+      scope: getAiPermissionScope(context).mode
+    };
+    return result(context, "getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
+  }
+  if (counter.error && !["PGRST202", "42883"].includes(counter.error.code ?? "")) throw counter.error;
   const ownerId = mustForceOwnerScope(context.profile.role) ? context.profile.id : null;
   let recordsCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null);
   let uploadsCount = supabase.from("upload_batches").select("id", { count: "exact", head: true }).neq("status", "archived");
@@ -1014,7 +1033,7 @@ export async function getDashboardSummary(context: AuthContext) {
     errorCount = errorCount.eq("uploaded_by", ownerId);
     missingMpnCount = missingMpnCount.eq("uploaded_by", ownerId);
   }
-  const [records, uploads, errors, missingMpn, latest] = await Promise.all([recordsCount, uploadsCount, errorCount, missingMpnCount, getLatestUpload(context)]);
+  const [records, uploads, errors, missingMpn] = await Promise.all([recordsCount, uploadsCount, errorCount, missingMpnCount]);
   const data = { totalRecords: records.count ?? 0, totalUploads: uploads.count ?? 0, recordsWithErrors: errors.count ?? 0, recordsMissingMpn: missingMpn.count ?? 0, latestUpload: latest.data, scope: getAiPermissionScope(context).mode };
   return result(context, "getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
 }

@@ -74,6 +74,34 @@ async function configureRoute(
   vi.doMock("@/lib/supabase/server", () => ({
     createSupabaseServiceRoleClient: vi.fn(() => null)
   }));
+  // This suite validates route orchestration, authorization, pagination and
+  // cleanup. Workbook behavior has its own focused tests. Mocking the export
+  // module keeps ExcelJS initialization outside each resetModules() cycle,
+  // which otherwise consumed the test timeout under full-suite CPU pressure
+  // before the invalid-resultId branch could execute.
+  vi.doMock("@/lib/opportunity-finder/export", () => ({
+    OpportunityExportTooLargeError: class OpportunityExportTooLargeError extends Error {
+      sheetName = "Synthetic";
+    },
+    OpportunityStreamingExportWriter: class OpportunityStreamingExportWriter {
+      addResults() {}
+      addPossibleMatches() {}
+      addRejectedRows() {}
+      async commit() {
+        return { resultCount: 0, possibleMatchCount: 0, rejectedRowCount: 0, sheetCount: 9 };
+      }
+      abort() {}
+    },
+    opportunityCsvHeaderLine: vi.fn(() => "id"),
+    opportunityCsvResultLine: vi.fn((result: { id?: string }) => String(result.id ?? "")),
+    buildOpportunityCsv: vi.fn(),
+    buildOpportunityExportWorkbook: vi.fn(),
+    classifyOpportunityForExport: vi.fn(),
+    exportHeaders: vi.fn(),
+    exportRow: vi.fn(),
+    OPPORTUNITY_EXPORT_SHEET_NAMES: [],
+    safeSpreadsheetValue: vi.fn((value: unknown) => value)
+  }));
 
   const route = await import("../route");
   return { route, resultQuery, supabase, loadOwnedOpportunityJob, logAuditEvent };

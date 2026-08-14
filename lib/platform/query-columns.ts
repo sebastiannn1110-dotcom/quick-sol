@@ -18,3 +18,13 @@ export const ANALYTICS_UPLOAD_SELECT = [
 ].join(",");
 
 export const ANALYTICS_PROFILE_SELECT = "id,full_name,email,role,department,region,is_active,created_at,updated_at";
+
+// Record tables and search cards only need identity/presentation fields. Large
+// source JSON and financial scalars are fetched by the owner-scoped detail API.
+export const RECORD_LIST_SELECT = [
+  "id", "upload_batch_id", "upload_sheet_id", "uploaded_by", "category", "row_index",
+  "has_errors", "created_at", "line_id", "client", "customer", "supplier",
+  "supplier_name", "mpn", "mpn_quoted", "manufacturer", "clean_mfg", "description", "generic",
+  "po", "profiles(full_name,email,department,region,role)",
+  "upload_batches(original_file_name,detected_category,status)"
+].join(",");

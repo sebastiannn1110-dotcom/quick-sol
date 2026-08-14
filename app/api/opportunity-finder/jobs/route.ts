@@ -16,6 +16,11 @@ import {
   opportunityFinderPipelineVersionFromKey
 } from "@/lib/opportunity-finder/pipeline";
 import { safeContextText } from "@/lib/opportunity-finder/normalization";
+import {
+  datasetScopeForRole,
+  datasetVersionFromManifest,
+  loadAuthorizedDatasetManifest
+} from "@/lib/opportunity-finder/single-file";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
@@ -31,13 +36,22 @@ const fileSchema = z.object({
 });
 
 const createSchema = z.object({
-  files: z.array(fileSchema).length(2),
+  comparisonMode: z.enum(["single_file", "two_files"]).default("two_files"),
+  files: z.array(fileSchema).min(1).max(2),
   clientContext: z.string().trim().max(160).optional().nullable()
 }).superRefine((value, context) => {
-  if (new Set(value.files.map((file) => file.side)).size !== 2) {
+  const expectedCount = value.comparisonMode === "single_file" ? 1 : 2;
+  const sides = new Set(value.files.map((file) => file.side));
+  if (
+    value.files.length !== expectedCount
+    || sides.size !== expectedCount
+    || (value.comparisonMode === "single_file" && !sides.has("A"))
+  ) {
     context.addIssue({
       code: "custom",
-      message: "Exactly one file is required for each side."
+      message: value.comparisonMode === "single_file"
+        ? "Exactly one side-A file is required."
+        : "Exactly one file is required for each side."
     });
   }
 });
@@ -100,7 +114,7 @@ export async function POST(request: Request) {
       issue.path.at(-1) === "contentSha256"
     );
     return NextResponse.json({
-      errorCode: invalidHash ? "FILE_HASH_INVALID" : "EXACTLY_TWO_FILES_REQUIRED"
+      errorCode: invalidHash ? "FILE_HASH_INVALID" : "FILES_REQUIRED_FOR_COMPARISON_MODE"
     }, { status: 400 });
   }
   for (const file of parsed.data.files) {
@@ -114,25 +128,46 @@ export async function POST(request: Request) {
   if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
   const clientContext = safeContextText(parsed.data.clientContext, 160);
-  const idempotencyKey = await buildOpportunityFinderIdempotencyKey({
-    files: parsed.data.files,
-    clientContext
-  });
+  const comparisonMode = parsed.data.comparisonMode;
+  let datasetManifest: Awaited<ReturnType<typeof loadAuthorizedDatasetManifest>> = [];
+  let datasetVersion: string | null = null;
+  const datasetScope = comparisonMode === "single_file"
+    ? datasetScopeForRole(context.profile.role)
+    : null;
+  if (comparisonMode === "single_file") {
+    try {
+      datasetManifest = await loadAuthorizedDatasetManifest(context.supabase);
+      datasetVersion = datasetVersionFromManifest(datasetManifest);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message === "OPPORTUNITY_DATASET_SUMMARY_NOT_READY") {
+        return NextResponse.json({ errorCode: "DATASET_SUMMARY_NOT_READY" }, { status: 409 });
+      }
+      return databaseFailureResponse(error);
+    }
+  }
+  const idempotencyKey = comparisonMode === "two_files"
+    ? await buildOpportunityFinderIdempotencyKey({
+      files: parsed.data.files,
+      clientContext,
+      comparisonMode
+    })
+    : null;
 
-  const { data: existing, error: existingError } = await context.supabase
-    .from("opportunity_finder_jobs")
-    .select("id,status,created_at,idempotency_key")
-    .eq("tenant_id", context.profile.id)
-    .eq("created_by", context.profile.id)
-    .eq("idempotency_key", idempotencyKey)
-    .maybeSingle();
-  if (existingError) return databaseFailureResponse(existingError);
-  if (existing) {
-    return existingComparisonResponse(existing);
+  if (idempotencyKey) {
+    const { data: existing, error: existingError } = await context.supabase
+      .from("opportunity_finder_jobs")
+      .select("id,status,created_at,idempotency_key")
+      .eq("tenant_id", context.profile.id)
+      .eq("created_by", context.profile.id)
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (existingError) return databaseFailureResponse(existingError);
+    if (existing) return existingComparisonResponse(existing);
   }
 
   const jobId = crypto.randomUUID();
-  const files = parsed.data.files
+  const uploadedFiles = parsed.data.files
     .sort((left, right) => left.side.localeCompare(right.side))
     .map((file) => {
       const id = crypto.randomUUID();
@@ -152,6 +187,23 @@ export async function POST(request: Request) {
         })
       };
     });
+  const virtualFileId = comparisonMode === "single_file" ? crypto.randomUUID() : null;
+  const files = comparisonMode === "single_file"
+    ? [...uploadedFiles, {
+      id: virtualFileId!,
+      side: "B" as const,
+      originalFileName: "Base QuikSol autorizada",
+      mimeType: "application/json",
+      sizeBytes: 1,
+      contentSha256: datasetVersion!,
+      storagePath: safeOpportunityStoragePath({
+        userId: context.profile.id,
+        jobId,
+        fileId: virtualFileId!,
+        fileName: "platform-snapshot.json"
+      })
+    }]
+    : uploadedFiles;
 
   const { error: jobError } = await service
     .from("opportunity_finder_jobs")
@@ -162,6 +214,11 @@ export async function POST(request: Request) {
       client_context: clientContext,
       pipeline_version: OPPORTUNITY_FINDER_PIPELINE_VERSION,
       idempotency_key: idempotencyKey,
+      comparison_mode: comparisonMode,
+      dataset_version: datasetVersion,
+      dataset_scope: datasetScope,
+      dataset_manifest: datasetManifest,
+      snapshot_status: comparisonMode === "single_file" ? "pending" : "not_required",
       status: "uploading",
       current_stage: "uploading",
       progress_percent: 0
@@ -191,8 +248,10 @@ export async function POST(request: Request) {
       mime_type: file.mimeType,
       size_bytes: file.sizeBytes,
       content_sha256: file.contentSha256,
-      validation_status: "pending",
-      parse_status: "pending_upload"
+      validation_status: file.id === virtualFileId ? "verified" : "pending",
+      parse_status: file.id === virtualFileId ? "profiled" : "pending_upload",
+      source_kind: file.id === virtualFileId ? "platform_snapshot" : "uploaded",
+      detected_type: "unknown"
     })));
   if (filesError) {
     await service.from("opportunity_finder_jobs").delete().eq("id", jobId).eq("created_by", context.profile.id);
@@ -209,7 +268,7 @@ export async function POST(request: Request) {
   }
 
   const signedFiles = [];
-  for (const file of files) {
+  for (const file of uploadedFiles) {
     const { data, error } = await service.storage
       .from(OPPORTUNITY_FINDER_STORAGE_BUCKET)
       .createSignedUploadUrl(file.storagePath);
@@ -238,25 +297,30 @@ export async function POST(request: Request) {
     userRole: context.profile.role,
     route: context.requestMeta.route,
     module: "opportunity-finder",
-    action: "two_file_job_created",
-    message: "Two-file Opportunity Finder job created.",
+    action: comparisonMode === "single_file" ? "single_file_job_created" : "two_file_job_created",
+    message: comparisonMode === "single_file"
+      ? "Single-file Opportunity Finder job created."
+      : "Two-file Opportunity Finder job created.",
     status: "completed",
     metadata: {
       jobId,
-      fileCount: 2,
-      totalSizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
+      fileCount: uploadedFiles.length,
+      totalSizeBytes: uploadedFiles.reduce((sum, file) => sum + file.sizeBytes, 0),
       maxFileSizeBytes: opportunityFinderMaxFileSizeBytes(),
-      pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
+      pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION,
+      comparisonMode
     }
   });
   await logAuditEvent(context, "opportunity_finder_job_created", "opportunity_finder_job", jobId, {
-    fileCount: 2,
-    totalSizeBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0),
-    pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
+    fileCount: uploadedFiles.length,
+    totalSizeBytes: uploadedFiles.reduce((sum, file) => sum + file.sizeBytes, 0),
+    pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION,
+    comparisonMode
   });
   return NextResponse.json({
     jobId,
     files: signedFiles,
+    comparisonMode,
     reusedExistingJob: false,
     pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION
   }, { status: 201 });

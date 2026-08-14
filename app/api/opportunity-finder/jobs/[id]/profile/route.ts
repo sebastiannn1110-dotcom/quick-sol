@@ -29,13 +29,18 @@ export async function POST(
   if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
   const { data: expectedFiles, error: expectedError } = await context.supabase
     .from("opportunity_finder_files")
-    .select("id,job_id,original_file_name,storage_bucket,storage_path,size_bytes")
+    .select("id,job_id,original_file_name,storage_bucket,storage_path,size_bytes,source_kind")
     .eq("job_id", jobId);
   if (expectedError || expectedFiles?.length !== 2) {
     return NextResponse.json({ errorCode: "EXACTLY_TWO_FILES_REQUIRED" }, { status: 400 });
   }
+  const uploadedFiles = expectedFiles.filter((file) => file.source_kind !== "platform_snapshot");
+  const comparisonMode = job.comparison_mode === "single_file" ? "single_file" : "two_files";
+  if (uploadedFiles.length !== (comparisonMode === "single_file" ? 1 : 2)) {
+    return NextResponse.json({ errorCode: "FILES_REQUIRED_FOR_COMPARISON_MODE" }, { status: 400 });
+  }
   try {
-    for (const file of expectedFiles) {
+    for (const file of uploadedFiles) {
       assertCanonicalOpportunityStorageReference({
         ownerId: context.profile.id,
         jobId,
@@ -48,7 +53,7 @@ export async function POST(
   } catch {
     return NextResponse.json({ errorCode: "FILE_STORAGE_REFERENCE_INVALID" }, { status: 500 });
   }
-  for (const file of expectedFiles) {
+  for (const file of uploadedFiles) {
     const folder = path.posix.dirname(file.storage_path);
     const name = path.posix.basename(file.storage_path);
     const { data: objects, error: listError } = await service.storage
@@ -94,7 +99,8 @@ export async function POST(
     return NextResponse.json({ errorCode: "JOB_QUEUE_CONFLICT" }, { status: 409 });
   }
   await logAuditEvent(context, "opportunity_finder_upload_confirmed", "opportunity_finder_job", jobId, {
-    fileCount: 2
+    fileCount: uploadedFiles.length,
+    comparisonMode
   });
   return NextResponse.json({ jobId, status: "queued", currentStage: "inspecting_sheets" });
 }

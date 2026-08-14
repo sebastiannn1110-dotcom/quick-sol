@@ -7,6 +7,7 @@ import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
+import { RECORD_LIST_SELECT } from "@/lib/platform/query-columns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export async function GET(request: Request) {
           () =>
             context
               .supabase!.from("business_records")
-              .select("*, profiles(full_name,email,department,region,role), upload_batches(original_file_name,detected_category,status)", {
+              .select(RECORD_LIST_SELECT, {
                 count: "exact"
               })
               .is("archived_at", null)

@@ -20,7 +20,7 @@ function expectActiveBusinessRecordReads(relativePath: string, expectedReads: nu
 
 describe("archived business record filters", () => {
   it("keeps normal records API results active-only", () => {
-    expectActiveBusinessRecordReads("app/api/records/route.ts", 1);
+    expectActiveBusinessRecordReads("app/api/records/route.ts", 2);
   });
 
   it("keeps normal search results active-only", () => {
@@ -29,7 +29,7 @@ describe("archived business record filters", () => {
 
   it("keeps AI database tools active-only", () => {
     expectActiveBusinessRecordReads("lib/ai/database-tools.ts", 6);
-    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 2);
+    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 3);
     expectActiveBusinessRecordReads("lib/upload/structure-profile.ts", 1);
   });
 
@@ -41,7 +41,7 @@ describe("archived business record filters", () => {
   it("keeps admin and employee record views active-only", () => {
     expectActiveBusinessRecordReads("app/api/admin/records/route.ts", 1);
     expectActiveBusinessRecordReads("app/api/admin/search/route.ts", 1);
-    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 2);
+    expectActiveBusinessRecordReads("lib/stock-needs/data-source.ts", 3);
     expect(source("app/api/admin/opportunities/route.ts")).toContain("loadSalesOpportunities");
     expect(source("lib/opportunities/service.ts")).toContain("loadStockNeedsInput");
     expect(businessRecordReadSegments("app/api/admin/opportunities/route.ts")).toHaveLength(0);

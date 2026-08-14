@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
   let query = context.supabase!
     .from("import_errors")
-    .select("*, upload_batches(original_file_name,uploaded_by), upload_sheets(sheet_name)")
+    .select("id,upload_batch_id,upload_sheet_id,business_record_id,row_index,column_name,error_type,message,severity,created_at,trace_id,upload_batches(original_file_name,uploaded_by),upload_sheets(sheet_name)")
     .order("created_at", { ascending: false })
     .limit(500);
 
@@ -25,7 +25,6 @@ export async function GET(request: Request) {
   if (error) return NextResponse.json({ error: "Unable to load import errors." }, { status: 500 });
   const errors = (data ?? []).map((row) => {
     const safeRow = { ...(row as Record<string, unknown>) };
-    delete safeRow.raw_data;
     safeRow.raw_value = null;
     return safeRow;
   });

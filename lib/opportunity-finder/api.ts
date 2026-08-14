@@ -16,6 +16,18 @@ export const OPPORTUNITY_JOB_SELECT = [
   "client_context",
   "pipeline_version",
   "content_pair_sha256",
+  "comparison_mode",
+  "uploaded_role",
+  "opposite_dataset_role",
+  "dataset_version",
+  "dataset_scope",
+  "dataset_manifest",
+  "dataset_snapshot_id",
+  "dataset_snapshot_at",
+  "snapshot_status",
+  "existing_entity_count",
+  "existing_mpn_count",
+  "performance_metrics",
   "status",
   "current_stage",
   "progress_percent",
@@ -38,7 +50,33 @@ export const OPPORTUNITY_JOB_SELECT = [
   "started_at",
   "completed_at",
   "expires_at",
-  "cancelled_at"
+  "cancelled_at",
+  "updated_at"
+].join(",");
+
+// Polling must not read large JSON manifests, summaries, or other terminal-only
+// fields. Ownership remains part of the same RLS-authorized query.
+export const OPPORTUNITY_JOB_STATUS_SELECT = [
+  "id",
+  "created_by",
+  "comparison_mode",
+  "uploaded_role",
+  "opposite_dataset_role",
+  "snapshot_status",
+  "dataset_version",
+  "existing_entity_count",
+  "status",
+  "current_stage",
+  "progress_percent",
+  "processed_rows",
+  "total_rows_a",
+  "total_rows_b",
+  "matched_mpns",
+  "result_count",
+  "warning_count",
+  "error_code",
+  "cancel_requested",
+  "updated_at"
 ].join(",");
 
 export const OPPORTUNITY_FILE_SELECT = [
@@ -71,7 +109,8 @@ export const OPPORTUNITY_FILE_SELECT = [
   "profiled_at",
   "parsed_at",
   "file_expires_at",
-  "storage_deleted_at"
+  "storage_deleted_at",
+  "source_kind"
 ].join(",");
 
 export const OPPORTUNITY_RESULT_SELECT = [

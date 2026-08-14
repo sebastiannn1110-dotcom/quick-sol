@@ -20,6 +20,16 @@ export const dynamic = "force-dynamic";
 function jobPayload(job: Record<string, unknown>) {
   return {
     id: job.id,
+    comparisonMode: job.comparison_mode ?? "two_files",
+    uploadedRole: job.uploaded_role ?? null,
+    oppositeDatasetRole: job.opposite_dataset_role ?? null,
+    datasetVersion: job.dataset_version ?? null,
+    datasetScope: job.dataset_scope ?? null,
+    snapshotStatus: job.snapshot_status ?? "not_required",
+    datasetSnapshotAt: job.dataset_snapshot_at ?? null,
+    existingEntityCount: Number(job.existing_entity_count ?? 0),
+    existingMpnCount: Number(job.existing_mpn_count ?? 0),
+    performanceMetrics: job.performance_metrics ?? {},
     clientContext: job.client_context,
     status: job.status,
     currentStage: job.current_stage,
@@ -52,6 +62,7 @@ function jobPayload(job: Record<string, unknown>) {
 function filePayload(file: Record<string, unknown>) {
   return {
     id: file.id,
+    sourceKind: file.source_kind ?? "uploaded",
     side: file.side,
     originalFileName: file.original_file_name,
     mimeType: file.mime_type,
@@ -99,14 +110,19 @@ export async function GET(
   const pipelineVersion = typeof job.pipeline_version === "string"
     ? job.pipeline_version
     : opportunityFinderPipelineVersionFromKey(job.idempotency_key);
-  const { data: files, error: filesError } = await context.supabase
+  const filters = resultFilters(request);
+  const search = new URL(request.url).searchParams;
+  const possibleOffset = Math.max(Number(search.get("possibleOffset") ?? 0) || 0, 0);
+  const possibleLimit = Math.min(Math.max(Number(search.get("possibleLimit") ?? 100) || 100, 1), 250);
+  const rejectedOffset = Math.max(Number(search.get("rejectedOffset") ?? 0) || 0, 0);
+  const rejectedLimit = Math.min(Math.max(Number(search.get("rejectedLimit") ?? 100) || 100, 1), 250);
+  const includeSupplemental = search.get("includeSupplemental") !== "false";
+
+  const filesQuery = context.supabase
     .from("opportunity_finder_files")
     .select(OPPORTUNITY_FILE_SELECT)
     .eq("job_id", jobId)
     .order("side", { ascending: true });
-  if (filesError) return NextResponse.json({ errorCode: "JOB_READ_FAILED" }, { status: 500 });
-
-  const filters = resultFilters(request);
   let resultsQuery = context.supabase
     .from("opportunity_finder_results")
     .select(OPPORTUNITY_RESULT_SELECT, { count: "exact" })
@@ -126,24 +142,54 @@ export async function GET(
   if (filters.withShortage) resultsQuery = resultsQuery.gt("shortage_qty", 0);
   if (filters.withAvailable) resultsQuery = resultsQuery.eq("usable_availability_match", true);
   if (filters.exactOnly) resultsQuery = resultsQuery.eq("exact_match", true);
-  const { data: results, error: resultsError, count } = await resultsQuery
+  const pagedResultsQuery = resultsQuery
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
     .range(filters.offset, filters.offset + filters.limit - 1);
-  if (resultsError) return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
 
   const permissions = getRolePermissions(context.profile.role);
-  let tenantAdmin = false;
-  if (
+  const adminCheckPromise = (
     job.tenant_id &&
     (permissions.canViewSensitivePricing || permissions.canViewCosts || permissions.canViewGp)
-  ) {
-    const { data: adminCheck, error: adminCheckError } = await context.supabase.rpc(
+  ) ? context.supabase.rpc(
       "is_opportunity_finder_tenant_admin",
       { target_tenant_id: job.tenant_id }
-    );
-    tenantAdmin = !adminCheckError && adminCheck === true;
+    ) : Promise.resolve({ data: false, error: null });
+  const possibleQuery = includeSupplemental
+    ? context.supabase
+      .from("opportunity_finder_possible_matches")
+      .select("id,demand_display_mpn,supply_display_mpn,demand_normalized_mpn,supply_normalized_mpn,reason_code,match_tier,confidence,explanation,review_status,manufacturer_compatible,demand_trace,supply_trace", { count: "exact" })
+      .eq("job_id", jobId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(possibleOffset, possibleOffset + possibleLimit - 1)
+    : Promise.resolve({ data: [], error: null, count: 0 });
+  const rejectedQuery = includeSupplemental
+    ? context.supabase
+      .from("opportunity_finder_rejected_rows")
+      .select("id,file_id,side,file_name,sheet_name,source_row,source_row_hidden,reason_code,field_name,source_column,safe_raw_value", { count: "exact" })
+      .eq("job_id", jobId)
+      .order("source_row", { ascending: true })
+      .order("id", { ascending: true })
+      .range(rejectedOffset, rejectedOffset + rejectedLimit - 1)
+    : Promise.resolve({ data: [], error: null, count: 0 });
+
+  const [filesResult, resultsResult, adminResult, possibleResult, rejectedResult] = await Promise.all([
+    filesQuery,
+    pagedResultsQuery,
+    adminCheckPromise,
+    possibleQuery,
+    rejectedQuery
+  ]);
+  const { data: files, error: filesError } = filesResult;
+  const { data: results, error: resultsError, count } = resultsResult;
+  const { data: possibleMatches, error: possibleError, count: possibleCount } = possibleResult;
+  const { data: rejectedRows, error: rejectedError, count: rejectedCount } = rejectedResult;
+  if (filesError) return NextResponse.json({ errorCode: "JOB_READ_FAILED" }, { status: 500 });
+  if (resultsError || possibleError || rejectedError) {
+    return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
   }
+  const tenantAdmin = !adminResult.error && adminResult.data === true;
   const canViewPricing = tenantAdmin && permissions.canViewSensitivePricing;
   const canViewFinancials = tenantAdmin && permissions.canViewCosts && permissions.canViewGp;
   const resultRows = (results ?? []) as unknown as Record<string, unknown>[];
@@ -153,23 +199,31 @@ export async function GET(
   if (resultIds.length && (canViewPricing || canViewFinancials)) {
     const service = createSupabaseServiceRoleClient();
     if (!service) return NextResponse.json({ errorCode: "DATABASE_NOT_CONFIGURED" }, { status: 503 });
-    if (canViewPricing) {
-      const { data: commercial, error: commercialError } = await service
+    const commercialPromise = canViewPricing
+      ? service
         .from("opportunity_finder_result_commercials")
         .select("result_id,target_price,offer_price,target_gap_percent,currency,revenue_potential,pricing_quality")
         .eq("job_id", jobId)
-        .in("result_id", resultIds);
+        .in("result_id", resultIds)
+      : Promise.resolve({ data: [], error: null });
+    const financialPromise = canViewFinancials
+      ? service
+        .from("opportunity_finder_result_financials")
+        .select("result_id,unit_cost,gross_profit,gross_margin_percent,cost_quality")
+        .eq("job_id", jobId)
+        .in("result_id", resultIds)
+      : Promise.resolve({ data: [], error: null });
+    const [{ data: commercial, error: commercialError }, { data: financial, error: financialError }] = await Promise.all([
+      commercialPromise,
+      financialPromise
+    ]);
+    if (canViewPricing) {
       if (commercialError) return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
       for (const item of commercial ?? []) {
         if (item.pricing_quality !== "invalid") commercialByResult.set(item.result_id, item);
       }
     }
     if (canViewFinancials) {
-      const { data: financial, error: financialError } = await service
-        .from("opportunity_finder_result_financials")
-        .select("result_id,unit_cost,gross_profit,gross_margin_percent,cost_quality")
-        .eq("job_id", jobId)
-        .in("result_id", resultIds);
       if (financialError) return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
       for (const item of financial ?? []) {
         if (item.cost_quality === "valid" && item.unit_cost !== null) {
@@ -178,29 +232,6 @@ export async function GET(
       }
     }
   }
-
-  const search = new URL(request.url).searchParams;
-  const possibleOffset = Math.max(Number(search.get("possibleOffset") ?? 0) || 0, 0);
-  const possibleLimit = Math.min(Math.max(Number(search.get("possibleLimit") ?? 100) || 100, 1), 250);
-  const rejectedOffset = Math.max(Number(search.get("rejectedOffset") ?? 0) || 0, 0);
-  const rejectedLimit = Math.min(Math.max(Number(search.get("rejectedLimit") ?? 100) || 100, 1), 250);
-  const { data: possibleMatches, error: possibleError, count: possibleCount } = await context.supabase
-    .from("opportunity_finder_possible_matches")
-    .select("id,demand_display_mpn,supply_display_mpn,demand_normalized_mpn,supply_normalized_mpn,reason_code,match_tier,confidence,explanation,review_status,manufacturer_compatible,demand_trace,supply_trace", { count: "exact" })
-    .eq("job_id", jobId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true })
-    .range(possibleOffset, possibleOffset + possibleLimit - 1);
-  if (possibleError) return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
-
-  const { data: rejectedRows, error: rejectedError, count: rejectedCount } = await context.supabase
-    .from("opportunity_finder_rejected_rows")
-    .select("id,file_id,side,file_name,sheet_name,source_row,source_row_hidden,reason_code,field_name,source_column,safe_raw_value", { count: "exact" })
-    .eq("job_id", jobId)
-    .order("source_row", { ascending: true })
-    .order("id", { ascending: true })
-    .range(rejectedOffset, rejectedOffset + rejectedLimit - 1);
-  if (rejectedError) return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
 
   return NextResponse.json({
     job: jobPayload(job),
@@ -294,12 +325,13 @@ export async function DELETE(
   }
   const { data: files, error: filesError } = await service
     .from("opportunity_finder_files")
-    .select("id,job_id,original_file_name,storage_bucket,storage_path")
+    .select("id,job_id,original_file_name,storage_bucket,storage_path,source_kind")
     .eq("job_id", jobId);
   if (filesError) {
     return NextResponse.json({ errorCode: "SOURCE_FILES_LOAD_FAILED" }, { status: 500 });
   }
-  for (const file of files ?? []) {
+  const uploadedFiles = (files ?? []).filter((file) => file.source_kind !== "platform_snapshot");
+  for (const file of uploadedFiles) {
     try {
       assertCanonicalOpportunityStorageReference({
         ownerId: context.profile.id,
@@ -313,7 +345,7 @@ export async function DELETE(
       return NextResponse.json({ errorCode: "FILE_STORAGE_REFERENCE_INVALID" }, { status: 500 });
     }
   }
-  for (const file of files ?? []) {
+  for (const file of uploadedFiles) {
     const { error: storageError } = await service.storage
       .from(file.storage_bucket)
       .remove([file.storage_path]);

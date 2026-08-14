@@ -78,6 +78,11 @@ export interface OpportunityFinderAiResult {
   pipelineVersion: string;
   mode: OpportunityFinderAiMode;
   summary: string;
+  metadata: {
+    comparisonMode: "single_file" | "two_files";
+    uploadedRole: string | null;
+    existingEntityCount: number;
+  };
   metrics: OpportunityFinderAiMetrics;
   items: OpportunityFinderAiItem[];
   page: {
@@ -120,6 +125,9 @@ const JOB_SELECT = [
   "missing_mpn_rows",
   "invalid_quantity_rows",
   "summary_json",
+  "comparison_mode",
+  "uploaded_role",
+  "existing_entity_count",
   "completed_at"
 ].join(",");
 
@@ -330,6 +338,11 @@ function emptyResult(
     pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION,
     mode,
     summary,
+    metadata: {
+      comparisonMode: "two_files",
+      uploadedRole: null,
+      existingEntityCount: 0
+    },
     metrics: { ...EMPTY_METRICS },
     items: [],
     page: { offset: 0, limit: 0, total: 0, truncated: false }
@@ -436,13 +449,23 @@ export async function getOpportunityFinderAiSummary(
 
   const total = safeNumber(count);
   const items = ((data ?? []) as unknown as Record<string, unknown>[]).map(safeItem);
+  const comparisonMode = loaded.job.comparison_mode === "single_file" ? "single_file" : "two_files";
+  const uploadedRole = typeof loaded.job.uploaded_role === "string" ? loaded.job.uploaded_role : null;
+  const existingEntityCount = safeNumber(loaded.job.existing_entity_count);
+  const baseSummary = COPY[language].result(total, MODE_LABELS[language][mode]);
+  const metadataSummary = language === "en"
+    ? ` Comparison mode: ${comparisonMode === "single_file" ? "one file against the authorized QuikSol dataset" : "two files"}. Uploaded role: ${uploadedRole ?? "not applicable"}. Existing entities considered: ${existingEntityCount}.`
+    : language === "zh"
+      ? ` 比较模式：${comparisonMode === "single_file" ? "一个文件与获授权的 QuikSol 数据库" : "两个文件"}。上传角色：${uploadedRole ?? "不适用"}。已考虑的现有实体：${existingEntityCount}。`
+      : ` Modo de comparación: ${comparisonMode === "single_file" ? "un archivo contra la base QuikSol autorizada" : "dos archivos"}. Rol subido: ${uploadedRole ?? "no aplica"}. Entidades existentes consideradas: ${existingEntityCount}.`;
   return {
     ok: true,
     status: "ok",
     source: "opportunity_finder_v2",
     pipelineVersion: OPPORTUNITY_FINDER_PIPELINE_VERSION,
     mode,
-    summary: COPY[language].result(total, MODE_LABELS[language][mode]),
+    summary: `${baseSummary}${metadataSummary}`,
+    metadata: { comparisonMode, uploadedRole, existingEntityCount },
     metrics: metricsFromJob(loaded.job),
     items,
     page: {

@@ -13,6 +13,7 @@ import { buildSearchableText, normalizeRow, sanitizeScalar } from "@/lib/excel/n
 import { getFileExtension, sanitizeFileName } from "@/lib/excel/validators";
 import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
 import { logger } from "@/lib/logger/logger";
+import { rebuildBusinessUploadSummary } from "@/lib/performance/business-summaries";
 import { SECURITY_LIMITS } from "@/lib/security/env";
 import { finalizeImportJobSafely, redactDiagnosticText } from "@/lib/upload/job-diagnostics";
 import type { HeaderDetectionResult, ImportIssue, RawCell } from "@/lib/excel/types";
@@ -875,6 +876,20 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
         error_message: finishedStatus === "completed_with_warnings" ? "Archivo procesado con advertencias de calidad." : null
       }).eq("id", job.upload_batch_id)
     ]);
+
+    try {
+      await rebuildBusinessUploadSummary(supabase, job.upload_batch_id);
+    } catch (summaryError) {
+      await logger.warn({
+        ...context,
+        module: "upload",
+        action: "business_summary_rebuild_deferred",
+        message: "The exact derived summary remains dirty and will be reconciled by the summary worker.",
+        status: "failed",
+        error: summaryError,
+        metadata: { workerId }
+      });
+    }
 
     await logger.audit({
       ...context,

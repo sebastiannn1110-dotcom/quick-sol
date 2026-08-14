@@ -362,7 +362,10 @@ export const ASSISTANT_INTENT_CATALOG: AssistantIntentDefinition[] = [
       "oportunidades de venta",
       "resumen de oportunidades",
       "oportunidades comerciales",
-      "oportunidades con alta confianza"
+      "oportunidades con alta confianza",
+      "esta comparacion fue contra otro archivo o contra la base",
+      "que tipo de archivo subi",
+      "cuantas oportunidades encontro contra la base"
     ],
     en: [
       "opportunity finder",
@@ -370,14 +373,20 @@ export const ASSISTANT_INTENT_CATALOG: AssistantIntentDefinition[] = [
       "sales opportunities",
       "opportunity summary",
       "commercial opportunities",
-      "high confidence opportunities"
+      "high confidence opportunities",
+      "was this comparison against another file or the database",
+      "what type of file did i upload",
+      "how many opportunities were found against the database"
     ],
     zh: [
       "\u673a\u4f1a\u67e5\u627e\u5668",
       "\u6700\u65b0\u6bd4\u8f83",
       "\u9500\u552e\u673a\u4f1a",
       "\u673a\u4f1a\u6458\u8981",
-      "\u9ad8\u7f6e\u4fe1\u5ea6\u673a\u4f1a"
+      "\u9ad8\u7f6e\u4fe1\u5ea6\u673a\u4f1a",
+      "\u8fd9\u6b21\u6bd4\u8f83\u662f\u4e0e\u53e6\u4e00\u4e2a\u6587\u4ef6\u8fd8\u662f\u6570\u636e\u5e93",
+      "\u6211\u4e0a\u4f20\u4e86\u4ec0\u4e48\u7c7b\u578b\u7684\u6587\u4ef6",
+      "\u5728\u6570\u636e\u5e93\u4e2d\u627e\u5230\u4e86\u591a\u5c11\u5546\u673a"
     ]
   }, { parameters: ["jobId"], answerMode: "summary" }),
   entry("stock_shortage", "getStockShortageSummary", 85, {

@@ -18,9 +18,15 @@ export interface OpportunityFinderIdempotencyFile {
   fileType?: string | null;
 }
 
-function canonicalContentHashes(files: OpportunityFinderIdempotencyFile[]) {
-  if (files.length !== 2 || new Set(files.map((file) => file.side)).size !== 2) {
-    throw new Error("OPPORTUNITY_REQUIRES_EXACTLY_TWO_FILE_HASHES");
+function canonicalContentHashes(
+  files: OpportunityFinderIdempotencyFile[],
+  comparisonMode: "single_file" | "two_files"
+) {
+  const expectedCount = comparisonMode === "single_file" ? 1 : 2;
+  if (files.length !== expectedCount || new Set(files.map((file) => file.side)).size !== expectedCount) {
+    throw new Error(comparisonMode === "single_file"
+      ? "OPPORTUNITY_REQUIRES_EXACTLY_ONE_FILE_HASH"
+      : "OPPORTUNITY_REQUIRES_EXACTLY_TWO_FILE_HASHES");
   }
   return [...files]
     .sort((left, right) => left.side.localeCompare(right.side))
@@ -53,13 +59,24 @@ export async function buildOpportunityFinderIdempotencyKey(input: {
   files: OpportunityFinderIdempotencyFile[];
   pipelineVersion?: string;
   clientContext?: string | null;
+  comparisonMode?: "single_file" | "two_files";
+  uploadedRole?: string | null;
+  datasetVersion?: string | null;
+  tenantScope?: string | null;
 }) {
   const pipelineVersion = input.pipelineVersion ?? OPPORTUNITY_FINDER_PIPELINE_VERSION;
+  const comparisonMode = input.comparisonMode ?? "two_files";
   const canonicalPayload = JSON.stringify({
     scope: IDEMPOTENCY_SCOPE,
     pipelineVersion,
+    comparisonMode,
     clientContext: canonicalClientContext(input.clientContext),
-    files: canonicalContentHashes(input.files)
+    files: canonicalContentHashes(input.files, comparisonMode),
+    ...(comparisonMode === "single_file" ? {
+      uploadedRole: input.uploadedRole ?? null,
+      datasetVersion: input.datasetVersion ?? null,
+      tenantScope: input.tenantScope ?? null
+    } : {})
   });
   const digest = await globalThis.crypto.subtle.digest(
     "SHA-256",

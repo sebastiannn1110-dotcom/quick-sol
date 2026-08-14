@@ -13,7 +13,8 @@ describe("AI upload profile integration", () => {
     expect(databaseTools).toContain('.from("file_schema_profiles")');
     expect(databaseTools).toContain("uploadStructureProfileFromDb");
     expect(databaseTools).not.toContain("ensureUploadStructureProfile");
-    expect(databaseTools).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
+    const withoutAllowlistedReadRpc = databaseTools.replace('.rpc("get_dashboard_summary_v1")', "");
+    expect(withoutAllowlistedReadRpc).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
     expect(databaseTools).toContain("formatColumnsAnswer(latestProfile)");
     expect(databaseTools).toContain("formatDetectedFields(latestProfile)");
     expect(databaseTools).toContain("profiles: profilesList.map");

@@ -280,6 +280,7 @@ describe("Opportunity Finder public privacy and terminology", () => {
         <OpportunityFinder />
       </LanguageProvider>
     );
+    fireEvent.click(screen.getByRole("button", { name: "Comparar dos archivos" }));
     const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
     fireEvent.change(inputs[0], {
       target: { files: [new File(["demand"], "synthetic-demand.xlsx")] }

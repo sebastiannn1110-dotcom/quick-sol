@@ -68,6 +68,8 @@ export default function ClientImage({
             src={source}
             alt={alt}
             className={`${imageClassName} transition-opacity ${loading ? "opacity-0" : "opacity-100"}`}
+            loading="lazy"
+            decoding="async"
             onLoad={() => setLoading(false)}
             onError={useFallback}
           />

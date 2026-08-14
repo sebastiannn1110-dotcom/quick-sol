@@ -392,6 +392,23 @@ describe("GET /api/opportunity-finder/jobs/:id", () => {
     });
     expect(payload.rejectedRows[0]).toMatchObject({ sourceRow: 17, hidden: true });
   });
+
+  it("skips supplemental families for the terminal first page", async () => {
+    const { route, database } = await configureRoute({
+      idempotencyKey: "legacy-random-key",
+      possibleMatches: [{ id: "possible-1" }],
+      rejectedRows: [{ id: "rejected-1" }]
+    });
+
+    const response = await route.GET(request("?includeSupplemental=false"), params());
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(database.possibleQuery.range).not.toHaveBeenCalled();
+    expect(database.rejectedQuery.range).not.toHaveBeenCalled();
+    expect(payload.possibleMatches).toEqual([]);
+    expect(payload.rejectedRows).toEqual([]);
+  });
 });
 
 describe("DELETE /api/opportunity-finder/jobs/:id", () => {

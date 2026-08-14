@@ -45,10 +45,26 @@ export async function GET(request: Request) {
   }
 
   try {
+    const summary = await context.supabase.rpc("get_stock_needs_page_v1", {
+      p_limit: filters.limit,
+      p_offset: filters.offset,
+      p_q: filters.q ?? null,
+      p_customer: filters.customer ?? null,
+      p_supplier: filters.supplier ?? null,
+      p_manufacturer: filters.manufacturer ?? null,
+      p_status: filters.status ?? null,
+      p_coverage: filters.coverageStatus ?? null,
+      p_upload_batch_id: filters.uploadBatchId ?? null
+    });
+    if (!summary.error && summary.data && (summary.data as { summaryReady?: boolean }).summaryReady) {
+      return NextResponse.json(redactSensitiveFieldsForRole(summary.data, context.profile.role));
+    }
+    if (summary.error && !["PGRST202", "42883"].includes(summary.error.code ?? "")) throw summary.error;
     const input = await loadStockNeedsInput(context.supabase, {
       filters,
       maxUploads: 20,
-      recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000
+      recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000,
+      complete: true,
     });
     const result = buildStockNeedsResult({ records: input.records, profiles: input.profiles, importJobs: input.importJobs, filters });
     return NextResponse.json(redactSensitiveFieldsForRole(result, context.profile.role));

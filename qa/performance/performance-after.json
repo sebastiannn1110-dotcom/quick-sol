@@ -1,0 +1,39 @@
+{
+  "capturedAt": "2026-08-13",
+  "environment": "local code, PostgreSQL 16.11 temporary cluster, no remote migration",
+  "flows": {
+    "clients": { "latencyMs": null, "databaseQueryBudget": 5, "rawBusinessRecordsTransferred": 0, "signedImages": "lazy-visible-only", "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "records": { "latencyMs": null, "databaseQueryBudget": 2, "pageRows": 25, "pagination": "keyset(created_at,id)", "heavyJsonInList": false, "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "executiveSearch": { "latencyMs": null, "mpnDatabaseQueryBudget": 1, "domainsQueriedForMpn": 1, "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "stock": { "latencyMs": null, "readySummaryQueries": 1, "rawBusinessRecordsTransferred": 0, "exactFallbackInternallyPaged": true, "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "opportunities": { "latencyMs": null, "readySummaryQueryBudget": 2, "rawBusinessRecordsTransferred": 0, "complexity": "O(signals + groups log groups)", "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "opportunityFinder": { "statusLatencyMs": null, "statusDatabaseQueries": 1, "terminalDatabaseQueriesMax": 7, "pollIntervalMs": "adaptive 2500-15000", "pollPayload": "status-only", "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" },
+    "assistantDashboard": { "databaseSummaryMs": null, "databaseQueries": 2, "reasonLatencyNull": "No authenticated staging dataset with the local migration applied" }
+  },
+  "sqlExplain100kSynthetic": {
+    "keysetBeforeExecutionMs": 73.429,
+    "keysetAfterExecutionMs": 0.204,
+    "keysetIndexSize": "3992 kB",
+    "containsBeforeExecutionMs": 50.689,
+    "containsAfterExecutionMs": 6.55,
+    "mpnTrigramIndexSize": "2192 kB"
+  },
+  "keysetScaleSynthetic": [
+    { "rows": 10000, "executionMs": 0.085, "sharedBuffers": 4 },
+    { "rows": 100000, "executionMs": 0.055, "sharedBuffers": 5 },
+    { "rows": 500000, "executionMs": 0.069, "sharedBuffers": 4 },
+    { "rows": 1000000, "executionMs": 0.06, "sharedBuffers": 4, "tableWithIndexesSize": "1089 MB", "keysetIndexSize": "69 MB" }
+  ],
+  "opportunityAggregationSynthetic": [
+    { "rows": 1000, "legacyMs": 129.063, "currentMs": 154.15, "speedup": 0.84, "currentHeapDeltaBytes": 4041536 },
+    { "rows": 5000, "legacyMs": 377.434, "currentMs": 150.453, "speedup": 2.51, "currentHeapDeltaBytes": 1547840 },
+    { "rows": 10000, "legacyMs": 1322.624, "currentMs": 348.223, "speedup": 3.8, "currentHeapDeltaBytes": 2277872 },
+    { "rows": 50000, "legacyMs": null, "currentMs": 2376.916, "speedup": null, "currentHeapDeltaBytes": 12550136, "legacyStatus": "not_run_to_avoid_intentional_quadratic_cpu" },
+    { "rows": 100000, "legacyMs": null, "currentMs": 2981.552, "speedup": null, "currentHeapDeltaBytes": -348920, "legacyStatus": "not_run_to_avoid_intentional_quadratic_cpu" }
+  ],
+  "integrity": { "postgrestBoundaryCasesPassed": [999, 1000, 1001, 5000, 10000], "rlsContract": "passed", "clientMetricsContract": "passed", "migrationFromScratch": "passed (17 migrations, PostgreSQL 16 UTF-8 temporary cluster)" },
+  "notes": [
+    "Negative heap deltas are real process observations affected by garbage collection; they are not interpreted as memory savings.",
+    "Unmeasured route latency and bytes remain null; no production-equivalent numbers were invented."
+  ]
+}

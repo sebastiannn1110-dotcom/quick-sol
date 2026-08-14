@@ -39,6 +39,22 @@ const processes = [
       },
     ),
   },
+  {
+    name: "business-summary-worker",
+    child: spawn(nodeExecutable, [tsxCli, "scripts/business-summary-worker.ts"], {
+      cwd: root,
+      env: process.env,
+      stdio: "inherit",
+    }),
+  },
+  {
+    name: "observability-outbox-worker",
+    child: spawn(nodeExecutable, [tsxCli, "scripts/observability-outbox-worker.ts"], {
+      cwd: root,
+      env: process.env,
+      stdio: "inherit",
+    }),
+  },
 ];
 
 let stopping = false;

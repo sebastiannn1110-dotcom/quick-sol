@@ -143,17 +143,28 @@ function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
+const NORMALIZED_KEY_CACHE = new Map<string, string>();
+
 function normalizedKey(value: string) {
-  return value
+  const cached = NORMALIZED_KEY_CACHE.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]/g, "")
     .toLowerCase();
+  NORMALIZED_KEY_CACHE.set(value, normalized);
+  return normalized;
 }
 
+const KEYED_RECORD_CACHE = new WeakMap<JsonRecord, Map<string, unknown>>();
+
 function keyed(record: JsonRecord) {
+  const cached = KEYED_RECORD_CACHE.get(record);
+  if (cached) return cached;
   const out = new Map<string, unknown>();
   for (const [key, value] of Object.entries(record)) out.set(normalizedKey(key), value);
+  KEYED_RECORD_CACHE.set(record, out);
   return out;
 }
 
@@ -302,6 +313,8 @@ export function buildStockNeedsResult(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
   filters?: StockNeedsFilters;
+  /** Internal reconciliation only: return the complete derived set. */
+  includeAllItems?: boolean;
 }): StockNeedsResult {
   const filters = input.filters ?? {};
   const limit = Math.min(Math.max(Number(filters.limit ?? 50) || 50, 1), 200);
@@ -406,7 +419,7 @@ export function buildStockNeedsResult(input: {
     return acc;
   }, emptyTotals());
 
-  const items = filtered.slice(offset, offset + limit);
+  const items = input.includeAllItems ? filtered : filtered.slice(offset, offset + limit);
   return {
     items,
     totals,

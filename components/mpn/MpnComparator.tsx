@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import SupplierRecommendationCard from "@/components/mpn/SupplierRecommendationCard";
-import type { Profile } from "@/lib/types";
+import { useProfile } from "@/components/ProfileProvider";
 
 interface ComparisonPayload {
   mpn: string;
@@ -36,7 +36,7 @@ function nested(row: Record<string, unknown>, key: string, field: string) {
 export default function MpnComparator({ initialMpn = "" }: { initialMpn?: string }) {
   const [mpn, setMpn] = useState(initialMpn);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { profile } = useProfile();
   const [data, setData] = useState<ComparisonPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -57,17 +57,6 @@ export default function MpnComparator({ initialMpn = "" }: { initialMpn?: string
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    async function loadProfile() {
-      const response = await fetch("/api/me", { cache: "no-store" });
-      if (response.ok) {
-        const payload = (await response.json()) as { profile: Profile };
-        setProfile(payload.profile);
-      }
-    }
-    void loadProfile();
-  }, []);
 
   useEffect(() => {
     if (initialMpn) void compare(initialMpn);
