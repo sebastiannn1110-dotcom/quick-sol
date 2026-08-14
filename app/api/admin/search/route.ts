@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export async function GET(request: Request) {
   const [records, uploads, employees, errors] = await Promise.all([
     context.supabase!
       .from("business_records")
-      .select("id, category, customer, supplier, supplier_name, mpn, mpn_quoted, po, description, created_at, profiles(full_name,email), upload_batches(original_file_name)")
+      .select(`id, category, customer, supplier, supplier_name, mpn, mpn_quoted, po, description, created_at, profiles(full_name,email), ${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name)`)
       .is("archived_at", null)
       .or(`searchable_text.ilike.${pattern},mpn.ilike.${pattern},mpn_quoted.ilike.${pattern},supplier.ilike.${pattern},supplier_name.ilike.${pattern},customer.ilike.${pattern},po.ilike.${pattern}`)
       .limit(20),

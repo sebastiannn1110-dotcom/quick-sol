@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MpnOffer } from "@/lib/mpn/recommendation";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import { normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
 
 export const MPN_COMPARATOR_LIMIT = 120;
@@ -36,7 +37,7 @@ export const MPN_COMPARATOR_SELECT = [
   "has_errors",
   "created_at",
   "profiles(full_name,department,region,role)",
-  "upload_batches(id,original_file_name,detected_category,status,created_at)"
+  `${BUSINESS_RECORD_UPLOAD_RELATION}(id,original_file_name,detected_category,status,created_at)`
 ].join(",");
 
 const MPN_SUGGESTION_SELECT = "mpn,mpn_quoted";

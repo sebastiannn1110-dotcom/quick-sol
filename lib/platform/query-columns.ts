@@ -1,5 +1,7 @@
 // Analytics intentionally excludes raw_data, normalized_data, searchable_text and
 // other large JSON/text fields. The dashboard only needs these scalar columns.
+export const BUSINESS_RECORD_UPLOAD_RELATION = "upload_batches!business_records_upload_batch_id_fkey";
+
 export const ANALYTICS_RECORD_SELECT = [
   "id", "upload_batch_id", "upload_sheet_id", "uploaded_by", "category", "row_index",
   "has_errors", "errors", "created_at", "archived_at", "line_id", "client", "customer",
@@ -26,5 +28,5 @@ export const RECORD_LIST_SELECT = [
   "has_errors", "created_at", "line_id", "client", "customer", "supplier",
   "supplier_name", "mpn", "mpn_quoted", "manufacturer", "clean_mfg", "description", "generic",
   "po", "profiles(full_name,email,department,region,role)",
-  "upload_batches(original_file_name,detected_category,status)"
+  `${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status)`
 ].join(",");

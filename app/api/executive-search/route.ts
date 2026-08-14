@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { parseExecutiveQuery, type NumericFilter } from "@/lib/search/executive-query-parser";
@@ -22,7 +23,7 @@ const EXECUTIVE_RECORD_SELECT = [
   "supplier", "supplier_name", "mpn", "mpn_quoted", "manufacturer", "description", "generic", "po",
   "qty", "req_qty", "price", "gp_rate", "lead_time_weeks", "shipping_point_country", "has_errors",
   "profiles(full_name,email,department,region,role)",
-  "upload_batches(original_file_name,detected_category,status,created_at)"
+  `${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`
 ].join(",");
 const EXECUTIVE_UPLOAD_SELECT = "id,uploaded_by,original_file_name,status,detected_category,total_rows,valid_rows,invalid_rows,error_count,data_quality_score,created_at,profiles(full_name,email,department,region,role)";
 const EXECUTIVE_ERROR_SELECT = "id,upload_batch_id,row_index,column_name,error_type,message,severity,created_at,upload_batches(original_file_name,uploaded_by),upload_sheets(sheet_name)";

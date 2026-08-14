@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import type { StockNeedsFilters, StockNeedsImportJob, StockNeedsProfile, StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
 
-const BUSINESS_RECORD_SELECT: string = "id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches(original_file_name,detected_category,status,created_at)";
-const AI_SAFE_BUSINESS_RECORD_SELECT: string = "upload_batch_id,category,has_errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches(detected_category,status,created_at)";
+const BUSINESS_RECORD_SELECT: string = `id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`;
+const AI_SAFE_BUSINESS_RECORD_SELECT: string = `upload_batch_id,category,has_errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,${BUSINESS_RECORD_UPLOAD_RELATION}(detected_category,status,created_at)`;
 const PROFILE_SELECT = "upload_batch_id,detected_template,detected_mappings_json,column_count";
 const JOB_SELECT = "upload_batch_id,status";
 

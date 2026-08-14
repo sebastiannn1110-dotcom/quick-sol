@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { detectOpportunitySignals } from "@/lib/opportunities/opportunities";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import {
   buildStockNeedsResult,
   type StockNeedsImportJob,
@@ -8,7 +9,7 @@ import {
 } from "@/lib/stock-needs/stock-needs";
 
 const RECONCILIATION_PAGE_SIZE = 1000;
-const RECORD_SELECT = "id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,created_at,upload_batches(original_file_name,detected_category,status,created_at)";
+const RECORD_SELECT = `id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,created_at,${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`;
 
 export type BusinessMpnSummaryRow = {
   normalized_mpn: string;
