@@ -673,6 +673,7 @@ export default function OpportunityFinder() {
   useEffect(() => {
     if (
       !jobId
+      || data?.job.id !== jobId
       || data?.job.comparisonMode !== "single_file"
       || data.job.status !== "awaiting_roles"
       || data.job.snapshotStatus !== "pending"
@@ -684,13 +685,42 @@ export default function OpportunityFinder() {
       try {
         const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/snapshot`, { method: "POST" });
         const payload = await readPayload<{ jobId: string }>(response);
-        if (payload.jobId !== jobId) setJobId(payload.jobId);
-        await loadJob(appliedFilters, 0, false, false, payload.jobId);
+        if (payload.jobId !== jobId) {
+          setData(null);
+          setRoles({});
+          setValidThroughByFile({});
+          setSupplementalLoaded({ possible: false, rejected: false });
+          setSupplementalLoading(null);
+          setJobId(payload.jobId);
+          return;
+        }
+        await loadJob(appliedFilters, 0, false, false, jobId);
       } catch (error) {
         const apiError = error as OpportunityApiError;
-        if (apiError.jobId) setJobId(apiError.jobId);
+        if (
+          apiError.message === "COMPARISON_ALREADY_EXISTS"
+          && apiError.reusedExistingJob
+          && apiError.jobId
+        ) {
+          setData(null);
+          setRoles({});
+          setValidThroughByFile({});
+          setCompatibilityReason("");
+          setReviewingIds(new Set());
+          setReviewNotice("");
+          setSupplementalLoaded({ possible: false, rejected: false });
+          setSupplementalLoading(null);
+          setJobId(apiError.jobId);
+          setErrorCode("");
+          return;
+        }
+        if (apiError.jobId && apiError.jobId !== jobId) {
+          setData(null);
+          setJobId(apiError.jobId);
+        }
         setErrorCode(apiError.message || "DATASET_SNAPSHOT_FAILED");
-        snapshotRequestRef.current = null;
+      } finally {
+        if (snapshotRequestRef.current === jobId) snapshotRequestRef.current = null;
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

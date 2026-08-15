@@ -93,6 +93,78 @@ describe("Opportunity Finder access and isolation integration", () => {
     expect(migration).not.toMatch(/allowed_mime_types[\s\S]*application\/json/i);
   });
 
+  it("relaxes physical size only for a verified canonical platform snapshot", () => {
+    const migration = source("supabase/migrations/20260815120000_fix_virtual_snapshot_verification.sql");
+    const materializePatch = migration.split("corrected_guard constant text")[1]
+      ?.split("$corrected_guard$;")[0] ?? "";
+    expect(materializePatch).toContain("file.validation_status <> 'verified'");
+    expect(materializePatch).toContain("file.content_sha256 is null");
+    expect(materializePatch).toContain("file.source_kind = 'uploaded' and file.actual_size_bytes is null");
+    expect(materializePatch).toContain("file.source_kind = 'platform_snapshot'");
+    expect(materializePatch).toContain("file.mime_type is distinct from 'application/json'");
+    expect(materializePatch).toContain("file.storage_bucket is distinct from 'opportunity-finder'");
+    expect(materializePatch).toContain("locked_job.created_by::text");
+    expect(materializePatch).toContain("file.id::text || '.json'");
+    expect(migration).not.toMatch(/create\s+policy|drop\s+policy|alter\s+table[\s\S]{0,80}(enable|disable|force)\s+row\s+level\s+security/i);
+  });
+
+  it("reuses only unexpired active or successful single-file jobs", () => {
+    const migration = source("supabase/migrations/20260815120000_fix_virtual_snapshot_verification.sql");
+    const lookup = migration.split("corrected_lookup constant text")[1]
+      ?.split("$corrected_lookup$;")[0] ?? "";
+    for (const status of [
+      "uploading",
+      "queued",
+      "profiling",
+      "awaiting_roles",
+      "parsing",
+      "matching",
+      "completed",
+      "completed_with_warnings"
+    ]) {
+      expect(lookup).toContain(`'${status}'`);
+    }
+    expect(lookup).not.toContain("'failed'");
+    expect(lookup).not.toContain("'cancelled'");
+    expect(lookup).toContain("job.expires_at > now()");
+    expect(lookup).toContain("pg_advisory_xact_lock");
+    expect(lookup).toContain("job.comparison_mode = 'single_file'");
+    expect(migration).toContain("create unique index opportunity_finder_jobs_two_file_idempotency_uidx");
+    expect(migration).toContain("comparison_mode = 'two_files'");
+  });
+
+  it("covers upload, virtual snapshot, idempotency and zero-match runtime regressions", () => {
+    const runtime = source("supabase/tests/opportunity_finder_virtual_snapshot_hotfix_runtime.sql");
+    for (const assertion of [
+      "physical CSV without actual size was accepted",
+      "physical XLSX without actual size was accepted",
+      "physical JSON upload was accepted",
+      "unverified virtual snapshot was accepted",
+      "virtual snapshot with invalid type was accepted",
+      "virtual snapshot with invalid locator was accepted",
+      "failed job was reused",
+      "cancelled job was reused",
+      "expired job was reused",
+      "completed job was not reused",
+      "processing job was not reused",
+      "zero-match single-file job did not finish successfully"
+    ]) {
+      expect(runtime).toContain(assertion);
+    }
+    expect(runtime).toContain("rollback;");
+  });
+
+  it("guards snapshot effects by loaded job identity and clears provisional handoff state", () => {
+    const component = source("components/opportunity-finder/OpportunityFinder.tsx");
+    expect(component).toContain("data?.job.id !== jobId");
+    const snapshotEffect = component.split("data?.job.id !== jobId")[1]
+      ?.split("const roleCompatibility")[0] ?? "";
+    expect(snapshotEffect).toContain('apiError.message === "COMPARISON_ALREADY_EXISTS"');
+    expect(snapshotEffect).toContain("apiError.reusedExistingJob");
+    expect(snapshotEffect.indexOf("setData(null)")).toBeLessThan(snapshotEffect.indexOf("setJobId(apiError.jobId)"));
+    expect(snapshotEffect).not.toContain('apiError.message === "DATASET_SNAPSHOT_NOT_READY"');
+  });
+
   it("persists cancellation, safe retry and owner-scoped idempotency", () => {
     const cancelRoute = source("app/api/opportunity-finder/jobs/[id]/cancel/route.ts");
     const retryRoute = source("app/api/opportunity-finder/jobs/[id]/retry/route.ts");

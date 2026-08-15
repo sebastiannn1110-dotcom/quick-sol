@@ -47,10 +47,10 @@ class TestXMLHttpRequest {
   }
 }
 
-function jsonResponse(payload: unknown, ok = true) {
+function jsonResponse(payload: unknown, ok = true, status = ok ? 200 : 500) {
   return {
     ok,
-    status: ok ? 200 : 500,
+    status,
     json: vi.fn(async () => payload)
   } as unknown as Response;
 }
@@ -89,14 +89,23 @@ function jobPayload(input: {
   jobId: string;
   mode: "single_file" | "two_files";
   files: ReturnType<typeof apiFile>[];
-  status?: "profiling" | "awaiting_roles" | "cancelled";
+  status?: "profiling" | "awaiting_roles" | "completed" | "completed_with_warnings" | "cancelled";
+  currentStage?: "inspecting_sheets" | "confirming_roles" | "finding_matches" | "completed";
+  snapshotStatus?: "not_required" | "pending" | "ready" | "failed";
 }) {
   const status = input.status ?? "awaiting_roles";
+  const currentStage = input.currentStage ?? (
+    status === "awaiting_roles"
+      ? "confirming_roles"
+      : status === "cancelled" || status === "completed" || status === "completed_with_warnings"
+        ? "completed"
+        : "inspecting_sheets"
+  );
   return {
     job: {
       id: input.jobId,
       status,
-      currentStage: status === "awaiting_roles" ? "confirming_roles" : status === "cancelled" ? "completed" : "inspecting_sheets",
+      currentStage,
       progressPercent: status === "awaiting_roles" ? 40 : status === "cancelled" ? 0 : 20,
       fileARole: null,
       fileBRole: null,
@@ -112,7 +121,7 @@ function jobPayload(input: {
       createdAt: "2026-08-14T00:00:00.000Z",
       expiresAt: "2026-08-17T00:00:00.000Z",
       comparisonMode: input.mode,
-      snapshotStatus: input.mode === "single_file" ? "pending" : "not_required"
+      snapshotStatus: input.snapshotStatus ?? (input.mode === "single_file" ? "pending" : "not_required")
     },
     files: input.files,
     results: [],
@@ -375,5 +384,158 @@ describe("Opportunity Finder request lifecycle", () => {
     await waitFor(() => expect(cancelCalled).toHaveBeenCalledTimes(1));
     expect(unhandled.handler).not.toHaveBeenCalled();
     unhandled.stop();
+  });
+
+  it("hands a reused snapshot job off without requesting a snapshot from stale data", async () => {
+    const provisionalJobId = "job-provisional";
+    const existingJobId = "job-existing";
+    const files = [apiFile("file-a", "A", "handoff.xlsx")];
+    let profiled = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/opportunity-finder/jobs" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          jobId: provisionalJobId,
+          files: [{ id: "file-a", side: "A", signedUrl: "https://storage.test/a" }]
+        }));
+      }
+      if (url === `/api/opportunity-finder/jobs/${provisionalJobId}/profile`) {
+        profiled = true;
+        return Promise.resolve(jsonResponse({ jobId: provisionalJobId }));
+      }
+      if (url.startsWith(`/api/opportunity-finder/jobs/${provisionalJobId}?`)) {
+        return Promise.resolve(jsonResponse(jobPayload({
+          jobId: provisionalJobId,
+          mode: "single_file",
+          files,
+          status: profiled ? "awaiting_roles" : "profiling",
+          currentStage: profiled ? "finding_matches" : "inspecting_sheets",
+          snapshotStatus: "pending"
+        })));
+      }
+      if (url === `/api/opportunity-finder/jobs/${provisionalJobId}/snapshot`) {
+        return Promise.resolve(jsonResponse({
+          code: "COMPARISON_ALREADY_EXISTS",
+          errorCode: "COMPARISON_ALREADY_EXISTS",
+          jobId: existingJobId,
+          reusedExistingJob: true
+        }, false, 409));
+      }
+      if (url.startsWith(`/api/opportunity-finder/jobs/${existingJobId}?`)) {
+        return Promise.resolve(jsonResponse(jobPayload({
+          jobId: existingJobId,
+          mode: "single_file",
+          files,
+          status: "completed",
+          currentStage: "completed",
+          snapshotStatus: "ready"
+        })));
+      }
+      if (url === `/api/opportunity-finder/jobs/${existingJobId}/snapshot`) {
+        throw new Error("stale snapshot request reached the reused job");
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<LanguageProvider><OpportunityFinder /></LanguageProvider>);
+    selectFiles(view, "single_file", ["handoff.xlsx"]);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/opportunity-finder/jobs/${provisionalJobId}/snapshot`,
+      { method: "POST" }
+    ));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) =>
+      String(input).startsWith(`/api/opportunity-finder/jobs/${existingJobId}?`)
+    )).toBe(true));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      String(input) === `/api/opportunity-finder/jobs/${provisionalJobId}/snapshot`
+    )).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([input]) =>
+      String(input) === `/api/opportunity-finder/jobs/${existingJobId}/snapshot`
+    )).toBe(false);
+  });
+
+  it("completes the single-file UI lifecycle with a valid XLSX and zero matches", async () => {
+    const jobId = "job-zero-matches";
+    const files = [apiFile("file-zero", "A", "zero-matches.xlsx")];
+    let profiled = false;
+    let confirmed = false;
+    let snapshotted = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/opportunity-finder/jobs" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          jobId,
+          files: [{ id: "file-zero", side: "A", signedUrl: "https://storage.test/zero" }]
+        }));
+      }
+      if (url === `/api/opportunity-finder/jobs/${jobId}/profile`) {
+        profiled = true;
+        return Promise.resolve(jsonResponse({ jobId }));
+      }
+      if (url === `/api/opportunity-finder/jobs/${jobId}/confirm`) {
+        confirmed = true;
+        return Promise.resolve(jsonResponse({ jobId, status: "awaiting_roles" }));
+      }
+      if (url === `/api/opportunity-finder/jobs/${jobId}/snapshot`) {
+        snapshotted = true;
+        return Promise.resolve(jsonResponse({ jobId, status: "queued", snapshotStatus: "ready" }));
+      }
+      if (url.startsWith(`/api/opportunity-finder/jobs/${jobId}?`)) {
+        if (snapshotted) {
+          return Promise.resolve(jsonResponse(jobPayload({
+            jobId,
+            mode: "single_file",
+            files,
+            status: "completed",
+            currentStage: "completed",
+            snapshotStatus: "ready"
+          })));
+        }
+        if (confirmed) {
+          return Promise.resolve(jsonResponse(jobPayload({
+            jobId,
+            mode: "single_file",
+            files,
+            status: "awaiting_roles",
+            currentStage: "finding_matches",
+            snapshotStatus: "pending"
+          })));
+        }
+        return Promise.resolve(jsonResponse(jobPayload({
+          jobId,
+          mode: "single_file",
+          files,
+          status: profiled ? "awaiting_roles" : "profiling",
+          currentStage: profiled ? "confirming_roles" : "inspecting_sheets",
+          snapshotStatus: "pending"
+        })));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<LanguageProvider><OpportunityFinder /></LanguageProvider>);
+    selectFiles(view, "single_file", ["zero-matches.xlsx"]);
+
+    const findButton = await screen.findByRole("button", { name: "Buscar oportunidades" });
+    await waitFor(() => expect((findButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(findButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/opportunity-finder/jobs/${jobId}/confirm`,
+      expect.objectContaining({ method: "POST" })
+    ));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/opportunity-finder/jobs/${jobId}/snapshot`,
+      { method: "POST" }
+    ));
+    expect(await screen.findByText("No hay resultados para los filtros actuales.")).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      String(input) === `/api/opportunity-finder/jobs/${jobId}/snapshot`
+    )).toHaveLength(1);
   });
 });

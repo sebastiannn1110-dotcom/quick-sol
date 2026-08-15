@@ -22,6 +22,25 @@ describe("Opportunity Finder upload validation", () => {
     expect(opportunityFinderMaxRowsPerFile()).toBe(250_000);
   });
 
+  it.each([
+    ["demand.csv", "text/csv"],
+    ["stock.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+  ])("accepts a supported physical upload %s", (fileName, fileType) => {
+    expect(validateOpportunityFileMetadata({
+      fileName,
+      fileSize: 1024,
+      fileType
+    })).toBeNull();
+  });
+
+  it("rejects a normal physical JSON upload", () => {
+    expect(validateOpportunityFileMetadata({
+      fileName: "platform-snapshot.json",
+      fileSize: 1024,
+      fileType: "application/json"
+    })).toBe("FILE_EXTENSION_INVALID");
+  });
+
   it.each(["payload.exe", "macro.xlsm", "legacy.xls", "binary.xlsb"])(
     "blocks unsafe or unsupported extension %s",
     (fileName) => {
