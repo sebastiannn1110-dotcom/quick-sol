@@ -83,6 +83,16 @@ describe("Opportunity Finder access and isolation integration", () => {
     expect(profileRoute).toContain('status: "queued"');
   });
 
+  it("allows only the database-only platform snapshot to use a JSON locator", () => {
+    const migration = source("supabase/migrations/20260814160000_opportunity_virtual_file_storage.sql");
+    expect(migration).toContain("new.source_kind = 'platform_snapshot'");
+    expect(migration).toContain("then '.json'");
+    expect(migration).toContain("when lower(new.original_file_name) ~ '\\.csv$' then '.csv'");
+    expect(migration).toContain("when lower(new.original_file_name) ~ '\\.xlsx$' then '.xlsx'");
+    expect(migration).toContain("opportunity_file_extension_invalid");
+    expect(migration).not.toMatch(/allowed_mime_types[\s\S]*application\/json/i);
+  });
+
   it("persists cancellation, safe retry and owner-scoped idempotency", () => {
     const cancelRoute = source("app/api/opportunity-finder/jobs/[id]/cancel/route.ts");
     const retryRoute = source("app/api/opportunity-finder/jobs/[id]/retry/route.ts");
