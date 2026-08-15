@@ -29,7 +29,8 @@ import {
   opportunityFinderMaxFileSizeBytes,
   opportunityFinderMaxRowsPerFile,
   opportunityFinderMaxXlsxEntries,
-  opportunityFinderMaxXlsxUncompressedBytes
+  opportunityFinderMaxXlsxUncompressedBytes,
+  opportunityFinderXlsxStreamingThresholdBytes
 } from "@/lib/opportunity-finder/validation";
 import type {
   CanonicalOpportunityRow,
@@ -45,6 +46,7 @@ type OpportunityCell = {
   text: string;
   value: unknown;
   formula: boolean;
+  cachedFormulaValue: boolean;
   error: boolean;
   hyperlink: boolean;
 };
@@ -63,6 +65,7 @@ export type OpportunityParseMetrics = {
   negativeQuantityRows: number;
   hiddenRows: number;
   formulaCellsIgnored: number;
+  formulaCachedValuesUsed: number;
   errorCellsIgnored: number;
   demandEvents: number;
   demandPartOptions: number;
@@ -88,6 +91,7 @@ export type OpportunityXlsxPackageInspection = {
 };
 
 const MAX_PROFILE_SCAN_ROWS_PER_SHEET = 64;
+const MAX_PROFILE_SAMPLED_ROWS_PER_SHEET = 192;
 const MAX_PREVIEW_ROWS = 5;
 const MAX_PREVIEW_COLUMNS = 40;
 const MAX_PREVIEW_CELL_LENGTH = 180;
@@ -109,6 +113,7 @@ function ignoredCell(input: Partial<OpportunityCell> = {}): OpportunityCell {
     text: "",
     value: null,
     formula: Boolean(input.formula),
+    cachedFormulaValue: Boolean(input.cachedFormulaValue),
     error: Boolean(input.error),
     hyperlink: Boolean(input.hyperlink)
   };
@@ -121,7 +126,19 @@ function normalizedCell(value: unknown, displayValue?: unknown): OpportunityCell
   }
   const text = safeSpreadsheetText(candidate);
   if (text.startsWith("=")) return ignoredCell({ formula: true });
-  return { text, value, formula: false, error: false, hyperlink: false };
+  return { text, value, formula: false, cachedFormulaValue: false, error: false, hyperlink: false };
+}
+
+function cachedFormulaCell(value: unknown, displayValue?: unknown): OpportunityCell {
+  const converted = normalizedCell(value, displayValue);
+  if (converted.error || converted.formula || !converted.text) {
+    return ignoredCell({ formula: true, error: converted.error });
+  }
+  return { ...converted, formula: true, cachedFormulaValue: true };
+}
+
+function cellHasUsableValue(cell: OpportunityCell | null | undefined): cell is OpportunityCell {
+  return Boolean(cell && !cell.error && (!cell.formula || cell.cachedFormulaValue));
 }
 
 function excelCell(cell: ExcelJS.Cell): OpportunityCell {
@@ -133,14 +150,23 @@ function excelCell(cell: ExcelJS.Cell): OpportunityCell {
         isOpportunityExcelError(result) ||
         (result && typeof result === "object" && "error" in result)
       );
-      return ignoredCell({ formula: true, error: cachedError });
+      return cachedError || result === null || result === undefined
+        ? ignoredCell({ formula: true, error: cachedError })
+        : cachedFormulaCell(result);
     }
     if ("error" in raw) return ignoredCell({ error: true });
     if ("hyperlink" in raw) {
       const text = safeSpreadsheetText((raw as ExcelJS.CellHyperlinkValue).text);
       return isOpportunityExcelError(text)
         ? ignoredCell({ error: true, hyperlink: true })
-        : { text, value: text, formula: false, error: false, hyperlink: true };
+        : {
+            text,
+            value: text,
+            formula: false,
+            cachedFormulaValue: false,
+            error: false,
+            hyperlink: true
+          };
     }
     if ("richText" in raw) {
       const value = (raw as ExcelJS.CellRichTextValue).richText.map((part) => part.text).join("");
@@ -164,10 +190,10 @@ function csvCells(row: unknown[]) {
 
 function sheetJsCell(cell: XLSX.CellObject): OpportunityCell {
   if (cell.f) {
-    return ignoredCell({
-      formula: true,
-      error: cell.t === "e" || isOpportunityExcelError(cell.v) || isOpportunityExcelError(cell.w)
-    });
+    const cachedError = cell.t === "e" || isOpportunityExcelError(cell.v) || isOpportunityExcelError(cell.w);
+    return cachedError || cell.v === null || cell.v === undefined
+      ? ignoredCell({ formula: true, error: cachedError })
+      : cachedFormulaCell(cell.v, cell.w);
   }
   if (cell.t === "e") return ignoredCell({ error: true });
   const converted = normalizedCell(cell.v, cell.w);
@@ -175,30 +201,38 @@ function sheetJsCell(cell: XLSX.CellObject): OpportunityCell {
   return converted;
 }
 
-function sheetJsRows(worksheet: XLSX.WorkSheet): OpportunitySourceRow[] {
-  const byRow = new Map<number, Map<number, OpportunityCell>>();
-  for (const [address, candidate] of Object.entries(worksheet)) {
+function* sheetJsRows(worksheet: XLSX.WorkSheet): Generator<OpportunitySourceRow> {
+  let currentRow = -1;
+  let columns = new Map<number, OpportunityCell>();
+  const rowMetadata = worksheet["!rows"] as Array<{ hidden?: boolean } | undefined> | undefined;
+
+  function sourceRow(zeroBasedRow: number, rowCells: Map<number, OpportunityCell>) {
+    const maxColumn = Math.max(...rowCells.keys());
+    return {
+      rowNumber: zeroBasedRow + 1,
+      cells: Array.from({ length: maxColumn + 1 }, (_, index) =>
+        rowCells.get(index) ?? ignoredCell()
+      ),
+      hidden: Boolean(rowMetadata?.[zeroBasedRow]?.hidden)
+    };
+  }
+
+  for (const address in worksheet) {
+    const candidate = worksheet[address];
     if (address.startsWith("!") || !/^[A-Z]+\d+$/.test(address) || !candidate) continue;
     const position = XLSX.utils.decode_cell(address);
+    if (currentRow >= 0 && position.r < currentRow) {
+      throw new Error("OPPORTUNITY_XLSX_CELL_ORDER_INVALID");
+    }
+    if (currentRow >= 0 && position.r !== currentRow) {
+      yield sourceRow(currentRow, columns);
+      columns = new Map<number, OpportunityCell>();
+    }
+    currentRow = position.r;
     const cell = sheetJsCell(candidate as XLSX.CellObject);
-    const row = byRow.get(position.r) ?? new Map<number, OpportunityCell>();
-    row.set(position.c, cell);
-    byRow.set(position.r, row);
+    columns.set(position.c, cell);
   }
-  const rowMetadata = worksheet["!rows"] as Array<{ hidden?: boolean } | undefined> | undefined;
-  return Array.from(byRow.entries())
-    .sort(([left], [right]) => left - right)
-    .map(([zeroBasedRow, columns]) => {
-      const maxColumn = Math.max(...columns.keys());
-      const cells = Array.from({ length: maxColumn + 1 }, (_, index) =>
-        columns.get(index) ?? ignoredCell()
-      );
-      return {
-        rowNumber: zeroBasedRow + 1,
-        cells,
-        hidden: Boolean(rowMetadata?.[zeroBasedRow]?.hidden)
-      };
-    });
+  if (currentRow >= 0 && columns.size > 0) yield sourceRow(currentRow, columns);
 }
 
 async function readXlsxFallback(filePath: string) {
@@ -218,6 +252,23 @@ async function readXlsxFallback(filePath: string) {
 
 function rowIsEmpty(cells: OpportunityCell[]) {
   return cells.every((cell) => !cell.text && !cell.formula && !cell.error);
+}
+
+class ProfileRowSampler {
+  readonly rows: OpportunitySourceRow[] = [];
+  private captureUntilRow = -1;
+
+  add(row: OpportunitySourceRow) {
+    const isHeader = opportunityHeaderScore(row.cells.map((cell) => cell.text)).isHeader;
+    if (isHeader) this.captureUntilRow = Math.max(this.captureUntilRow, row.rowNumber + MAX_PREVIEW_ROWS);
+    if (
+      this.rows.length < MAX_PROFILE_SCAN_ROWS_PER_SHEET ||
+      isHeader ||
+      row.rowNumber <= this.captureUntilRow
+    ) {
+      if (this.rows.length < MAX_PROFILE_SAMPLED_ROWS_PER_SHEET) this.rows.push(row);
+    }
+  }
 }
 
 function headerProfileRows(rows: OpportunitySourceRow[]) {
@@ -244,7 +295,7 @@ function headerProfileRows(rows: OpportunitySourceRow[]) {
 }
 
 function previewText(cell: OpportunityCell) {
-  if (cell.formula) return "[FORMULA IGNORED]";
+  if (cell.formula && !cell.cachedFormulaValue) return "[FORMULA IGNORED]";
   if (cell.error) return "[CELL ERROR]";
   return safeSpreadsheetText(cell.text, MAX_PREVIEW_CELL_LENGTH);
 }
@@ -292,6 +343,7 @@ function buildSheetProfile(input: {
   bufferedRows: OpportunitySourceRow[];
   autoFilterRef: string | null;
   formulaCells: number;
+  cachedFormulaCells: number;
   errorCells: number;
 }) {
   const headerRows = headerProfileRows(input.bufferedRows);
@@ -304,7 +356,8 @@ function buildSheetProfile(input: {
     : input.rowNumbers.filter((row) => row > firstHeader && !headerNumbers.has(row)).length;
   const warnings: string[] = [];
   if (input.hiddenRowCount > 0) warnings.push("hidden_rows_included");
-  if (input.formulaCells > 0) warnings.push("formulas_ignored");
+  if (input.formulaCells > input.cachedFormulaCells) warnings.push("formulas_ignored");
+  if (input.cachedFormulaCells > 0) warnings.push("formula_cached_values_available");
   if (input.errorCells > 0) warnings.push("excel_errors_ignored");
   const filterEnd = autoFilterLastRow(input.autoFilterRef);
   if (filterEnd !== null && input.rowNumbers.some((row) => row > filterEnd)) {
@@ -332,6 +385,7 @@ function assertRowLimit(rowCount: number) {
 function profileCells(cells: OpportunityCell[]) {
   return {
     formulas: cells.filter((cell) => cell.formula).length,
+    cachedFormulas: cells.filter((cell) => cell.cachedFormulaValue).length,
     errors: cells.filter((cell) => cell.error).length
   };
 }
@@ -348,11 +402,12 @@ async function profileXlsxStreaming(filePath: string, fileName: string) {
   let totalRows = 0;
 
   for await (const worksheet of workbookReader) {
-    const bufferedRows: OpportunitySourceRow[] = [];
+    const sampler = new ProfileRowSampler();
     const rowNumbers: number[] = [];
     let rowCount = 0;
     let hiddenRowCount = 0;
     let formulaCells = 0;
+    let cachedFormulaCells = 0;
     let errorCells = 0;
     for await (const row of worksheet) {
       const cells = excelRowCells(row);
@@ -365,10 +420,9 @@ async function profileXlsxStreaming(filePath: string, fileName: string) {
       if (hidden) hiddenRowCount += 1;
       const quality = profileCells(cells);
       formulaCells += quality.formulas;
+      cachedFormulaCells += quality.cachedFormulas;
       errorCells += quality.errors;
-      if (bufferedRows.length < MAX_PROFILE_SCAN_ROWS_PER_SHEET) {
-        bufferedRows.push({ rowNumber: row.number, cells, hidden });
-      }
+      sampler.add({ rowNumber: row.number, cells, hidden });
     }
     if (!rowCount) continue;
     const worksheetFilter = autoFilterRef(
@@ -379,9 +433,10 @@ async function profileXlsxStreaming(filePath: string, fileName: string) {
       rowCount,
       hiddenRowCount,
       rowNumbers,
-      bufferedRows,
+      bufferedRows: sampler.rows,
       autoFilterRef: worksheetFilter,
       formulaCells,
+      cachedFormulaCells,
       errorCells
     }));
   }
@@ -395,28 +450,34 @@ async function profileXlsxFallback(filePath: string, fileName: string) {
   for (const sheetName of workbook.SheetNames) {
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) continue;
-    const rows = sheetJsRows(worksheet).filter((row) => !rowIsEmpty(row.cells));
-    if (!rows.length) continue;
-    totalRows += rows.length;
-    assertRowLimit(totalRows);
-    const hiddenRowCount = rows.filter((row) => row.hidden).length;
-    const counts = rows.reduce(
-      (total, row) => {
-        const quality = profileCells(row.cells);
-        total.formulas += quality.formulas;
-        total.errors += quality.errors;
-        return total;
-      },
-      { formulas: 0, errors: 0 }
-    );
+    const sampler = new ProfileRowSampler();
+    const rowNumbers: number[] = [];
+    let rowCount = 0;
+    let hiddenRowCount = 0;
+    const counts = { formulas: 0, cachedFormulas: 0, errors: 0 };
+    for (const row of sheetJsRows(worksheet)) {
+      if (rowIsEmpty(row.cells)) continue;
+      rowCount += 1;
+      totalRows += 1;
+      assertRowLimit(totalRows);
+      rowNumbers.push(row.rowNumber);
+      if (row.hidden) hiddenRowCount += 1;
+      const quality = profileCells(row.cells);
+      counts.formulas += quality.formulas;
+      counts.cachedFormulas += quality.cachedFormulas;
+      counts.errors += quality.errors;
+      sampler.add(row);
+    }
+    if (!rowCount) continue;
     sheets.push(buildSheetProfile({
       sheetName,
-      rowCount: rows.length,
+      rowCount,
       hiddenRowCount,
-      rowNumbers: rows.map((row) => row.rowNumber),
-      bufferedRows: rows.slice(0, MAX_PROFILE_SCAN_ROWS_PER_SHEET),
+      rowNumbers,
+      bufferedRows: sampler.rows,
       autoFilterRef: autoFilterRef(worksheet["!autofilter"]),
       formulaCells: counts.formulas,
+      cachedFormulaCells: counts.cachedFormulas,
       errorCells: counts.errors
     }));
   }
@@ -473,9 +534,17 @@ function enrichWorkbookProfile(profile: OpportunityWorkbookProfile) {
   return profile;
 }
 
-async function profileXlsx(filePath: string, fileName: string) {
+function shouldStreamXlsx(inspection: OpportunityXlsxPackageInspection) {
+  return inspection.totalUncompressedBytes >= opportunityFinderXlsxStreamingThresholdBytes();
+}
+
+async function profileXlsx(
+  filePath: string,
+  fileName: string,
+  inspection: OpportunityXlsxPackageInspection
+) {
   const stat = await fs.promises.stat(filePath);
-  if (stat.size <= MAX_XLSX_FALLBACK_SIZE_BYTES) {
+  if (!shouldStreamXlsx(inspection) && stat.size <= MAX_XLSX_FALLBACK_SIZE_BYTES) {
     return profileXlsxFallback(filePath, fileName);
   }
   try {
@@ -484,7 +553,10 @@ async function profileXlsx(filePath: string, fileName: string) {
   } catch (error) {
     if (error instanceof Error && error.message === "OPPORTUNITY_ROW_LIMIT_EXCEEDED") throw error;
   }
-  return profileXlsxFallback(filePath, fileName);
+  if (!shouldStreamXlsx(inspection) && stat.size <= MAX_XLSX_FALLBACK_SIZE_BYTES) {
+    return profileXlsxFallback(filePath, fileName);
+  }
+  throw new Error("OPPORTUNITY_XLSX_STREAMING_PARSE_FAILED");
 }
 
 async function profileCsv(filePath: string, fileName: string) {
@@ -493,11 +565,12 @@ async function profileCsv(filePath: string, fileName: string) {
     relax_column_count: true,
     bom: true
   }));
-  const bufferedRows: OpportunitySourceRow[] = [];
+  const sampler = new ProfileRowSampler();
   const rowNumbers: number[] = [];
   let physicalRow = 0;
   let rowCount = 0;
   let formulaCells = 0;
+  let cachedFormulaCells = 0;
   let errorCells = 0;
   for await (const row of parser) {
     physicalRow += 1;
@@ -508,19 +581,19 @@ async function profileCsv(filePath: string, fileName: string) {
     rowNumbers.push(physicalRow);
     const quality = profileCells(cells);
     formulaCells += quality.formulas;
+    cachedFormulaCells += quality.cachedFormulas;
     errorCells += quality.errors;
-    if (bufferedRows.length < MAX_PROFILE_SCAN_ROWS_PER_SHEET) {
-      bufferedRows.push({ rowNumber: physicalRow, cells, hidden: false });
-    }
+    sampler.add({ rowNumber: physicalRow, cells, hidden: false });
   }
   const sheets = rowCount ? [buildSheetProfile({
     sheetName: "CSV",
     rowCount,
     hiddenRowCount: 0,
     rowNumbers,
-    bufferedRows,
+    bufferedRows: sampler.rows,
     autoFilterRef: null,
     formulaCells,
+    cachedFormulaCells,
     errorCells
   })] : [];
   return enrichWorkbookProfile(classifyOpportunityWorkbook({ fileName, rowCount, sheets }));
@@ -668,7 +741,7 @@ export async function profileOpportunityWorkbook(
   const inspection = await validateOpportunityFileSignature(filePath, fileName);
   const profile = extension(fileName) === ".csv"
     ? await profileCsv(filePath, fileName)
-    : await profileXlsx(filePath, fileName);
+    : await profileXlsx(filePath, fileName, inspection!);
   if (inspection?.hasExternalLinks) {
     profile.warnings = Array.from(new Set([...(profile.warnings ?? []), "external_links_ignored"]));
   }
@@ -691,7 +764,7 @@ function cellAt(cells: OpportunityCell[], index: number | null) {
 }
 
 function parsedNumber(cell: OpportunityCell | undefined) {
-  if (!cell || cell.formula || cell.error) return null;
+  if (!cellHasUsableValue(cell)) return null;
   const parsed = parseOpportunityQuantity(cell.value ?? cell.text);
   return parsed.valid ? parsed.value : null;
 }
@@ -702,7 +775,7 @@ function parsedPositiveNumber(cell: OpportunityCell | undefined) {
 }
 
 function dateValue(cell: OpportunityCell | undefined) {
-  if (!cell || cell.formula || cell.error) {
+  if (!cellHasUsableValue(cell)) {
     return { value: null, quality: "missing" as const };
   }
   if (cell.value instanceof Date && Number.isFinite(cell.value.getTime())) {
@@ -774,7 +847,7 @@ function sourceIdentifier(
   cell: OpportunityCell | undefined,
   options: { preferRawNumeric?: boolean } = {}
 ) {
-  if (!cell || cell.formula || cell.error) return null;
+  if (!cellHasUsableValue(cell)) return null;
   if (
     options.preferRawNumeric &&
     typeof cell.value === "number" &&
@@ -801,7 +874,7 @@ const ISO_CURRENCIES = new Set([
 ]);
 
 function parsedCurrency(cell: OpportunityCell | null | undefined) {
-  if (!cell || cell.formula || cell.error) {
+  if (!cellHasUsableValue(cell)) {
     return { value: null, status: "unconfirmed" as const };
   }
   const value = safeContextText(cell.text, 12)?.toUpperCase() ?? null;
@@ -833,16 +906,19 @@ function buildCanonicalRow(input: {
   snapshotKey: string;
   eventState: DemandEventState;
   validityOverrideExpiresAt?: string | null;
+  mpnOverride?: string;
+  forceAlternate?: boolean;
 }) {
   const mpnCell = input.cells[input.columns.mpn];
-  const identity = mpnIdentity(mpnCell?.text ?? "");
+  const identity = mpnIdentity(input.mpnOverride ?? mpnCell?.text ?? "");
   const quantityCell = cellAt(input.cells, input.columns.quantity);
   const quantity = parseOpportunityQuantity(
-    quantityCell?.formula || quantityCell?.error ? null : quantityCell?.value ?? quantityCell?.text ?? null
+    !cellHasUsableValue(quantityCell) ? null : quantityCell.value ?? quantityCell.text ?? null
   );
   const historical = isHistoricalRole(input.role);
   const qualityFlags = new Set<OpportunityWarningCode>();
-  if (input.cells.some((cell) => cell.formula)) qualityFlags.add("formula_ignored");
+  if (input.cells.some((cell) => cell.formula && !cell.cachedFormulaValue)) qualityFlags.add("formula_ignored");
+  if (input.cells.some((cell) => cell.cachedFormulaValue)) qualityFlags.add("formula_cached_value_used");
   if (input.cells.some((cell) => cell.error)) qualityFlags.add("excel_error_value");
   if (input.sourceRowHidden) qualityFlags.add("hidden_source_row");
   if (input.columns.shifted) qualityFlags.add("shifted_column_mapping");
@@ -891,7 +967,10 @@ function buildCanonicalRow(input: {
         orddd: eventSourceId,
         compId,
         item: clientItem,
-        escalationNumber: eventSourceId
+        escalationNumber: eventSourceId,
+        fallback: ["sanmina_asia_rfq", "flex_week_27_rfq", "flex_week_28_rfq"].includes(
+          input.columns.templateType
+        ) ? `${input.sheetName}:${input.sourceRow}` : null
       })
     : null;
   const tracksDemandEvent = input.role === "demand" && Boolean(identity.normalizedMpn) && Boolean(eventKey);
@@ -904,6 +983,8 @@ function buildCanonicalRow(input: {
   const primaryRaw = sourceIdentifier(cellAt(input.cells, input.columns.primaryOption));
   const isPrimaryOption = input.role !== "demand"
     ? null
+    : input.forceAlternate
+      ? false
     : input.columns.templateType === "sanmina_spotbuys"
     ? primaryRaw === "1"
     : eventKey
@@ -963,13 +1044,15 @@ function buildCanonicalRow(input: {
     endCustomer: sourceIdentifier(cellAt(input.cells, input.columns.endCustomer)),
     optionOrdinal,
     isPrimaryOption,
-    isApprovedAlternate: input.role === "demand" && eventKey ? !isPrimaryOption : null,
+    isApprovedAlternate: input.role === "demand" && eventKey
+      ? input.forceAlternate === true || !isPrimaryOption
+      : null,
     isActiveDemand: input.role === "demand"
       ? parsedQuantity !== null && parsedQuantity > 0 && parsedDate.quality !== "not_applicable"
       : undefined,
     customerContext,
     supplierContext,
-    rawQuantity: quantityCell && !quantityCell.formula && !quantityCell.error
+    rawQuantity: quantityCell && cellHasUsableValue(quantityCell) && !quantityCell.formula
       ? safeContextText(quantityCell.text, 80)
       : null,
     requiredQty: input.role === "demand" && firstEventQuantity ? parsedQuantity : null,
@@ -1000,6 +1083,21 @@ function buildCanonicalRow(input: {
   return { row, quantity };
 }
 
+function alternateMpnValues(cells: OpportunityCell[], columns: OpportunityAdapterColumnMap) {
+  const cell = cellAt(cells, columns.alternateMpn);
+  if (!cellHasUsableValue(cell)) return [];
+  const seen = new Set<string>();
+  const alternatives: string[] = [];
+  for (const candidate of cell.text.split(/[;,\r\n]+/)) {
+    const identity = mpnIdentity(candidate);
+    if (!identity.normalizedMpn || seen.has(identity.normalizedMpn)) continue;
+    seen.add(identity.normalizedMpn);
+    alternatives.push(identity.displayMpn);
+    if (alternatives.length >= 20) break;
+  }
+  return alternatives;
+}
+
 function sheetTemplate(
   headerValues: string[],
   sheetName: string,
@@ -1027,8 +1125,7 @@ function hasValidEmbeddedOffer(
   if (
     !mpnIdentity(mpnCell?.text ?? "").normalizedMpn ||
     !quantityCell ||
-    quantityCell.formula ||
-    quantityCell.error
+    !cellHasUsableValue(quantityCell)
   ) {
     return false;
   }
@@ -1085,7 +1182,12 @@ async function parseRows(input: {
       input.metrics.hiddenRows += 1;
       sheetHiddenRows += 1;
     }
-    input.metrics.formulaCellsIgnored += cells.filter((cell) => cell.formula).length;
+    input.metrics.formulaCellsIgnored += cells.filter(
+      (cell) => cell.formula && !cell.cachedFormulaValue
+    ).length;
+    input.metrics.formulaCachedValuesUsed += cells.filter(
+      (cell) => cell.cachedFormulaValue
+    ).length;
     input.metrics.errorCellsIgnored += cells.filter((cell) => cell.error).length;
 
     const rawHeaders = cells.map((cell) => cell.text);
@@ -1150,6 +1252,29 @@ async function parseRows(input: {
       eventState: input.eventState,
       validityOverrideExpiresAt: input.validityOverrideExpiresAt
     });
+    const alternateRows = input.role === "demand"
+      ? alternateMpnValues(cells, columns)
+          .filter((mpn) => mpnIdentity(mpn).normalizedMpn !== built.row.normalizedMpn)
+          .map((mpn) => buildCanonicalRow({
+            cells,
+            columns: columns!,
+            jobId: input.jobId,
+            fileId: input.fileId,
+            side: input.side,
+            fileName: input.fileName,
+            sheetName: input.sheetName,
+            sourceRow: rowNumber,
+            sourceRowHidden: hidden,
+            headerRow: headerRow!,
+            originalIndex: input.nextIndex(),
+            role: input.role,
+            snapshotKey: input.snapshotKey,
+            eventState: input.eventState,
+            validityOverrideExpiresAt: input.validityOverrideExpiresAt,
+            mpnOverride: mpn,
+            forceAlternate: true
+          }))
+      : [];
     let embeddedOffer: ReturnType<typeof buildCanonicalRow> | null = null;
     const embeddedOfferSourceKey = `${input.fileId}|${input.sheetName}|${rowNumber}`;
     if (
@@ -1175,7 +1300,7 @@ async function parseRows(input: {
         validityOverrideExpiresAt: input.validityOverrideExpiresAt
       });
     }
-    if (!built.row.normalizedMpn) {
+    if (!built.row.normalizedMpn && alternateRows.length === 0) {
       if (embeddedOffer) {
         appendCanonicalRow(embeddedOffer.row);
         if (input.batch.length >= input.batchSize) {
@@ -1244,7 +1369,8 @@ async function parseRows(input: {
       }
     }
     if (built.quantity.negative) input.metrics.negativeQuantityRows += 1;
-    appendCanonicalRow(built.row);
+    if (built.row.normalizedMpn) appendCanonicalRow(built.row);
+    for (const alternate of alternateRows) appendCanonicalRow(alternate.row);
     if (embeddedOffer) appendCanonicalRow(embeddedOffer.row);
     if (input.batch.length >= input.batchSize) {
       if (input.shouldCancel && await input.shouldCancel()) throw new Error("OPPORTUNITY_JOB_CANCELLED");
@@ -1354,9 +1480,13 @@ async function parseXlsxStreaming(input: ParseOpportunityWorkbookInput, metrics:
   }
 }
 
-async function parseXlsx(input: ParseOpportunityWorkbookInput, metrics: OpportunityParseMetrics) {
+async function parseXlsx(
+  input: ParseOpportunityWorkbookInput,
+  metrics: OpportunityParseMetrics,
+  inspection: OpportunityXlsxPackageInspection
+) {
   const stat = await fs.promises.stat(input.filePath);
-  if (stat.size <= MAX_XLSX_FALLBACK_SIZE_BYTES) {
+  if (!shouldStreamXlsx(inspection) && stat.size <= MAX_XLSX_FALLBACK_SIZE_BYTES) {
     await parseXlsxFallback(input, metrics);
     return;
   }
@@ -1428,7 +1558,7 @@ export type ParseOpportunityWorkbookInput = {
 export async function parseOpportunityWorkbook(
   input: ParseOpportunityWorkbookInput
 ): Promise<OpportunityParseMetrics> {
-  await validateOpportunityFileSignature(input.filePath, input.fileName);
+  const inspection = await validateOpportunityFileSignature(input.filePath, input.fileName);
   const metrics: OpportunityParseMetrics = {
     totalRows: 0,
     canonicalRows: 0,
@@ -1437,6 +1567,7 @@ export async function parseOpportunityWorkbook(
     negativeQuantityRows: 0,
     hiddenRows: 0,
     formulaCellsIgnored: 0,
+    formulaCachedValuesUsed: 0,
     errorCellsIgnored: 0,
     demandEvents: 0,
     demandPartOptions: 0,
@@ -1447,6 +1578,6 @@ export async function parseOpportunityWorkbook(
   };
   if (input.role === "ignore") return metrics;
   if (extension(input.fileName) === ".csv") await parseCsvFile(input, metrics);
-  else await parseXlsx(input, metrics);
+  else await parseXlsx(input, metrics, inspection!);
   return metrics;
 }

@@ -24,10 +24,132 @@ export const OPPORTUNITY_MAPPING_VERSIONS = {
   generic: "generic-v2"
 } as const satisfies Record<OpportunityTemplateType, string>;
 
+export type OpportunityAdapterDefinition = {
+  id: OpportunityTemplateType;
+  version: string;
+  roles: OpportunitySelectedRole[];
+  structuralCriteria: string[][];
+  requiredColumns: string[];
+  optionalColumns: string[];
+  headerPolicy: "detected";
+  extractors: Array<"demand_events" | "supply_lots" | "historical_signals">;
+  warnings: string[];
+  incompatibilities: string[];
+  fingerprint: string;
+};
+
+export const OPPORTUNITY_ADAPTER_REGISTRY: readonly OpportunityAdapterDefinition[] = [
+  {
+    id: "sanmina_spotbuys",
+    version: OPPORTUNITY_MAPPING_VERSIONS.sanmina_spotbuys,
+    roles: ["demand", "supplier_offer"],
+    structuralCriteria: [["Line ID", "ORDDD", "GENERIC", "CLEAN_MFG", "RFQ QTY", "Target_to_Vendor"]],
+    requiredColumns: ["ORDDD", "GENERIC", "RFQ QTY"],
+    optionalColumns: ["MPN Quoted", "On Hand", "MOQ", "SPQ", "Date Code (yyww)"],
+    headerPolicy: "detected",
+    extractors: ["demand_events", "supply_lots"],
+    warnings: ["offer_validity_unknown"],
+    incompatibilities: ["missing_event_identifier"],
+    fingerprint: "headers:line-id+orddd+generic+rfq-qty"
+  },
+  {
+    id: "sanmina_asia_rfq",
+    version: OPPORTUNITY_MAPPING_VERSIONS.sanmina_asia_rfq,
+    roles: ["demand"],
+    structuralCriteria: [["MFG P/N", "MFG", "QTY", "TGT", "OEM", "Application", "Offered Part#", "Vendor Code"]],
+    requiredColumns: ["MFG P/N", "QTY"],
+    optionalColumns: ["Alternate P/N's", "MFG", "TGT", "OEM", "MOQ", "SPQ"],
+    headerPolicy: "detected",
+    extractors: ["demand_events"],
+    warnings: [],
+    incompatibilities: ["missing_quantity"],
+    fingerprint: "headers:mfg-pn+qty+tgt+oem+vendor-code"
+  },
+  {
+    id: "flex_shortage",
+    version: OPPORTUNITY_MAPPING_VERSIONS.flex_shortage,
+    roles: ["demand", "supplier_offer"],
+    structuralCriteria: [["Comp ID", "Item", "Escalation Number", "Shortage Qty", "MPN", "Global Mfg Name"]],
+    requiredColumns: ["Comp ID", "Item", "Escalation Number", "Shortage Qty", "MPN"],
+    optionalColumns: ["QUIKSOL MPN AVAILABLE", "QUIKSOL QTY AVAILABLE", "MOQ", "SPQ"],
+    headerPolicy: "detected",
+    extractors: ["demand_events", "supply_lots"],
+    warnings: ["offer_validity_unknown"],
+    incompatibilities: ["missing_event_identifier"],
+    fingerprint: "headers:comp-id+item+escalation+shortage"
+  },
+  {
+    id: "flex_shortage_shifted_offer",
+    version: OPPORTUNITY_MAPPING_VERSIONS.flex_shortage_shifted_offer,
+    roles: ["demand", "supplier_offer"],
+    structuralCriteria: [["Comp ID", "Item", "Escalation Number", "Shortage Qty", "MPN", "Global Mfg Name"]],
+    requiredColumns: ["Comp ID", "Item", "Escalation Number", "Shortage Qty", "MPN"],
+    optionalColumns: ["shifted supplier", "shifted MPN", "shifted quantity"],
+    headerPolicy: "detected",
+    extractors: ["demand_events", "supply_lots"],
+    warnings: ["shifted_column_mapping", "offer_validity_unknown"],
+    incompatibilities: ["unconfirmed_mapping"],
+    fingerprint: "headers:flex-shortage+blank-column+shifted-offer"
+  },
+  ...(["flex_week_27_rfq", "flex_week_28_rfq"] as OpportunityTemplateType[]).map((id) => ({
+    id,
+    version: OPPORTUNITY_MAPPING_VERSIONS[id],
+    roles: ["demand"] as OpportunitySelectedRole[],
+    structuralCriteria: [["MFG P/N", "Alternate P/N's", "QTY 1 (shortage)", "QTY 2 (Lead time/scheduled)", "Offered Part#", "Vendor Code"]],
+    requiredColumns: ["MFG P/N"],
+    optionalColumns: ["Alternate P/N's", "MOQ", "SPQ", "DC", "COO (Non China)"],
+    headerPolicy: "detected" as const,
+    extractors: ["demand_events"] as Array<"demand_events">,
+    warnings: ["template_mapping_requires_confirmation"],
+    incompatibilities: ["ambiguous_quantity_column"],
+    fingerprint: id === "flex_week_27_rfq" ? "headers:flex-rfq+numeric-F" : "headers:flex-rfq+numeric-D"
+  })),
+  {
+    id: "flex_purchase_cube",
+    version: OPPORTUNITY_MAPPING_VERSIONS.flex_purchase_cube,
+    roles: ["purchase_history"],
+    structuralCriteria: [["Company", "Facility", "Global Supplier Name", "Global Customer Name", "Mfg Partno", "Total"]],
+    requiredColumns: ["Mfg Partno"],
+    optionalColumns: ["RCPT Qty", "Global Manufacturer Name"],
+    headerPolicy: "detected",
+    extractors: ["historical_signals"],
+    warnings: ["historical_not_current_stock"],
+    incompatibilities: ["not_live_inventory"],
+    fingerprint: "headers:company+facility+supplier+customer+mfg-partno+total"
+  },
+  {
+    id: "quote_database",
+    version: OPPORTUNITY_MAPPING_VERSIONS.quote_database,
+    roles: ["quote_history"],
+    structuralCriteria: [["MPN", "MFG", "QTY", "Cost", "Price", "Total Price", "GP rate", "GP"]],
+    requiredColumns: ["MPN"],
+    optionalColumns: ["QTY", "Cost", "Price"],
+    headerPolicy: "detected",
+    extractors: ["historical_signals"],
+    warnings: ["historical_not_current_stock", "offer_validity_unknown"],
+    incompatibilities: ["not_live_inventory"],
+    fingerprint: "headers:mpn+mfg+qty+cost+price+gp"
+  },
+  {
+    id: "generic",
+    version: OPPORTUNITY_MAPPING_VERSIONS.generic,
+    roles: ["demand", "stock", "excess", "supplier_offer", "received_history", "purchase_history", "quote_history", "sales_history"],
+    structuralCriteria: [],
+    requiredColumns: ["role-specific MPN and quantity"],
+    optionalColumns: ["manufacturer", "UOM", "date", "price", "validity", "MOQ", "SPQ"],
+    headerPolicy: "detected",
+    extractors: ["demand_events", "supply_lots", "historical_signals"],
+    warnings: ["unconfirmed_mapping"],
+    incompatibilities: ["ambiguous_role", "missing_required_column"],
+    fingerprint: "aliases:generic-v2"
+  }
+] as const;
+
 export type OpportunityQuantityMode = "positive" | "absolute" | "historical";
 
 export type OpportunityAdapterColumnMap = {
   mpn: number;
+  alternateMpn: number | null;
   quantity: number | null;
   quantityMode: OpportunityQuantityMode;
   manufacturer: number | null;
@@ -64,6 +186,8 @@ export type OpportunityTemplateDetection = {
   forcedRole: OpportunityFileType | null;
   confidence: "high" | "medium" | "low";
   reasons: string[];
+  ambiguous: boolean;
+  candidates: OpportunityTemplateType[];
 };
 
 const EMBEDDED_OFFER_TEMPLATES = new Set<OpportunityTemplateType>([
@@ -103,10 +227,11 @@ export function detectOpportunityTemplate(
   sheets: OpportunitySheetProfile[]
 ): OpportunityTemplateDetection {
   const rows = normalizedHeaderRows(sheets);
+  const candidates: OpportunityTemplateDetection[] = [];
 
   for (const { values } of rows) {
     if (hasEvery(values, ["Line ID", "ORDDD", "GENERIC", "CLEAN_MFG", "RFQ QTY", "Target_to_Vendor"])) {
-      return detected("sanmina_spotbuys", "demand", "sanmina_spotbuys_signature");
+      candidates.push(detected("sanmina_spotbuys", "demand", "sanmina_spotbuys_signature"));
     }
   }
 
@@ -115,38 +240,54 @@ export function detectOpportunityTemplate(
       const standardOffer = hasEvery(values, ["SUPPLIER", "QUIKSOL MPN AVAILABLE", "QUIKSOL QTY AVAILABLE"]);
       const shiftedOffer = !values[15] && values[16] === "manufacturer" && values[17] === "quiksol qty available";
       if (shiftedOffer && !standardOffer) {
-        return detected(
+        candidates.push(detected(
           "flex_shortage_shifted_offer",
           "demand",
           "flex_shortage_shifted_offer_signature"
-        );
+        ));
+      } else {
+        candidates.push(detected("flex_shortage", "demand", "flex_shortage_signature"));
       }
-      return detected("flex_shortage", "demand", "flex_shortage_signature");
     }
 
     if (hasEvery(values, ["MFG P/N", "Alternate P/N's", "QTY 1 (shortage)", "QTY 2 (Lead time/scheduled)", "Offered Part#", "Vendor Code"])) {
       const quantityInD = numericPreviewCount(sheet, "D");
       const quantityInF = numericPreviewCount(sheet, "F");
       if (quantityInD > quantityInF) {
-        return detected("flex_week_28_rfq", "demand", "flex_rfq_quantity_in_alternate_column");
+        candidates.push(detected("flex_week_28_rfq", "demand", "flex_rfq_quantity_in_alternate_column"));
+      } else {
+        candidates.push({
+          ...detected("flex_week_27_rfq", "demand", "flex_rfq_quantity_in_qty2_column"),
+          confidence: quantityInF > 0 ? "high" : "medium"
+        });
       }
-      return {
-        ...detected("flex_week_27_rfq", "demand", "flex_rfq_quantity_in_qty2_column"),
-        confidence: quantityInF > 0 ? "high" : "medium"
-      };
     }
   }
 
   for (const { values } of rows) {
     if (hasEvery(values, ["Company", "Facility", "Global Supplier Name", "Global Customer Name", "Mfg Partno", "Total"])) {
-      return detected("flex_purchase_cube", "purchase_history", "flex_purchase_cube_signature");
+      candidates.push(detected("flex_purchase_cube", "purchase_history", "flex_purchase_cube_signature"));
     }
     if (hasEvery(values, ["MPN", "MFG", "QTY", "Cost", "Price", "Total Price", "GP rate", "GP"])) {
-      return detected("quote_database", "quote_history", "quote_database_signature");
+      candidates.push(detected("quote_database", "quote_history", "quote_database_signature"));
     }
     if (hasEvery(values, ["MFG P/N", "MFG", "QTY", "TGT", "OEM", "Application", "Offered Part#", "Vendor Code"])) {
-      return detected("sanmina_asia_rfq", "demand", "sanmina_asia_rfq_signature");
+      candidates.push(detected("sanmina_asia_rfq", "demand", "sanmina_asia_rfq_signature"));
     }
+  }
+
+  const unique = Array.from(new Map(candidates.map((candidate) => [candidate.templateType, candidate])).values());
+  if (unique.length === 1) return unique[0];
+  if (unique.length > 1) {
+    return {
+      templateType: "generic",
+      mappingVersion: OPPORTUNITY_MAPPING_VERSIONS.generic,
+      forcedRole: null,
+      confidence: "low",
+      reasons: ["ambiguous_adapter_match", ...unique.flatMap((candidate) => candidate.reasons)],
+      ambiguous: true,
+      candidates: unique.map((candidate) => candidate.templateType)
+    };
   }
 
   return {
@@ -154,7 +295,9 @@ export function detectOpportunityTemplate(
     mappingVersion: OPPORTUNITY_MAPPING_VERSIONS.generic,
     forcedRole: null,
     confidence: "low",
-    reasons: []
+    reasons: [],
+    ambiguous: false,
+    candidates: []
   };
 }
 
@@ -168,7 +311,9 @@ function detected(
     mappingVersion: OPPORTUNITY_MAPPING_VERSIONS[templateType],
     forcedRole,
     confidence: "high",
-    reasons: [reason]
+    reasons: [reason],
+    ambiguous: false,
+    candidates: [templateType]
   };
 }
 
@@ -195,6 +340,7 @@ function emptyMap(
 ): OpportunityAdapterColumnMap {
   return {
     mpn,
+    alternateMpn: null,
     quantity,
     quantityMode,
     manufacturer: null,
@@ -319,6 +465,7 @@ export function buildOpportunityAdapterColumnMap(
     if (mpn === null) return null;
     return {
       ...emptyMap(mpn, quantity, "positive", templateType),
+      alternateMpn: exactColumn(headers, "Alternate P/N's"),
       manufacturer: exactColumn(headers, "MFG"),
       item: exactColumn(headers, "CPN"),
       targetPrice: exactColumn(headers, "Customers Target Purchase Price"),
@@ -338,6 +485,7 @@ export function buildOpportunityAdapterColumnMap(
     if (mpn === null || quantity === null) return null;
     return {
       ...emptyMap(mpn, quantity, "positive", templateType),
+      alternateMpn: exactColumn(headers, "Alternate P/N's"),
       manufacturer: exactColumn(headers, "MFG"),
       customerContext: exactColumn(headers, "OEM"),
       endCustomer: exactColumn(headers, "OEM"),

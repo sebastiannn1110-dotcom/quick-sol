@@ -9,6 +9,7 @@ import {
   profileOpportunityWorkbook
 } from "@/lib/opportunity-finder/parser";
 import { classifyOpportunityWorkbook } from "@/lib/opportunity-finder/classifier";
+import { OPPORTUNITY_ADAPTER_REGISTRY } from "@/lib/opportunity-finder/adapters";
 import {
   manufacturersConflict,
   mpnIdentity,
@@ -41,6 +42,7 @@ async function workbookFile(
 
 afterEach(async () => {
   delete process.env.OPPORTUNITY_FINDER_MAX_ROWS_PER_FILE;
+  delete process.env.OPPORTUNITY_FINDER_XLSX_STREAMING_THRESHOLD_MB;
   await Promise.all(temporaryPaths.splice(0).map((directory) =>
     fs.promises.rm(directory, { recursive: true, force: true })
   ));
@@ -57,6 +59,23 @@ function classified(headers: string[], previewValues?: Record<string, string>) {
 }
 
 describe("Opportunity Finder template adapters", () => {
+  it("declares every adapter in the typed versioned registry", () => {
+    expect(OPPORTUNITY_ADAPTER_REGISTRY.map((adapter) => adapter.id)).toEqual(expect.arrayContaining([
+      "sanmina_spotbuys",
+      "sanmina_asia_rfq",
+      "flex_shortage",
+      "flex_shortage_shifted_offer",
+      "flex_week_27_rfq",
+      "flex_week_28_rfq",
+      "flex_purchase_cube",
+      "quote_database",
+      "generic"
+    ]));
+    expect(OPPORTUNITY_ADAPTER_REGISTRY.every((adapter) =>
+      adapter.version && adapter.fingerprint && adapter.roles.length > 0 && adapter.requiredColumns.length > 0
+    )).toBe(true);
+  });
+
   it("uses NFKC exact identity while preserving meaningful punctuation and spacing", () => {
     expect(mpnIdentity("  ＡＢＣ–001  /REEL ")).toMatchObject({
       normalizedMpn: "ABC-001 /REEL",
@@ -110,6 +129,35 @@ describe("Opportunity Finder template adapters", () => {
       .toBe("flex_week_27_rfq");
     expect(classified(headers, { B: "PART-28", C: "MFG", D: "42", G: "1.25" }).templateType)
       .toBe("flex_week_28_rfq");
+  });
+
+  it("materializes RFQ alternate MPNs under one demand event without duplicating quantity", async () => {
+    const headers = [
+      "CPN", "MFG P/N", "MFG", "Alternate P/N's", "QTY 1 (shortage)",
+      "QTY 2 (Lead time/scheduled)", "Customers Target Purchase Price", "Offered Part#",
+      "MFR", "Offered STK QTY", "Price", "DC", "LT(weeks)", "MOQ", "SPQ",
+      "Packing", "Vendor Type", "COO (Non China)", "Shipment Term", "Full lable",
+      "Remarks", "Buyer", "Date", "Quotation Time", "Vendor Code"
+    ];
+    const filePath = await workbookFile("RFQ", [
+      headers,
+      ["DEMO-CUSTOMER-PART", "0007-DEMO-001", "Synthetic Manufacturer", "QA-PART-002; QA-PART-003", "", 25]
+    ]);
+    const rows: CanonicalOpportunityRow[] = [];
+    const metrics = await parseOpportunityWorkbook({
+      filePath,
+      fileName: "neutral.xlsx",
+      fileId: "synthetic-rfq",
+      jobId: "job",
+      side: "A",
+      role: "demand",
+      onBatch: async (batch) => rows.push(...batch)
+    });
+
+    expect(metrics).toMatchObject({ demandEvents: 1, demandPartOptions: 3, canonicalRows: 3 });
+    expect(new Set(rows.map((row) => row.demandEventKey)).size).toBe(1);
+    expect(rows.map((row) => row.requiredQty)).toEqual([25, null, null]);
+    expect(rows.map((row) => row.isApprovedAlternate)).toEqual([false, true, true]);
   });
 
   it("maps shifted offer columns explicitly and never maps UNIT COST as UOM", () => {
@@ -349,12 +397,13 @@ describe("Opportunity Finder template adapters", () => {
     ]));
   });
 
-  it("ignores formulas and spreadsheet errors instead of consuming cached results", async () => {
+  it("uses safe cached formula values without executing formulas and still rejects errors", async () => {
     const filePath = await workbookFile("Stock", [
       ["MPN", "MFG", "STOCK QTY", "UOM"],
       ["SAFE-1", "TI", 5, "EA"],
       [{ formula: "\"FORMULA-MPN\"", result: "FORMULA-MPN" }, "TI", 3, "EA"],
-      ["ERROR-QTY", "TI", { error: "#N/A" }, "EA"]
+      ["ERROR-QTY", "TI", { error: "#N/A" }, "EA"],
+      ["=UNTRUSTED-FORMULA-TEXT", "TI", 2, "EA"]
     ]);
     const rows: CanonicalOpportunityRow[] = [];
     const rejected: OpportunityRejectedRow[] = [];
@@ -368,17 +417,47 @@ describe("Opportunity Finder template adapters", () => {
       onBatch: async (batch) => rows.push(...batch),
       onRejected: async (batch) => rejected.push(...batch)
     });
-    expect(rows.map((row) => row.normalizedMpn)).toEqual(["SAFE-1", "ERROR-QTY"]);
-    expect(rows[1].availableQty).toBeNull();
-    expect(rows[1].qualityFlags).toContain("excel_error_value");
+    expect(rows.map((row) => row.normalizedMpn)).toEqual(["SAFE-1", "FORMULA-MPN", "ERROR-QTY"]);
+    expect(rows[1]).toMatchObject({ availableQty: 3 });
+    expect(rows[1].qualityFlags).toContain("formula_cached_value_used");
+    expect(rows[2].availableQty).toBeNull();
+    expect(rows[2].qualityFlags).toContain("excel_error_value");
     expect(metrics.formulaCellsIgnored).toBeGreaterThan(0);
+    expect(metrics.formulaCachedValuesUsed).toBeGreaterThan(0);
     expect(metrics.errorCellsIgnored).toBeGreaterThan(0);
     expect(rejected).toEqual(expect.arrayContaining([
-      expect.objectContaining({ reasonCode: "missing_mpn", sourceRow: 3, sourceColumn: "A", safeRawValue: null }),
-      expect.objectContaining({ reasonCode: "invalid_available_quantity", sourceRow: 4, sourceColumn: "C", safeRawValue: null })
+      expect.objectContaining({ reasonCode: "invalid_available_quantity", sourceRow: 4, sourceColumn: "C", safeRawValue: null }),
+      expect.objectContaining({ reasonCode: "missing_mpn", sourceRow: 5, sourceColumn: "A", safeRawValue: null })
     ]));
     expect(JSON.stringify(rejected)).not.toContain("FORMULA-MPN");
   });
+
+  it("profiles and parses XLSX packages through the bounded streaming path", async () => {
+    process.env.OPPORTUNITY_FINDER_XLSX_STREAMING_THRESHOLD_MB = "1";
+    const payload = "synthetic-safe-padding-".repeat(16);
+    const rows: unknown[][] = [["MPN", "MFG", "STOCK QTY", "UOM", "Notes"]];
+    for (let index = 0; index < 4_000; index += 1) {
+      rows.push([`STREAM-${index}`, "Synthetic Manufacturer", 1, "EA", `${payload}${index}`]);
+    }
+    const filePath = await workbookFile("Stock", rows);
+    const profile = await profileOpportunityWorkbook(filePath, "streaming.xlsx");
+    const parsed: CanonicalOpportunityRow[] = [];
+    const metrics = await parseOpportunityWorkbook({
+      filePath,
+      fileName: "streaming.xlsx",
+      fileId: "synthetic-streaming",
+      jobId: "job",
+      side: "B",
+      role: "stock",
+      onBatch: async (batch) => parsed.push(...batch)
+    });
+
+    expect(profile).toMatchObject({ detectedType: "stock", usefulRowCount: 4_000 });
+    expect(metrics).toMatchObject({ canonicalRows: 4_000, supplyLots: 4_000, rejectedRows: 0 });
+    expect(parsed).toHaveLength(4_000);
+    expect(parsed[0]?.normalizedMpn).toBe("STREAM-0");
+    expect(parsed.at(-1)?.normalizedMpn).toBe("STREAM-3999");
+  }, 30_000);
 
   it("enforces the configured useful-file row limit during parsing", async () => {
     process.env.OPPORTUNITY_FINDER_MAX_ROWS_PER_FILE = "2";

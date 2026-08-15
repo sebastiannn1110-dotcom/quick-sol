@@ -58,4 +58,46 @@ describe("GET /api/opportunity-finder/jobs/:id/status", () => {
     expect(selectedColumns).not.toMatch(/summary_json|dataset_manifest|performance_metrics|content_pair_sha256/);
     expect(response.headers.get("server-timing")).toContain("queries:1");
   });
+
+  it("keeps the local lightweight status path below the 500ms p95 objective", async () => {
+    const maybeSingle = vi.fn(async () => ({
+      data: {
+        id: JOB_ID,
+        created_by: OWNER_ID,
+        status: "parsing",
+        current_stage: "grouping_quantities",
+        progress_percent: 55,
+        updated_at: "2026-08-15T12:00:00.000Z"
+      },
+      error: null
+    }));
+    const from = vi.fn(() => ({
+      select: () => ({
+        eq: () => ({ eq: () => ({ maybeSingle }) })
+      })
+    }));
+    vi.doMock("@/lib/auth/context", () => ({
+      getAuthContext: vi.fn(async () => ({
+        profile: { id: OWNER_ID, role: "employee" },
+        supabase: { from },
+        isDemoMode: false
+      }))
+    }));
+    const route = await import("../status/route");
+    const durations: number[] = [];
+    for (let index = 0; index < 100; index += 1) {
+      const started = performance.now();
+      const response = await route.GET(
+        new Request(`https://app.test/api/opportunity-finder/jobs/${JOB_ID}/status`),
+        { params: Promise.resolve({ id: JOB_ID }) }
+      );
+      durations.push(performance.now() - started);
+      expect(response.status).toBe(200);
+    }
+    durations.sort((left, right) => left - right);
+    const p95 = durations[Math.ceil(durations.length * 0.95) - 1];
+    console.info(`OPPORTUNITY_STATUS_LOCAL_P95_MS=${p95.toFixed(2)}`);
+    expect(p95).toBeLessThan(500);
+    expect(maybeSingle).toHaveBeenCalledTimes(100);
+  });
 });

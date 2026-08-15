@@ -103,6 +103,7 @@ export type OpportunityWarningCode =
   | "ambiguous_date"
   | "excel_error_value"
   | "formula_ignored"
+  | "formula_cached_value_used"
   | "currency_missing"
   | "currency_invalid"
   | "offer_expired"
@@ -178,6 +179,9 @@ export interface OpportunityWorkbookProfile {
   classificationReasons: string[];
   templateType?: OpportunityTemplateType;
   mappingVersion?: string;
+  adapterAmbiguous?: boolean;
+  adapterCandidates?: OpportunityTemplateType[];
+  adapterEvidence?: string[];
   columnMappings?: OpportunityColumnMapping[];
   warnings?: string[];
   errors?: string[];

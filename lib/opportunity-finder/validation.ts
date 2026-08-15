@@ -51,6 +51,14 @@ export function opportunityFinderMaxCompressionRatio() {
   return Number.isFinite(configured) && configured > 0 ? configured : 200;
 }
 
+export function opportunityFinderXlsxStreamingThresholdBytes() {
+  const configured = Number(process.env.OPPORTUNITY_FINDER_XLSX_STREAMING_THRESHOLD_MB);
+  const megabytes = Number.isFinite(configured) && configured > 0
+    ? Math.max(1, Math.min(configured, 64))
+    : 16;
+  return Math.floor(megabytes * 1024 * 1024);
+}
+
 export function validateOpportunityFileMetadata(input: {
   fileName: string;
   fileSize: number;

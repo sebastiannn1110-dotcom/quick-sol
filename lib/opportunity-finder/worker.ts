@@ -28,12 +28,42 @@ import { assertCanonicalOpportunityStorageReference } from "@/lib/opportunity-fi
 const INSERT_CHUNK_SIZE = 500;
 const QUERY_PAGE_SIZE = 1000;
 const OUTPUT_STAGE_CHUNK_SIZE = 500;
+const DEFAULT_MAX_DATABASE_PAYLOAD_BYTES = 768 * 1024;
 const HISTORY_ROLES = new Set<OpportunitySelectedRole>([
   "received_history",
   "purchase_history",
   "quote_history",
   "sales_history"
 ]);
+
+function maxDatabasePayloadBytes() {
+  const configured = Number(process.env.OPPORTUNITY_FINDER_MAX_DATABASE_PAYLOAD_KB);
+  return Number.isFinite(configured) && configured >= 64
+    ? Math.min(Math.floor(configured * 1024), 4 * 1024 * 1024)
+    : DEFAULT_MAX_DATABASE_PAYLOAD_BYTES;
+}
+
+export function opportunityPayloadChunks<T>(
+  items: readonly T[],
+  maxItems: number,
+  maxBytes = maxDatabasePayloadBytes()
+) {
+  const chunks: T[][] = [];
+  let chunk: T[] = [];
+  let chunkBytes = 2;
+  for (const item of items) {
+    const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + (chunk.length ? 1 : 0);
+    if (chunk.length && (chunk.length >= maxItems || chunkBytes + itemBytes > maxBytes)) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkBytes = 2;
+    }
+    chunk.push(item);
+    chunkBytes += itemBytes;
+  }
+  if (chunk.length) chunks.push(chunk);
+  return chunks;
+}
 const CANONICAL_ROW_SELECT = [
   "id", "job_id", "file_id", "side", "sheet_name", "source_row", "original_index",
   "record_role", "record_kind", "template_type", "mapping_version", "header_row",
@@ -564,10 +594,14 @@ async function insertCanonicalRows(
   rows: CanonicalOpportunityRow[],
   fence: OpportunityWorkerFence
 ) {
-  for (let index = 0; index < rows.length; index += INSERT_CHUNK_SIZE) {
+  const payloads = opportunityPayloadChunks(
+    rows.map((row) => rowInsert(row, fence)),
+    INSERT_CHUNK_SIZE
+  );
+  for (const payload of payloads) {
     const { error } = await supabase
       .from("opportunity_finder_rows")
-      .insert(rows.slice(index, index + INSERT_CHUNK_SIZE).map((row) => rowInsert(row, fence)));
+      .insert(payload);
     if (error) throw error;
   }
 }
@@ -1479,8 +1513,7 @@ async function appendMatchOutputItems(
   outputKind: OpportunityOutputStageKind,
   items: unknown[]
 ) {
-  for (let index = 0; index < items.length; index += OUTPUT_STAGE_CHUNK_SIZE) {
-    const chunk = items.slice(index, index + OUTPUT_STAGE_CHUNK_SIZE);
+  for (const chunk of opportunityPayloadChunks(items, OUTPUT_STAGE_CHUNK_SIZE)) {
     const startIndex = stage.counts[outputKind];
     const { error } = await supabase.rpc("append_opportunity_finder_output", {
       job_id: stage.jobId,
