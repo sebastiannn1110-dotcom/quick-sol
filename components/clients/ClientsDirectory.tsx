@@ -9,6 +9,7 @@ import { useProfile } from "@/components/ProfileProvider";
 import { EMPTY_OPPORTUNITIES_RESULT } from "@/components/opportunities/opportunity-ui";
 import type { AccountClient } from "@/lib/clients/clients";
 import type { SalesOpportunitiesWithConfidenceResult } from "@/lib/opportunities/quality";
+import { isExpectedAbort } from "@/lib/request-lifecycle";
 
 export default function ClientsDirectory({ adminMode = false }: { adminMode?: boolean }) {
   const { t } = useLanguage();
@@ -47,16 +48,20 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
           cache: "no-store",
           signal: controller.signal
         });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error("OPPORTUNITIES_SUMMARY_FAILED");
         const payload = await response.json() as Pick<SalesOpportunitiesWithConfidenceResult, "totals">;
         setOpportunities((current) => ({ ...current, totals: payload.totals }));
+      } catch (loadError) {
+        if (!isExpectedAbort(loadError, controller.signal)) {
+          setError(t("clients.error"));
+        }
       } finally {
         if (!controller.signal.aborted) setOpportunitiesLoading(false);
       }
     }
     void loadSummary();
     return () => controller.abort();
-  }, [adminMode]);
+  }, [adminMode, t]);
 
   const canManage = profile?.role === "admin" || profile?.role === "manager";
   return (

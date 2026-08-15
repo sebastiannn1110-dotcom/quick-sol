@@ -18,6 +18,13 @@ import OpportunityCard from "@/components/opportunity-finder/OpportunityCard";
 import { evaluateOpportunityCompatibility } from "@/lib/opportunity-finder/compatibility";
 import { sha256OpportunityFileContents } from "@/lib/opportunity-finder/pipeline";
 import {
+  abortRequest,
+  isAbortError,
+  isExpectedAbort,
+  requestAbortError,
+  throwIfRequestAborted
+} from "@/lib/request-lifecycle";
+import {
   FILE_TYPE_LABELS,
   OPPORTUNITY_TYPE_LABELS,
   ROLE_LABELS,
@@ -302,22 +309,45 @@ function localFileError(file: File | null) {
 function directUpload(
   signedUrl: string,
   file: File,
-  onProgress: (value: number) => void
+  onProgress: (value: number) => void,
+  signal: AbortSignal
 ) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abortUpload);
+      callback();
+    };
+    const rejectAbort = () => finish(() => reject(
+      isAbortError(signal.reason)
+        ? signal.reason
+        : requestAbortError("Opportunity Finder upload cancelled.")
+    ));
+    const abortUpload = () => {
+      xhr.abort();
+      rejectAbort();
+    };
+    if (signal.aborted) {
+      rejectAbort();
+      return;
+    }
+    signal.addEventListener("abort", abortUpload, { once: true });
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(99, Math.round(event.loaded / event.total * 100)));
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(100);
-        resolve();
+        finish(resolve);
       } else {
-        reject(new Error("UPLOAD_FAILED"));
+        finish(() => reject(new Error("UPLOAD_FAILED")));
       }
     };
-    xhr.onerror = () => reject(new Error("UPLOAD_FAILED"));
+    xhr.onerror = () => finish(() => reject(new Error("UPLOAD_FAILED")));
+    xhr.onabort = rejectAbort;
     const formData = new FormData();
     formData.append("cacheControl", "3600");
     formData.append("", file);
@@ -349,14 +379,7 @@ async function readPayload<T>(response: Response) {
   return payload;
 }
 
-export function isAbortError(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    error.name === "AbortError"
-  );
-}
+export { isAbortError };
 
 function suggestedRole(type: OpportunityFileType): OpportunitySelectedRole | "" {
   return type === "financial" || type === "unknown" ? "" : type;
@@ -461,6 +484,7 @@ export default function OpportunityFinder() {
   const [supplementalLoaded, setSupplementalLoaded] = useState({ possible: false, rejected: false });
   const [supplementalLoading, setSupplementalLoading] = useState<"possible" | "rejected" | null>(null);
   const snapshotRequestRef = useRef<string | null>(null);
+  const uploadRequestRef = useRef<AbortController | null>(null);
 
   function errorMessage(code: string) {
     const errors = text.errors as Record<string, string>;
@@ -485,10 +509,14 @@ export default function OpportunityFinder() {
     offset = 0,
     append = false,
     preserveLoaded = false,
-    targetJobId = jobId
+    targetJobId = jobId,
+    signal?: AbortSignal
   ) {
     if (!targetJobId) return;
-    const response = await fetch(`/api/opportunity-finder/jobs/${targetJobId}?${resultQuery(nextFilters, offset)}`, { cache: "no-store" });
+    const response = await fetch(`/api/opportunity-finder/jobs/${targetJobId}?${resultQuery(nextFilters, offset)}`, {
+      cache: "no-store",
+      signal
+    });
     const payload = await readPayload<JobResponse>(response);
     const normalized: JobResponse = {
       ...payload,
@@ -550,33 +578,45 @@ export default function OpportunityFinder() {
 
   useEffect(() => {
     if (!jobId) return;
-    void loadJob().catch((error) => {
-      if (!isAbortError(error)) setErrorCode(error instanceof Error ? error.message : "default");
+    const controller = new AbortController();
+    void loadJob(appliedFilters, 0, false, false, jobId, controller.signal).catch((error) => {
+      if (!isExpectedAbort(error, controller.signal)) {
+        setErrorCode(error instanceof Error ? error.message : "default");
+      }
     });
+    return () => abortRequest(controller, "Opportunity Finder job load superseded.");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, appliedFilters]);
 
+  const shouldPoll = Boolean(jobId && (!data || !TERMINAL_STATUSES.includes(data.job.status)));
+
   useEffect(() => {
-    if (!jobId || (data && TERMINAL_STATUSES.includes(data.job.status))) return;
+    if (!jobId || !shouldPoll) return;
     let stopped = false;
     let timer: number | null = null;
     let failures = 0;
-    let activeController: AbortController | null = null;
+    let inFlight = false;
+    const controller = new AbortController();
 
     const schedule = (delay: number) => {
-      if (!stopped) timer = window.setTimeout(() => void poll(), delay);
+      if (stopped) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void poll();
+      }, delay);
     };
     const poll = async () => {
-      if (stopped) return;
+      if (stopped || inFlight) return;
       if (document.visibilityState === "hidden") {
         schedule(5000);
         return;
       }
-      activeController = new AbortController();
+      inFlight = true;
       try {
         const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/status`, {
           cache: "no-store",
-          signal: activeController.signal
+          signal: controller.signal
         });
         if (!response.ok) throw new Error("status_poll_failed");
         const status = await response.json() as Partial<ApiJob> & { updatedAt?: string | null };
@@ -590,16 +630,16 @@ export default function OpportunityFinder() {
         }
         schedule(2500);
       } catch (error) {
-        if (isAbortError(error)) return;
+        if (isExpectedAbort(error, controller.signal)) return;
         failures += 1;
+        setErrorCode(error instanceof Error ? error.message : "status_poll_failed");
         schedule(Math.min(2500 * 2 ** failures, 15000));
       } finally {
-        activeController = null;
+        inFlight = false;
       }
     };
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && !activeController) {
-        if (timer !== null) window.clearTimeout(timer);
+      if (document.visibilityState === "visible" && !inFlight) {
         schedule(0);
       }
     };
@@ -608,11 +648,16 @@ export default function OpportunityFinder() {
     return () => {
       stopped = true;
       if (timer !== null) window.clearTimeout(timer);
-      activeController?.abort();
+      abortRequest(controller, "Opportunity Finder polling stopped.");
       document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, data?.job.status, appliedFilters]);
+  }, [jobId, shouldPoll, appliedFilters]);
+
+  useEffect(() => () => {
+    abortRequest(uploadRequestRef.current, "Opportunity Finder was closed.");
+    uploadRequestRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (data?.job.status !== "awaiting_roles") return;
@@ -697,11 +742,16 @@ export default function OpportunityFinder() {
     setLoading(true);
     setErrorCode("");
     setUploadProgress([0, 0]);
+    abortRequest(uploadRequestRef.current, "A newer Opportunity Finder upload started.");
+    const requestController = new AbortController();
+    uploadRequestRef.current = requestController;
     try {
       const contentHashes = await Promise.all(selectedFiles.map((file) => sha256OpportunityFileContents(file!)));
+      throwIfRequestAborted(requestController.signal);
       const initiateResponse = await fetch("/api/opportunity-finder/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: requestController.signal,
         body: JSON.stringify({
           comparisonMode,
           files: selectedFiles.map((file, index) => ({
@@ -725,12 +775,16 @@ export default function OpportunityFinder() {
             next[index] = progress;
             return next;
           });
-        });
+        }, requestController.signal);
       }));
-      const profileResponse = await fetch(`/api/opportunity-finder/jobs/${initiate.jobId}/profile`, { method: "POST" });
+      const profileResponse = await fetch(`/api/opportunity-finder/jobs/${initiate.jobId}/profile`, {
+        method: "POST",
+        signal: requestController.signal
+      });
       await readPayload(profileResponse);
-      await loadJob(appliedFilters, 0, false, false, initiate.jobId);
+      await loadJob(appliedFilters, 0, false, false, initiate.jobId, requestController.signal);
     } catch (error) {
+      if (isExpectedAbort(error, requestController.signal)) return;
       const apiError = error as OpportunityApiError;
       if (apiError.reusedExistingJob && apiError.jobId && apiError.status) {
         setReusedComparison({
@@ -746,6 +800,7 @@ export default function OpportunityFinder() {
       if (apiError.jobId) setJobId(apiError.jobId);
       setErrorCode(apiError.message || "default");
     } finally {
+      if (uploadRequestRef.current === requestController) uploadRequestRef.current = null;
       setLoading(false);
     }
   }
@@ -789,8 +844,15 @@ export default function OpportunityFinder() {
 
   async function cancelJob() {
     if (!jobId) return;
-    await fetch(`/api/opportunity-finder/jobs/${jobId}/cancel`, { method: "POST" });
-    await loadJob();
+    abortRequest(uploadRequestRef.current, "Opportunity Finder cancelled by the user.");
+    uploadRequestRef.current = null;
+    try {
+      const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/cancel`, { method: "POST" });
+      await readPayload(response);
+      await loadJob();
+    } catch (error) {
+      setErrorCode(error instanceof Error ? error.message : "default");
+    }
   }
 
   async function retryJob() {
@@ -809,6 +871,9 @@ export default function OpportunityFinder() {
   }
 
   function reset() {
+    abortRequest(uploadRequestRef.current, "A new Opportunity Finder search was started.");
+    uploadRequestRef.current = null;
+    setLoading(false);
     setComparisonMode(null);
     setLocalFiles([null, null]);
     setUploadProgress([0, 0]);

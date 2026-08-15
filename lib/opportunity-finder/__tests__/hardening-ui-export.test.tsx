@@ -21,6 +21,7 @@ import {
   OPPORTUNITY_RESULT_SELECT,
   resultDatabaseRow
 } from "@/lib/opportunity-finder/api";
+import { isExpectedAbort } from "@/lib/request-lifecycle";
 import { matchOpportunityRows } from "@/lib/opportunity-finder/matcher";
 import { parseOpportunityWorkbook } from "@/lib/opportunity-finder/parser";
 import type {
@@ -115,6 +116,12 @@ describe("Opportunity Finder public privacy and terminology", () => {
     crossRealmAbort.name = "AbortError";
     expect(isAbortError(crossRealmAbort)).toBe(true);
     expect(isAbortError(new Error("network failed"))).toBe(false);
+
+    const active = new AbortController();
+    expect(isExpectedAbort(crossRealmAbort, active.signal)).toBe(false);
+    active.abort();
+    expect(isExpectedAbort(crossRealmAbort, active.signal)).toBe(true);
+    expect(isExpectedAbort(new Error("PGRST_CONNECTION_FAILURE"), active.signal)).toBe(false);
   });
 
   it("requires explicit future validity for supplier files and detected embedded offers", () => {
@@ -304,7 +311,10 @@ describe("Opportunity Finder public privacy and terminology", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining(`/api/opportunity-finder/jobs/${jobId}?`),
-        { cache: "no-store" }
+        expect.objectContaining({
+          cache: "no-store",
+          signal: expect.any(AbortSignal)
+        })
       );
     });
     expect(screen.queryByText("No se pudo completar la operación.")).toBeNull();
