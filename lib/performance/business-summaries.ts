@@ -305,23 +305,33 @@ export async function loadCompleteUploadRecords(
   pageSize = RECONCILIATION_PAGE_SIZE
 ) {
   const records: StockNeedsRecord[] = [];
-  let from = 0;
+  let cursorId: string | null = null;
   while (true) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("business_records")
       .select(RECORD_SELECT)
       .eq("upload_batch_id", uploadBatchId)
       .is("archived_at", null)
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(from, from + pageSize - 1);
+      .order("id", { ascending: false });
+    if (cursorId) query = query.lt("id", cursorId);
+    const { data, error } = await query.limit(pageSize);
     if (error) throw error;
     const page = (data ?? []) as unknown as StockNeedsRecord[];
     records.push(...page);
     if (page.length < pageSize) break;
-    from += pageSize;
+    const last = page.at(-1) as (StockNeedsRecord & { created_at?: string; id?: string }) | undefined;
+    if (!last?.id) throw new Error("BUSINESS_SUMMARY_KEYSET_CURSOR_MISSING");
+    if (cursorId === last.id) {
+      throw new Error("BUSINESS_SUMMARY_KEYSET_CURSOR_STALLED");
+    }
+    cursorId = last.id;
   }
-  return records;
+  return records.sort((left, right) => {
+    const leftRow = left as StockNeedsRecord & { created_at?: string; id?: string };
+    const rightRow = right as StockNeedsRecord & { created_at?: string; id?: string };
+    const createdOrder = String(rightRow.created_at ?? "").localeCompare(String(leftRow.created_at ?? ""));
+    return createdOrder || String(rightRow.id ?? "").localeCompare(String(leftRow.id ?? ""));
+  });
 }
 
 export function businessSummaryPublishChunks<T>(rows: T[], chunkSize = BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE) {
@@ -332,6 +342,40 @@ export function businessSummaryPublishChunks<T>(rows: T[], chunkSize = BUSINESS_
     chunks.push(rows.slice(index, index + safeChunkSize));
   }
   return chunks;
+}
+
+export async function publishBusinessOpportunityEntityRows(
+  supabase: SupabaseClient,
+  rows: Array<BusinessOpportunityEntityRow & {
+    upload_batch_id: string;
+    owner_id: string;
+    data_version: number;
+  }>,
+  targetUploadBatchId: string,
+  expectedDataVersion: number
+) {
+  for (const entityChunk of businessSummaryPublishChunks(rows)) {
+    // Source versions are immutable. Ignoring an existing primary key makes a
+    // retry resume cheaply after a partial publish instead of rewriting every
+    // previously persisted entity through the locking RPC.
+    const entityPublish = await supabase
+      .from("business_opportunity_entities")
+      .upsert(entityChunk, {
+        onConflict: "upload_batch_id,data_version,source_record_id,entity_kind",
+        ignoreDuplicates: true
+      });
+    if (entityPublish.error) throw entityPublish.error;
+  }
+
+  // The empty RPC is the atomic visibility boundary. It locks and rechecks the
+  // source version, then advances opportunity_entity_version only after every
+  // direct chunk has completed.
+  const finalize = await supabase.rpc("replace_business_upload_opportunity_entities_v1", {
+    target_upload_batch_id: targetUploadBatchId,
+    expected_data_version: expectedDataVersion,
+    entity_rows: []
+  });
+  if (finalize.error) throw finalize.error;
 }
 
 export async function rebuildBusinessUploadSummary(supabase: SupabaseClient, uploadBatchId: string) {
@@ -361,15 +405,13 @@ export async function rebuildBusinessUploadSummary(supabase: SupabaseClient, upl
     importJobs: (jobsResult.data ?? []) as StockNeedsImportJob[]
   });
   const version = Number(versionResult.data.data_version);
-  const entityChunks = businessSummaryPublishChunks(opportunityEntities);
-  for (const entityRows of entityChunks.length ? entityChunks : [[]]) {
-    const entityPublish = await supabase.rpc("replace_business_upload_opportunity_entities_v1", {
-      target_upload_batch_id: uploadBatchId,
-      expected_data_version: version,
-      entity_rows: entityRows
-    });
-    if (entityPublish.error) throw entityPublish.error;
-  }
+  const versionedOpportunityEntities = opportunityEntities.map((row) => ({
+    ...row,
+    upload_batch_id: uploadBatchId,
+    owner_id: versionResult.data.owner_id,
+    data_version: version
+  }));
+  await publishBusinessOpportunityEntityRows(supabase, versionedOpportunityEntities, uploadBatchId, version);
 
   const summaryRows = rows.map((row) => ({
     ...row,
