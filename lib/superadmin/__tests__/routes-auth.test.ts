@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   buildSuperadminSecurity: vi.fn(async () => ({})),
   buildSuperadminImports: vi.fn(async () => ({})),
   buildSuperadminAi: vi.fn(async () => ({})),
-  buildSuperadminChat: vi.fn(async () => ({}))
+  buildSuperadminChat: vi.fn(async () => ({})),
+  logError: vi.fn()
 }));
 
 vi.mock("@/lib/superadmin/auth", () => ({
@@ -29,6 +30,10 @@ vi.mock("@/lib/traffic/analytics", () => ({
   buildTrafficAnalytics: mocks.buildTrafficAnalytics
 }));
 
+vi.mock("@/lib/logger/logger", () => ({
+  logger: { error: mocks.logError }
+}));
+
 import { GET as health } from "@/app/api/superadmin/health/route";
 import { GET as traffic } from "@/app/api/superadmin/traffic/route";
 import { GET as security } from "@/app/api/superadmin/security/route";
@@ -47,7 +52,10 @@ const routes = [
 ] as const;
 
 describe("/api/superadmin authorization contract", () => {
-  beforeEach(() => mocks.requireSuperadmin.mockReset());
+  beforeEach(() => {
+    mocks.requireSuperadmin.mockReset();
+    mocks.logError.mockReset();
+  });
 
   it.each(routes)("returns 401 for an unauthenticated %s request", async (_name, handler) => {
     mocks.requireSuperadmin.mockResolvedValue(NextResponse.json({ error: "Authentication required" }, { status: 401 }));
@@ -71,5 +79,23 @@ describe("/api/superadmin authorization contract", () => {
     const response = await legacyLogin(new Request("https://app.test/api/superadmin/login", { method: "POST" }));
     expect(response.status).toBe(410);
     expect(await response.json()).toMatchObject({ error: "SUPERADMIN_PARALLEL_LOGIN_DISABLED", loginPath: "/login" });
+  });
+
+  it("returns a sanitized 500 when the authenticated Imports backend fails", async () => {
+    mocks.requireSuperadmin.mockResolvedValue({
+      service: {},
+      profile: { id: "00000000-0000-4000-8000-000000000001", email: "owner@example.test", role: "super_admin_dev" },
+      requestMeta: { traceId: "trace", requestId: "request", route: "/api/superadmin/imports", ipAddress: "127.0.0.1", userAgent: "test" }
+    });
+    mocks.buildSuperadminImports.mockRejectedValueOnce({ code: "57014", message: "statement timeout" });
+
+    const response = await imports(new Request("https://app.test/api/superadmin/imports"));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "SUPERADMIN_IMPORTS_UNAVAILABLE" });
+    expect(mocks.logError).toHaveBeenCalledWith(expect.objectContaining({
+      action: "superadmin_imports_failed",
+      statusCode: 500
+    }));
   });
 });

@@ -58,11 +58,13 @@ describe("archived business record filters", () => {
     expectActiveBusinessRecordReads("lib/upload/job-diagnostics.ts", 2);
   });
 
-  it("shows superadmin active and archived counts separately", () => {
+  it("uses bounded superadmin counters without exact archived-record scans", () => {
+    const metricsSource = source("lib/superadmin/metrics.ts");
     const segments = businessRecordReadSegments("lib/superadmin/metrics.ts");
-    expect(segments).toHaveLength(2);
-    expect(segments[0].slice(0, 300)).toContain('.is("archived_at", null)');
-    expect(segments[1].slice(0, 300)).toContain('.not("archived_at", "is", null)');
+    expect(segments).toHaveLength(1);
+    expect(segments[0].slice(0, 300)).toContain('count: "planned"');
+    expect(metricsSource).toContain('.rpc("get_business_record_counter_v1")');
+    expect(metricsSource).not.toContain('count: "exact", head: true }).not("archived_at"');
   });
 
   it("keeps duplicate cleanup as soft-archive, not physical delete", () => {
