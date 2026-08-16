@@ -1,0 +1,139 @@
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  DATABASE_DESTRUCTION_PHRASE,
+  DATABASE_SAFETY_DELETE_TABLES,
+  DATABASE_SAFETY_PROTECTED_TABLES,
+  DATABASE_SAFETY_TABLE_POLICY
+} from "@/lib/superadmin/database-safety-policy";
+
+const migrationPath = "supabase/migrations/20260816120000_super_admin_database_safety_center.sql";
+const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
+const normalized = migration.toLowerCase();
+
+const historicalPublicTables = [
+  "admin_email_attachments", "admin_email_messages", "ai_conversations", "ai_messages", "api_rate_limits",
+  "audit_logs", "business_mpn_summaries", "business_opportunity_entities", "business_records", "business_scope_counters",
+  "business_upload_versions", "chat_attachments", "chat_conversation_members", "chat_conversations", "chat_messages",
+  "client_logs", "client_private_details", "client_upload_assignments", "clients", "email_alert_rules",
+  "email_notification_events", "file_schema_profiles", "import_errors", "import_job_error_summary", "import_job_errors",
+  "import_jobs", "observability_log_outbox", "opportunity_finder_allocations", "opportunity_finder_audit_events",
+  "opportunity_finder_dataset_snapshot_rows", "opportunity_finder_dataset_snapshots", "opportunity_finder_demand_events",
+  "opportunity_finder_demand_part_options", "opportunity_finder_files", "opportunity_finder_historical_signals",
+  "opportunity_finder_jobs", "opportunity_finder_manufacturer_aliases", "opportunity_finder_manufacturer_registry_versions",
+  "opportunity_finder_manufacturers", "opportunity_finder_output_items", "opportunity_finder_output_runs",
+  "opportunity_finder_part_equivalence_versions", "opportunity_finder_part_equivalences", "opportunity_finder_possible_matches",
+  "opportunity_finder_rejected_rows", "opportunity_finder_result_commercials", "opportunity_finder_result_financials",
+  "opportunity_finder_results", "opportunity_finder_review_decisions", "opportunity_finder_rows",
+  "opportunity_finder_supply_lots", "opportunity_finder_tenant_memberships", "opportunity_finder_tenants",
+  "password_reset_codes", "performance_logs", "profiles", "security_events", "system_logs", "upload_batches", "upload_sheets"
+].sort();
+
+const newSafetyTables = [
+  "database_backup_manifests", "database_destruction_operations", "database_safety_audit_events", "database_safety_state"
+].sort();
+
+describe("Database Safety Center policy", () => {
+  it("covers the exact 60 existing public tables and four new protected safety tables", () => {
+    const publicTables = DATABASE_SAFETY_TABLE_POLICY.filter((entry) => entry.schema === "public").map((entry) => entry.table);
+    expect([...new Set(publicTables)].sort()).toEqual([...historicalPublicTables, ...newSafetyTables].sort());
+    expect(publicTables).toHaveLength(64);
+  });
+
+  it("derives the 60-table baseline from the actual local migration corpus", () => {
+    const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
+    const corpus = readdirSync(migrationsDirectory)
+      .filter((name) => name.endsWith(".sql") && name !== path.basename(migrationPath))
+      .map((name) => readFileSync(path.join(migrationsDirectory, name), "utf8"))
+      .join("\n");
+    const discovered = [...corpus.matchAll(/create table(?: if not exists)? public\.([a-z0-9_]+)/gi)]
+      .map((match) => match[1]);
+    expect([...new Set(discovered)].sort()).toEqual(historicalPublicTables);
+  });
+
+  it("keeps the TypeScript and SQL catalogs synchronized", () => {
+    const sqlTables = [...migration.matchAll(/\('([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+      .map((match) => `${match[1]}.${match[2]}`);
+    const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
+    expect([...new Set(sqlTables)].sort()).toEqual([...policyTables].sort());
+  });
+
+  it("uses an explicit 52-table DELETE allowlist and preserves identity/configuration", () => {
+    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(52);
+    expect(DATABASE_SAFETY_PROTECTED_TABLES.map((entry) => `${entry.schema}.${entry.table}`)).toEqual(expect.arrayContaining([
+      "public.profiles", "auth.users", "supabase_migrations.schema_migrations", "storage.objects", "storage.buckets",
+      "public.database_safety_audit_events"
+    ]));
+  });
+
+  it("orders representative FK children before their parents", () => {
+    const order = new Map(DATABASE_SAFETY_DELETE_TABLES.map((entry, index) => [entry.table, index]));
+    const edges = [
+      ["admin_email_attachments", "admin_email_messages"], ["ai_messages", "ai_conversations"],
+      ["chat_attachments", "chat_messages"], ["chat_messages", "chat_conversations"],
+      ["business_records", "upload_sheets"], ["upload_sheets", "upload_batches"],
+      ["import_job_errors", "import_jobs"], ["opportunity_finder_output_items", "opportunity_finder_output_runs"],
+      ["opportunity_finder_result_financials", "opportunity_finder_results"],
+      ["opportunity_finder_dataset_snapshot_rows", "opportunity_finder_dataset_snapshots"],
+      ["opportunity_finder_rows", "opportunity_finder_files"], ["opportunity_finder_files", "opportunity_finder_jobs"]
+    ];
+    for (const [child, parent] of edges) expect(order.get(child)!).toBeLessThan(order.get(parent)!);
+  });
+
+  it("implements purge as one transactional, idempotent, single-use operation", () => {
+    const execute = normalized.slice(normalized.indexOf("create or replace function public.execute_database_business_purge"));
+    expect(normalized.startsWith("begin;")).toBe(true);
+    expect(normalized.trimEnd().endsWith("commit;")).toBe(true);
+    expect(execute).toContain("if operation.status = 'completed' then return operation.result");
+    expect(execute).toContain("challenge_used_at is not null");
+    expect(execute).toContain("for update");
+    expect(execute).toContain("lock table %i.%i in share row exclusive mode");
+    expect(execute).toContain("order by schema_name, table_name");
+    expect(execute).toContain("delete from %i.%i");
+    expect(execute).not.toContain("drop database");
+    expect(execute).not.toContain("drop schema");
+    expect(execute).not.toContain("truncate table");
+  });
+
+  it("blocks missing, corrupt, stale, expired and reused backup/challenge states in SQL", () => {
+    for (const marker of ["BACKUP_NOT_VERIFIED", "BACKUP_STALE", "BACKUP_INVALID", "CHALLENGE_EXPIRED", "CHALLENGE_ALREADY_USED", "COUNTDOWN_ACTIVE", "SESSION_CHANGED"]) {
+      expect(migration).toContain(marker);
+    }
+    expect(migration).toContain("restore_list_verified");
+    expect(migration).toContain("downloaded_at is null");
+    expect(migration).toContain("manifest.expires_at <= clock_timestamp()");
+  });
+
+  it("does not let security rate-limit writes stale their own backup", () => {
+    expect(migration).toContain("table_name not in ('api_rate_limits', 'password_reset_codes', 'observability_log_outbox')");
+    expect(migration).toContain("category in ('BUSINESS_DATA', 'OPERATIONAL_DATA')");
+  });
+
+  it("enforces RLS without granting direct writes", () => {
+    for (const table of newSafetyTables) {
+      expect(normalized).toContain(`alter table public.${table} enable row level security`);
+      expect(normalized).toContain(`alter table public.${table} force row level security`);
+      expect(normalized).toContain(`revoke all on public.${table} from anon, authenticated`);
+    }
+    expect(normalized).not.toContain("grant insert on public.database_");
+    expect(normalized).not.toContain("grant update on public.database_");
+    expect(normalized).not.toContain("grant delete on public.database_");
+  });
+
+  it("keeps tenant authorization tables protected and uses the exact phrase", () => {
+    expect(DATABASE_SAFETY_PROTECTED_TABLES.map((entry) => entry.table)).toEqual(expect.arrayContaining([
+      "opportunity_finder_tenants", "opportunity_finder_tenant_memberships"
+    ]));
+    expect(DATABASE_DESTRUCTION_PHRASE).toBe("ELIMINAR INFORMACION QUIKSOL");
+  });
+
+  it("never embeds the bootstrap password and provisions it only through a private env variable", () => {
+    const provisioning = readFileSync(path.join(process.cwd(), "scripts/provision-admin-users.ts"), "utf8");
+    expect(provisioning).toContain("QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD");
+    expect(provisioning).toContain("--super-admin-dev");
+    expect(provisioning).toContain("--apply");
+    expect(provisioning).toContain('role: "super_admin_dev"');
+    expect(provisioning).not.toContain("NEXT_PUBLIC_QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD");
+  });
+});

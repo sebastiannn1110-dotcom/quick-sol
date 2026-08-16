@@ -9,6 +9,7 @@ type AdminSeed = {
   fullName: string;
   department: string;
   region: string;
+  role: "admin" | "super_admin_dev";
 };
 
 const ADMINS: AdminSeed[] = [
@@ -17,14 +18,16 @@ const ADMINS: AdminSeed[] = [
     password: "Quiksol.Admin.2026!",
     fullName: "Quiksol Admin",
     department: "Operations",
-    region: "Global"
+    region: "Global",
+    role: "admin"
   },
   {
     email: "braian@admin.quiksol",
     password: "password.braian",
     fullName: "Braian Admin",
     department: "Administration",
-    region: "Global"
+    region: "Global",
+    role: "admin"
   }
 ];
 
@@ -103,7 +106,7 @@ async function upsertProfile(supabase: SupabaseClient, user: User, admin: AdminS
     id: user.id,
     full_name: admin.fullName,
     email: admin.email,
-    role: "admin",
+    role: admin.role,
     department: admin.department,
     region: admin.region,
     is_active: true
@@ -122,7 +125,7 @@ async function provisionAdmin(supabase: SupabaseClient, admin: AdminSeed) {
       email_confirm: true,
       user_metadata: {
         full_name: admin.fullName,
-        role: "admin",
+        role: admin.role,
         department: admin.department,
         region: admin.region
       }
@@ -142,7 +145,7 @@ async function provisionAdmin(supabase: SupabaseClient, admin: AdminSeed) {
     email_confirm: true,
     user_metadata: {
       full_name: admin.fullName,
-      role: "admin",
+      role: admin.role,
       department: admin.department,
       region: admin.region
     }
@@ -169,19 +172,50 @@ async function verifyAdminLogin(supabase: SupabaseClient, admin: AdminSeed) {
 }
 
 async function main() {
+  loadEnvFile(".env.local");
+  loadEnvFile(".env");
+  const provisionSuperAdminDev = process.argv.includes("--super-admin-dev");
+  const dryRun = process.argv.includes("--dry-run");
+  const selectedAdmins = provisionSuperAdminDev
+    ? [superAdminDevSeed()]
+    : ADMINS;
+
+  if (dryRun || (provisionSuperAdminDev && !process.argv.includes("--apply"))) {
+    for (const admin of selectedAdmins) {
+      console.log(`prepared only; no changes: ${admin.email} -> ${admin.role}`);
+    }
+    if (provisionSuperAdminDev && !dryRun) console.log("Explicit --apply is required after production authorization.");
+    return;
+  }
+
+  if (provisionSuperAdminDev && !selectedAdmins[0]?.password) {
+    throw new Error("QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD is required with --super-admin-dev --apply.");
+  }
+
   const supabase = getServiceClient();
 
-  for (const admin of ADMINS) {
+  for (const admin of selectedAdmins) {
     const action = await provisionAdmin(supabase, admin);
-    console.log(`${action}: ${admin.email} -> admin`);
+    console.log(`${action}: ${admin.email} -> ${admin.role}`);
   }
 
   if (process.argv.includes("--verify-login")) {
     const publicClient = getPublicClient();
-    for (const admin of ADMINS) {
+    for (const admin of selectedAdmins) {
       await verifyAdminLogin(publicClient, admin);
     }
   }
+}
+
+function superAdminDevSeed(): AdminSeed {
+  return {
+    email: "sebastianssc01@gmail.com",
+    password: process.env.QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD ?? "",
+    fullName: "Super Admin Dev",
+    department: "Engineering",
+    region: "Global",
+    role: "super_admin_dev"
+  };
 }
 
 main().catch((error) => {

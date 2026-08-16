@@ -38,7 +38,7 @@ export const SELECTABLE_UPLOAD_CATEGORIES = [
 
 export type BusinessCategory = (typeof BUSINESS_CATEGORIES)[number];
 export type UploadCategory = (typeof SELECTABLE_UPLOAD_CATEGORIES)[number];
-export type UserRole = "admin" | "manager" | "employee";
+export type UserRole = "admin" | "manager" | "employee" | "super_admin_dev";
 export type UploadStatus =
   | "pending"
   | "pending_upload"

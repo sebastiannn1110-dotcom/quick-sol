@@ -48,13 +48,9 @@ async function main() {
 
   if (mode === "superadmin" || mode === "system-health") {
     const config = superadminConfigStatus();
-    if (!config.hasUsername) push("failed", "superadmin username", "SUPERADMIN_USERNAME is missing.");
-    else push("passed", "superadmin username", "SUPERADMIN_USERNAME is configured.");
-    if (!config.hasSessionSecret) push("failed", "superadmin session", "SUPERADMIN_SESSION_SECRET is missing.");
-    else push("passed", "superadmin session", "SUPERADMIN_SESSION_SECRET is configured.");
-    if (config.hasPasswordHash) push("passed", "superadmin password", "SUPERADMIN_PASSWORD_HASH is configured.");
-    else if (config.hasTemporaryPassword) push("warning", "superadmin password", "SUPERADMIN_PASSWORD is configured without hash. Rotate to SUPERADMIN_PASSWORD_HASH.");
-    else push("failed", "superadmin password", "No superadmin password or hash configured.");
+    push("passed", "superadmin authorization", `${config.authorization}; required role: ${config.requiredRole}.`);
+    push(config.backupDatabaseConfigured ? "passed" : "warning", "backup database", config.backupDatabaseConfigured ? "Private backup connection is configured." : "QUIKSOL_BACKUP_DATABASE_URL is not configured.");
+    push(config.auditSecretConfigured ? "passed" : "warning", "database safety audit", config.auditSecretConfigured ? "Private audit hashing secret is configured." : "DATABASE_SAFETY_AUDIT_SECRET is not configured.");
   }
 
   if (mode === "traffic" || mode === "system-health") {

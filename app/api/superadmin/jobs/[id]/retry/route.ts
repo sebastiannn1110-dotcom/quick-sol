@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSuperadmin } from "@/lib/superadmin/auth";
+import { assertCriticalSameOrigin, requireSuperadmin, superadminJson } from "@/lib/superadmin/auth";
 import { logger } from "@/lib/logger/logger";
 import { requestIp } from "@/lib/security/rateLimit";
 import { getImportJobDiagnostics } from "@/lib/upload/job-diagnostics";
@@ -8,12 +8,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const csrf = assertCriticalSameOrigin(request);
+  if (csrf) return csrf;
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
   const diagnostics = await getImportJobDiagnostics(context.service, id);
   if (diagnostics?.safeFinalize.possible) {
-    return NextResponse.json({
+    return superadminJson({
       error: "This job appears fully imported. Use safe finalize instead of retrying.",
       diagnostics
     }, { status: 409 });
@@ -48,7 +50,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     .eq("id", id)
     .select("id,upload_batch_id")
     .maybeSingle();
-  if (error || !job) return NextResponse.json({ error: "Unable to retry job." }, { status: 500 });
+  if (error || !job) return superadminJson({ error: "Unable to retry job." }, { status: 500 });
 
   await context.service.from("upload_batches").update({
     status: "queued",
@@ -82,5 +84,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     status: "completed",
     metadata: { jobId: id, uploadBatchId: job.upload_batch_id }
   });
-  return NextResponse.json({ ok: true, jobId: id, uploadId: job.upload_batch_id });
+  return superadminJson({ ok: true, jobId: id, uploadId: job.upload_batch_id });
 }

@@ -19,7 +19,8 @@ const PROTECTED_PREFIXES = [
   "/categories",
   "/chat",
   "/profile",
-  "/admin"
+  "/admin",
+  "/admindev"
 ];
 const MANAGER_ADMIN_PREFIXES = ["/admin/clients", "/admin/opportunities", "/admin/stock-needs"];
 
@@ -57,6 +58,23 @@ function isPublicPath(pathname: string) {
 
 function managerCanAccessAdminPath(pathname: string) {
   return MANAGER_ADMIN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function isAdminPath(pathname: string) {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+function isSuperAdminDevPath(pathname: string) {
+  return pathname === "/admindev" || pathname.startsWith("/admindev/");
+}
+
+function protectPrivateResponse(response: NextResponse, pathname: string) {
+  if (isSuperAdminDevPath(pathname)) {
+    response.headers.set("Cache-Control", "no-store, max-age=0");
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  }
+  return response;
 }
 
 async function logUnauthorizedAdminAttempt(request: NextRequest, profileId: string | null) {
@@ -121,7 +139,7 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  if (isDemoModeAllowed()) {
+  if (isDemoModeAllowed() && !isSuperAdminDevPath(pathname)) {
     const response = NextResponse.next();
     response.headers.set(TRACE_HEADER, traceId);
     response.headers.set(REQUEST_HEADER, requestId);
@@ -134,7 +152,7 @@ export async function proxy(request: NextRequest) {
       durationMs: Math.round(performance.now() - startedAt),
       metadata: { statusCode: 200 }
     });
-    return response;
+    return protectPrivateResponse(response, pathname);
   }
 
   if (!isSupabaseConfigured()) {
@@ -150,7 +168,7 @@ export async function proxy(request: NextRequest) {
       status: "failed",
       durationMs: Math.round(performance.now() - startedAt)
     });
-    return NextResponse.redirect(loginUrl);
+    return protectPrivateResponse(NextResponse.redirect(loginUrl), pathname);
   }
 
   const response = NextResponse.next({
@@ -193,7 +211,7 @@ export async function proxy(request: NextRequest) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("redirect", pathname);
-    return NextResponse.redirect(loginUrl);
+    return protectPrivateResponse(NextResponse.redirect(loginUrl), pathname);
   }
 
   if (!user) return response;
@@ -217,11 +235,29 @@ export async function proxy(request: NextRequest) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("error", "inactive_user");
-    return NextResponse.redirect(loginUrl);
+    return protectPrivateResponse(NextResponse.redirect(loginUrl), pathname);
+  }
+
+
+  if (isSuperAdminDevPath(pathname) && profile.role !== "super_admin_dev") {
+    await logger.security({
+      ...baseLog,
+      userId: profile.id,
+      userRole: profile.role,
+      module: "auth",
+      action: "super_admin_dev_access_blocked",
+      message: "A non-Super-Admin-Dev user attempted to access /admindev.",
+      status: "failed",
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return protectPrivateResponse(
+      NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+      pathname
+    );
   }
 
   if (
-    pathname.startsWith("/admin") &&
+    isAdminPath(pathname) &&
     profile.role !== "admin" &&
     !(profile.role === "manager" && managerCanAccessAdminPath(pathname))
   ) {
@@ -249,7 +285,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(clientsUrl);
   }
 
-  if (pathname.startsWith("/admin")) {
+  if (isAdminPath(pathname)) {
     await logger.audit({
       ...baseLog,
       userId: profile.id,
@@ -274,7 +310,7 @@ export async function proxy(request: NextRequest) {
     metadata: { statusCode: 200 }
   });
 
-  return response;
+  return protectPrivateResponse(response, pathname);
 }
 
 export const config = {

@@ -15,7 +15,7 @@ const PUBLIC_PATHS = new Set(["/login", "/forgot-password", "/reset-password"]);
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const disabled = PUBLIC_PATHS.has(pathname) || pathname.startsWith("/admindev");
+  const disabled = PUBLIC_PATHS.has(pathname);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(!disabled);
 
