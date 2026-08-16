@@ -23,6 +23,7 @@ import AiAudioPlayer from "@/components/ai/AiAudioPlayer";
 import AiVoiceRecorder, { type AiVoiceResult } from "@/components/ai/AiVoiceRecorder";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
+import { isAdmin } from "@/lib/auth/roles";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -169,7 +170,7 @@ export default function AIAssistantWidget({
   }, [language]);
 
   const placeholder = useMemo(() => {
-    if (profile?.role === "admin") return t("assistant.placeholder.admin");
+    if (isAdmin(profile?.role)) return t("assistant.placeholder.admin");
     return t("assistant.placeholder.employee");
   }, [profile?.role, t]);
 
@@ -513,7 +514,7 @@ export default function AIAssistantWidget({
                   {t("assistant.title")}
                 </p>
                 <p className="truncate text-xs text-slate-300">
-                  {profile?.role === "admin" ? t("assistant.modeAdmin") : t("assistant.modeEmployee")}
+                  {isAdmin(profile?.role) ? t("assistant.modeAdmin") : t("assistant.modeEmployee")}
                 </p>
               </div>
             </div>

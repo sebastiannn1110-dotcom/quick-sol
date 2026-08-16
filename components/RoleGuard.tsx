@@ -3,6 +3,7 @@
 import { useLanguage } from "@/components/LanguageProvider";
 import { useProfile } from "@/components/ProfileProvider";
 import type { UserRole } from "@/lib/types";
+import { roleSatisfiesAny } from "@/lib/auth/roles";
 
 export default function RoleGuard({
   allowedRoles,
@@ -18,7 +19,7 @@ export default function RoleGuard({
     return <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{t("guard.checking")}</div>;
   }
 
-  if (!profile || !allowedRoles.includes(profile.role)) {
+  if (!profile || !roleSatisfiesAny(profile.role, allowedRoles)) {
     return (
       <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
         {t("guard.denied")}

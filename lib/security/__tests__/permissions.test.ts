@@ -54,6 +54,8 @@ describe("role permissions and sensitive field redaction", () => {
       canViewCustomerDetails: true
     });
     expect(redactSensitiveFieldsForRole(record, "admin")).toEqual(record);
+    expect(getRolePermissions("super_admin_dev")).toEqual(getRolePermissions("admin"));
+    expect(redactSensitiveFieldsForRole(record, "super_admin_dev")).toEqual(record);
   });
 
   it("redacts costs, pricing, GP, PO and notes for managers while preserving supplier and customer context", () => {

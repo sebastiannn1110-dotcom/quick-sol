@@ -1,8 +1,10 @@
+import type { UserRole } from "@/lib/types";
+
 export interface ChatUser {
   id: string;
   full_name: string;
   email: string;
-  role: "admin" | "manager" | "employee";
+  role: UserRole;
   department: string | null;
   region: string | null;
   bio?: string | null;

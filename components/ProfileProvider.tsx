@@ -27,7 +27,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(true);
     try {
-      const response = await fetch("/api/me", { cache: "no-store" });
+      const response = await fetch("/api/me", { cache: "no-store", credentials: "same-origin" });
       if (!response.ok) {
         setProfile(null);
         return;

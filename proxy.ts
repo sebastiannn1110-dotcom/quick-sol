@@ -3,6 +3,7 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { REQUEST_HEADER, TRACE_HEADER, createRequestId, createTraceId } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
+import { canAccessAdmin, canAccessAdminDev } from "@/lib/auth/roles";
 
 const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password"];
 const PROTECTED_PREFIXES = [
@@ -239,7 +240,7 @@ export async function proxy(request: NextRequest) {
   }
 
 
-  if (isSuperAdminDevPath(pathname) && profile.role !== "super_admin_dev") {
+  if (isSuperAdminDevPath(pathname) && !canAccessAdminDev(profile.role)) {
     await logger.security({
       ...baseLog,
       userId: profile.id,
@@ -258,7 +259,7 @@ export async function proxy(request: NextRequest) {
 
   if (
     isAdminPath(pathname) &&
-    profile.role !== "admin" &&
+    !canAccessAdmin(profile.role) &&
     !(profile.role === "manager" && managerCanAccessAdminPath(pathname))
   ) {
     await logger.security({

@@ -10,8 +10,10 @@ describe("chat permissions and validation", () => {
 
   it("reserves groups and company management for admins", () => {
     expect(canCreateChatGroup("admin")).toBe(true);
+    expect(canCreateChatGroup("super_admin_dev")).toBe(true);
     expect(canCreateChatGroup("manager")).toBe(false);
     expect(canManageCompanyConversation("employee")).toBe(false);
+    expect(canManageCompanyConversation("super_admin_dev")).toBe(true);
   });
 
   it("rejects empty text messages and malformed groups", () => {

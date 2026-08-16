@@ -7,10 +7,11 @@ import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
 import UserAvatar from "@/components/chat/UserAvatar";
 import Link from "next/link";
+import { isAdmin } from "@/lib/auth/roles";
 
 export default function Navbar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
   const { t } = useLanguage();
-  const roleLabel = profile?.role === "admin" ? t("navbar.adminWorkspace") : t("navbar.employeeWorkspace");
+  const roleLabel = isAdmin(profile?.role) ? t("navbar.adminWorkspace") : t("navbar.employeeWorkspace");
 
   return (
     <header className={`max-w-full overflow-hidden border-b bg-white ${isAdminArea ? "border-orange-200" : "border-slate-200"}`}>
@@ -28,7 +29,7 @@ export default function Navbar({ profile, isAdminArea = false }: { profile: Prof
             <Link
               href="/profile"
               className={`hidden rounded-md border px-3 py-2 text-sm sm:block ${
-                profile.role === "admin"
+                isAdmin(profile.role)
                   ? "border-orange-200 bg-orange-50 text-orange-700"
                   : "border-slate-200 bg-slate-50 text-slate-600"
               }`}

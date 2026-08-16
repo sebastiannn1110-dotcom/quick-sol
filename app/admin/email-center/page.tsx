@@ -2,12 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
+import type { UserRole } from "@/lib/types";
 
 interface EmployeeOption {
   id: string;
   full_name: string;
   email: string;
-  role: "admin" | "manager" | "employee";
+  role: UserRole;
   department: string | null;
   region: string | null;
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
+import { isAdmin } from "@/lib/auth/roles";
+import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +11,7 @@ interface DirectoryProfile {
   id: string;
   full_name: string;
   email: string;
-  role: "admin" | "manager" | "employee";
+  role: UserRole;
   department: string | null;
   region: string | null;
   avatar_path?: string | null;
@@ -48,7 +50,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const employeeId = searchParams.get("employeeId")?.trim();
   const search = searchParams.get("q")?.trim().slice(0, 100) || null;
-  const isAdmin = context.profile.role === "admin";
+  const hasAdminAccess = isAdmin(context.profile.role);
 
   if (context.isDemoMode) {
     const data = await getDemoPlatformData();
@@ -76,7 +78,7 @@ export async function GET(request: Request) {
     const employee = employees.find((profile) => profile.id === employeeId) ?? null;
     if (!employee) return NextResponse.json({ employee: null, uploads: [], records: [] }, { status: 404 });
 
-    const canViewActivity = isAdmin || employeeId === context.profile.id;
+    const canViewActivity = hasAdminAccess || employeeId === context.profile.id;
     if (!canViewActivity) {
       return NextResponse.json({ employee, uploads: [], records: [], privateActivity: true });
     }
@@ -109,7 +111,7 @@ export async function GET(request: Request) {
     });
   }
 
-  if (isAdmin) {
+  if (hasAdminAccess) {
     const activityResult = await context.supabase!.rpc("get_employee_activity_directory");
     if (!activityResult.error && activityResult.data) {
       const counts = new Map(activityResult.data.map((profile: { id: string; upload_count?: number | string; record_count?: number | string; last_upload?: string | null }) => [

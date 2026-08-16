@@ -3,6 +3,8 @@ import { z } from "zod";
 import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
+import { isAdmin, isSuperAdminDev } from "@/lib/auth/roles";
+import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,6 +123,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: body.error.issues.map((issue) => issue.message).join(" ") }, { status: 400 });
   }
 
+  if (body.data.userId === context.profile.id && isSuperAdminDev(context.profile.role) && body.data.role) {
+    return NextResponse.json({ error: "Super Admin Dev role cannot be changed from the admin screen." }, { status: 403 });
+  }
   if (body.data.userId === context.profile.id && body.data.role && body.data.role !== "admin") {
     return NextResponse.json({ error: "Admins cannot demote themselves from this screen." }, { status: 400 });
   }
@@ -128,20 +133,32 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Self deactivation requires explicit confirmation." }, { status: 400 });
   }
 
-  if (!context.isDemoMode && ((body.data.role && body.data.role !== "admin") || body.data.is_active === false)) {
-    const { count } = await context.supabase!
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .eq("role", "admin")
-      .eq("is_active", true);
-
+  let targetRole: UserRole | null = null;
+  if (!context.isDemoMode) {
     const target = await context.supabase!
       .from("profiles")
       .select("role")
       .eq("id", body.data.userId)
       .single();
+    if (target.error || !target.data) return NextResponse.json({ error: "User profile not found." }, { status: 404 });
+    targetRole = target.data.role as UserRole;
+    if (isSuperAdminDev(targetRole) && !isSuperAdminDev(context.profile.role)) {
+      return NextResponse.json({ error: "Only Super Admin Dev can modify a Super Admin Dev profile." }, { status: 403 });
+    }
+  }
 
-    if ((count ?? 0) <= 1 && target.data?.role === "admin") {
+  if (!context.isDemoMode && ((body.data.role && body.data.role !== "admin") || body.data.is_active === false)) {
+    const { count } = await context.supabase!
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .in("role", ["admin", "super_admin_dev"])
+      .eq("is_active", true);
+
+    if (isSuperAdminDev(targetRole) && (body.data.role || body.data.is_active === false)) {
+      return NextResponse.json({ error: "Super Admin Dev cannot be demoted or deactivated from the admin screen." }, { status: 403 });
+    }
+
+    if ((count ?? 0) <= 1 && isAdmin(targetRole)) {
       return NextResponse.json({ error: "Cannot deactivate or demote the last active admin." }, { status: 400 });
     }
   }
@@ -205,11 +222,14 @@ export async function DELETE(request: Request) {
 
   if (!context.isDemoMode) {
     const target = await context.supabase!.from("profiles").select("role").eq("id", body.data.userId).single();
-    if (target.data?.role === "admin") {
+    if (isSuperAdminDev(target.data?.role)) {
+      return NextResponse.json({ error: "Super Admin Dev cannot be deactivated from the admin screen." }, { status: 403 });
+    }
+    if (isAdmin(target.data?.role)) {
       const { count } = await context.supabase!
         .from("profiles")
         .select("id", { count: "exact", head: true })
-        .eq("role", "admin")
+        .in("role", ["admin", "super_admin_dev"])
         .eq("is_active", true);
       if ((count ?? 0) <= 1) return NextResponse.json({ error: "Cannot deactivate the last active admin." }, { status: 400 });
     }

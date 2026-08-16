@@ -11,6 +11,7 @@ import {
   UserCircle,
   Search,
   ShieldCheck,
+  ShieldPlus,
   Upload,
   Users
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import QuiksolIcon from "@/components/QuiksolIcon";
 import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
+import { isAdmin, roleSatisfiesAny } from "@/lib/auth/roles";
 
 interface NavItem {
   href: string;
@@ -38,7 +40,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/employees", labelKey: "nav.users", icon: Users, roles: ["admin", "manager"] },
   { href: "/records", labelKey: "nav.records", icon: Database, roles: ["admin", "manager"] },
   { href: "/admin/clients", labelKey: "nav.clientsAdmin", icon: Building2, roles: ["admin", "manager"] },
-  { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] }
+  { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] },
+  { href: "/admindev", labelKey: "nav.superAdminDev", icon: ShieldPlus, roles: ["super_admin_dev"] }
 ];
 
 export default function Sidebar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
@@ -46,7 +49,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
   const { t } = useLanguage();
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (!item.roles) return true;
-    return profile ? item.roles.includes(profile.role) : false;
+    return profile ? roleSatisfiesAny(profile.role, item.roles) : false;
   });
 
   return (
@@ -61,7 +64,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
           <span>
             <span className="block text-base font-semibold">Quiksol</span>
             <span className={`block text-xs ${isAdminArea ? "text-orange-200" : "text-slate-400"}`}>
-              {profile?.role === "admin" ? t("app.subtitle.admin") : t("app.subtitle.employee")}
+              {isAdmin(profile?.role) ? t("app.subtitle.admin") : t("app.subtitle.employee")}
             </span>
           </span>
         </Link>

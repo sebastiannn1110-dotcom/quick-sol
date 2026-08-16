@@ -6,6 +6,7 @@ import { logger } from "@/lib/logger/logger";
 import { isDemoModeAllowed, isSupabaseConfigured } from "@/lib/security/env";
 import { requestIp } from "@/lib/security/rateLimit";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { roleSatisfiesAny } from "@/lib/auth/roles";
 
 export interface AuthContext {
   user: User | null;
@@ -163,7 +164,7 @@ export async function requireRole(
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
 
-  if (!allowedRoles.includes(context.profile.role)) {
+  if (!roleSatisfiesAny(context.profile.role, allowedRoles)) {
     await logger.security({
       traceId: context.requestMeta.traceId,
       requestId: context.requestMeta.requestId,

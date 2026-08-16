@@ -6,6 +6,7 @@ import { Mail, MessageCircle, Search } from "lucide-react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
 import { useProfile } from "@/components/ProfileProvider";
+import { isAdmin } from "@/lib/auth/roles";
 
 interface EmployeeWithCounts extends Profile {
   uploadCount: number;
@@ -81,7 +82,7 @@ function EmployeesContent() {
   }
 
   const employee = detail?.employee;
-  const canEmail = currentUser?.role === "admin" && employee?.email;
+  const canEmail = isAdmin(currentUser?.role) && employee?.email;
 
   return (
     <div className="space-y-6">

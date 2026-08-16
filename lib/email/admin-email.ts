@@ -3,6 +3,7 @@ import { z } from "zod";
 import { adminMessageHtml } from "@/lib/email/content";
 import { sendEmail, type SendEmailResult } from "@/lib/email/email-service";
 import type { EmailAttachmentPayload } from "@/lib/email/attachments";
+import type { UserRole } from "@/lib/types";
 
 export const adminEmailSendSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -31,7 +32,7 @@ export interface AdminEmailRecipient {
   id: string;
   full_name: string;
   email: string;
-  role: "admin" | "manager" | "employee";
+  role: UserRole;
   department: string | null;
   region: string | null;
   source?: "profile" | "manual";

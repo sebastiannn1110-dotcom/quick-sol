@@ -42,12 +42,12 @@ export default function AdminDevPage() {
 
   async function loadDashboard() {
     const responses = await Promise.all([
-      fetch("/api/superadmin/health", { cache: "no-store" }),
-      fetch("/api/superadmin/traffic?range=7d", { cache: "no-store" }),
-      fetch("/api/superadmin/security", { cache: "no-store" }),
-      fetch("/api/superadmin/imports", { cache: "no-store" }),
-      fetch("/api/superadmin/ai", { cache: "no-store" }),
-      fetch("/api/superadmin/chat", { cache: "no-store" })
+      fetch("/api/superadmin/health", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/superadmin/traffic?range=7d", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/superadmin/security", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/superadmin/imports", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/superadmin/ai", { cache: "no-store", credentials: "same-origin" }),
+      fetch("/api/superadmin/chat", { cache: "no-store", credentials: "same-origin" })
     ]);
     if (!responses.every((response) => response.ok)) {
       const denied = responses.some((response) => response.status === 401 || response.status === 403);
@@ -73,12 +73,12 @@ export default function AdminDevPage() {
   }, []);
 
   async function logout() {
-    await fetch("/api/superadmin/logout", { method: "POST" });
+    await fetch("/api/superadmin/logout", { method: "POST", credentials: "same-origin" });
     window.location.assign("/login");
   }
 
   async function jobAction(jobId: string, action: "safe-finalize" | "retry" | "cancel") {
-    await fetch(`/api/superadmin/jobs/${jobId}/${action}`, { method: "POST" });
+    await fetch(`/api/superadmin/jobs/${jobId}/${action}`, { method: "POST", credentials: "same-origin" });
     await loadDashboard();
   }
 

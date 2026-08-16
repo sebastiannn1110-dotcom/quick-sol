@@ -52,6 +52,7 @@ const SAFE_BLOB_FALLBACK_MAX_BYTES = 100 * 1024 * 1024;
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     cache: "no-store",
+    credentials: "same-origin",
     ...init,
     headers: init?.body ? { "Content-Type": "application/json", ...init.headers } : init?.headers
   });
@@ -176,7 +177,7 @@ export default function DatabaseSafetyCenter() {
       if (!browser.showSaveFilePicker && backup.size_bytes > SAFE_BLOB_FALLBACK_MAX_BYTES) {
         throw new Error("BACKUP_TOO_LARGE_FOR_BLOB_FALLBACK: usa un navegador compatible con descarga directa a disco.");
       }
-      const response = await fetch(`/api/admindev/database-safety/backups/${backup.id}/download`, { method: "POST", cache: "no-store" });
+      const response = await fetch(`/api/admindev/database-safety/backups/${backup.id}/download`, { method: "POST", cache: "no-store", credentials: "same-origin" });
       if (!response.ok || !response.body) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(String(payload.error ?? "BACKUP_DOWNLOAD_FAILED"));

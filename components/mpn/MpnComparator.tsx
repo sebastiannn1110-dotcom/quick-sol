@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import SupplierRecommendationCard from "@/components/mpn/SupplierRecommendationCard";
 import { useProfile } from "@/components/ProfileProvider";
+import { isAdmin } from "@/lib/auth/roles";
 
 interface ComparisonPayload {
   mpn: string;
@@ -170,7 +171,7 @@ export default function MpnComparator({ initialMpn = "" }: { initialMpn?: string
                         <td className="px-4 py-3 text-slate-600">{upload?.original_file_name ?? "-"}</td>
                         <td className="px-4 py-3 text-slate-600">{nested(offer, "profiles", "full_name")}</td>
                         <td className="px-4 py-3">
-                          {profile?.role === "admin" && upload?.id ? (
+                          {isAdmin(profile?.role) && upload?.id ? (
                             <a className="text-sm font-semibold text-orange-700" href={`/api/admin/uploads/${upload.id}/download`} target="_blank" rel="noreferrer">
                               Abrir
                             </a>

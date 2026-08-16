@@ -10,6 +10,7 @@ import { EMPTY_OPPORTUNITIES_RESULT } from "@/components/opportunities/opportuni
 import type { AccountClient } from "@/lib/clients/clients";
 import type { SalesOpportunitiesWithConfidenceResult } from "@/lib/opportunities/quality";
 import { isExpectedAbort } from "@/lib/request-lifecycle";
+import { canManageClients } from "@/lib/security/permissions";
 
 export default function ClientsDirectory({ adminMode = false }: { adminMode?: boolean }) {
   const { t } = useLanguage();
@@ -63,7 +64,7 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
     return () => controller.abort();
   }, [adminMode, t]);
 
-  const canManage = profile?.role === "admin" || profile?.role === "manager";
+  const canManage = profile ? canManageClients(profile.role) : false;
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

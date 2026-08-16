@@ -6,8 +6,9 @@ import { requireRole } from "@/lib/auth/context";
 import { getSupabasePublishableKey } from "@/lib/security/env";
 import { serverSupabaseClientOptions } from "@/lib/supabase/node-client-options";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { SUPER_ADMIN_DEV_ROLE } from "@/lib/auth/roles";
 
-export const SUPER_ADMIN_DEV_ROLE = "super_admin_dev" as const;
+export { SUPER_ADMIN_DEV_ROLE };
 export const CRITICAL_CACHE_CONTROL = "no-store, max-age=0";
 
 export type SuperadminContext = AuthContext & {

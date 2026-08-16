@@ -4,6 +4,8 @@ import type {
   OpportunityDatasetScope,
   OpportunitySelectedRole
 } from "@/lib/opportunity-finder/types";
+import { isAdmin } from "@/lib/auth/roles";
+import type { UserRole } from "@/lib/types";
 
 export const SINGLE_FILE_HISTORY_ROLES = new Set<OpportunitySelectedRole>([
   "received_history",
@@ -58,8 +60,8 @@ export function oppositeDatasetRole(role: OpportunitySelectedRole) {
   return null;
 }
 
-export function datasetScopeForRole(role: string): OpportunityDatasetScope {
-  if (role === "admin") return "company";
+export function datasetScopeForRole(role: UserRole): OpportunityDatasetScope {
+  if (isAdmin(role)) return "company";
   if (role === "manager") return "team";
   return "own";
 }

@@ -3,6 +3,7 @@ import { matchOpportunityRows } from "@/lib/opportunity-finder/matcher";
 import { buildOpportunityFinderIdempotencyKey } from "@/lib/opportunity-finder/pipeline";
 import {
   buildPlatformSnapshotRows,
+  datasetScopeForRole,
   datasetVersionFromManifest,
   oppositeDatasetRole,
   type OpportunityPlatformEntityRow
@@ -81,6 +82,13 @@ function row(input: {
 }
 
 describe("Opportunity Finder single-file mode", () => {
+  it("gives Super Admin Dev the same company dataset scope as admin", () => {
+    expect(datasetScopeForRole("admin")).toBe("company");
+    expect(datasetScopeForRole("super_admin_dev")).toBe("company");
+    expect(datasetScopeForRole("manager")).toBe("team");
+    expect(datasetScopeForRole("employee")).toBe("own");
+  });
+
   it("selects the opposite authorized universe for every supported role", () => {
     expect(oppositeDatasetRole("demand")).toBe("stock");
     for (const role of ["stock", "excess", "supplier_offer", "received_history", "purchase_history", "quote_history", "sales_history"] as const) {
