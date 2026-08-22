@@ -55,7 +55,7 @@ export function superadminConfigStatus() {
     route: "/admindev",
     authorization: "supabase_auth_profile_role",
     requiredRole: SUPER_ADMIN_DEV_ROLE,
-    bootstrapPasswordConfigured: Boolean(process.env.QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD),
+    bootstrapPasswordConfigured: Boolean(process.env.QUIKSOL_ADMIN_PROVISIONING_PASSWORD),
     auditSecretConfigured: Boolean(process.env.DATABASE_SAFETY_AUDIT_SECRET),
     backupDatabaseConfigured: Boolean(process.env.QUIKSOL_BACKUP_DATABASE_URL),
     mfaCapable: true,

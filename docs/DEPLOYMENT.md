@@ -7,24 +7,28 @@
 3. Run `supabase/migrations/20260624010000_observability_logs.sql`.
 4. Confirm RLS is enabled on all public tables.
 5. Confirm the private Storage bucket `excel-uploads` exists.
-6. Create the first admin user in Supabase Auth.
-7. Update that user's `profiles.role` to `admin`.
-8. Provision the default admin logins from a trusted machine:
+6. Prepare admin provisioning from a trusted machine. The default command is always non-mutating:
 
 ```bash
 npm run provision:admins
 ```
 
-This command uses `SUPABASE_SERVICE_ROLE_KEY` only on the server/local machine. It creates or updates:
-
-- `admin@quiksol.local`
-- `braian@admin.quiksol`
-
-To confirm both passwords can sign in through Supabase Auth, run:
+It reports `DRY RUN / PREPARED ONLY / NO CHANGES`; it does not connect to Supabase or modify Auth/profiles. Mutating or remote-inspection modes require one exact allowlisted target and the expected Supabase project ref:
 
 ```bash
-npm run provision:admins -- --verify-login
+npm run provision:admins:inspect -- --target-email=<exact-email> --project-ref=<expected-ref>
+npm run provision:admins:apply -- --target-email=<exact-email> --project-ref=<expected-ref>
 ```
+
+For an existing user, apply updates only the approved metadata/profile and preserves the current password. Password rotation is a separate action:
+
+```bash
+npm run provision:admins:rotate -- --target-email=<exact-email> --project-ref=<expected-ref>
+```
+
+Rotation requires `QUIKSOL_ADMIN_ROTATION_PASSWORD`; new-user creation requires `QUIKSOL_ADMIN_PROVISIONING_PASSWORD`. Supply either only as a temporary process/CI secret. Never put a real value in `.env`, CLI arguments, source code, logs, screenshots, or documentation. The script rejects `--password`, refuses partial targets, validates the project ref against `NEXT_PUBLIC_SUPABASE_URL`, and removes temporary secret variables from its process before exiting.
+
+Removing an exposed credential from the current source does not remove it from Git history. Treat every previous provisioning credential as compromised until it is rotated and the old value is confirmed invalid. See `docs/ADMIN_CREDENTIAL_HISTORY_CLEANUP_PLAN.md`; that plan must not be executed as part of ordinary provisioning.
 
 ## 2. Environment
 

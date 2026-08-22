@@ -2,7 +2,7 @@
 
 ## Alcance y autorización
 
-`/admindev` usa la sesión real de Supabase Auth. El proxy y cada API comprueban un perfil activo con el rol exacto `super_admin_dev`; `employee`, `manager` y `admin` no heredan acceso. El login paralelo antiguo queda deshabilitado. La provisión está preparada en `scripts/provision-admin-users.ts --super-admin-dev`, pero requiere `QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD`; sin el segundo flag `--apply` solo informa la preparación y no modifica usuarios.
+`/admindev` usa la sesión real de Supabase Auth. El proxy y cada API comprueban un perfil activo con el rol exacto `super_admin_dev`; `employee`, `manager` y `admin` no heredan acceso. El login paralelo antiguo queda deshabilitado. La provisión usa un target exacto y project ref explícito; sin `--apply` es siempre dry-run. Crear un usuario requiere `QUIKSOL_ADMIN_PROVISIONING_PASSWORD` temporal y rotar uno existente requiere, además, `--rotate-password` y `QUIKSOL_ADMIN_ROTATION_PASSWORD`. Los secretos no se aceptan por CLI ni desde archivos `.env`.
 
 Las APIs mutativas exigen mismo `Origin`, aplican rate limit persistente y responden con `Cache-Control: no-store`. La reautenticación se hace con Supabase Auth. La contraseña, el access token y la conexión PostgreSQL nunca se guardan ni se registran.
 

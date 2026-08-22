@@ -128,12 +128,15 @@ describe("Database Safety Center policy", () => {
     expect(DATABASE_DESTRUCTION_PHRASE).toBe("ELIMINAR INFORMACION QUIKSOL");
   });
 
-  it("never embeds the bootstrap password and provisions it only through a private env variable", () => {
+  it("keeps provisioning dry by default and accepts secrets only through private env variables", () => {
     const provisioning = readFileSync(path.join(process.cwd(), "scripts/provision-admin-users.ts"), "utf8");
-    expect(provisioning).toContain("QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD");
-    expect(provisioning).toContain("--super-admin-dev");
+    expect(provisioning).toContain("QUIKSOL_ADMIN_PROVISIONING_PASSWORD");
+    expect(provisioning).toContain("QUIKSOL_ADMIN_ROTATION_PASSWORD");
     expect(provisioning).toContain("--apply");
+    expect(provisioning).toContain("--target-email=");
+    expect(provisioning).toContain("--project-ref=");
+    expect(provisioning).toContain("--rotate-password");
     expect(provisioning).toContain('role: "super_admin_dev"');
-    expect(provisioning).not.toContain("NEXT_PUBLIC_QUIKSOL_SUPERADMIN_BOOTSTRAP_PASSWORD");
+    expect(provisioning).not.toContain("NEXT_PUBLIC_QUIKSOL_ADMIN_PROVISIONING_PASSWORD");
   });
 });
