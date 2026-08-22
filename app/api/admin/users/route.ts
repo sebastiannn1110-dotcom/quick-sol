@@ -9,11 +9,13 @@ import type { UserRole } from "@/lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const managedRoleSchema = z.enum(["admin", "manager", "employee", "super_admin_dev"]);
+
 const updateUserSchema = z.object({
   userId: z.string().uuid(),
   full_name: z.string().min(1).optional(),
   email: z.string().email().optional(),
-  role: z.enum(["admin", "manager", "employee"]).optional(),
+  role: managedRoleSchema.optional(),
   department: z.string().nullable().optional(),
   region: z.string().nullable().optional(),
   bio: z.string().trim().max(500).nullable().optional(),
@@ -25,7 +27,7 @@ const updateUserSchema = z.object({
 const inviteUserSchema = z.object({
   email: z.string().email(),
   full_name: z.string().min(1),
-  role: z.enum(["admin", "manager", "employee"]).default("employee"),
+  role: managedRoleSchema.default("employee"),
   department: z.string().optional(),
   region: z.string().optional(),
   bio: z.string().trim().max(500).optional(),
@@ -65,6 +67,9 @@ export async function POST(request: Request) {
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues.map((issue) => issue.message).join(" ") }, { status: 400 });
   }
+  if (body.data.role === "super_admin_dev" && !isSuperAdminDev(context.profile.role)) {
+    return NextResponse.json({ error: "Only Super Admin Dev can create a Super Admin Dev profile." }, { status: 403 });
+  }
 
   if (context.isDemoMode) {
     return NextResponse.json({ error: "Configure Supabase service role to invite users." }, { status: 503 });
@@ -79,10 +84,7 @@ export async function POST(request: Request) {
     password,
     email_confirm: true,
     user_metadata: {
-      full_name: body.data.full_name,
-      role: body.data.role,
-      department: body.data.department,
-      region: body.data.region
+      full_name: body.data.full_name
     }
   });
 
@@ -106,10 +108,16 @@ export async function POST(request: Request) {
 
   if (profileError) return NextResponse.json({ error: "User was created, but profile could not be saved." }, { status: 500 });
 
-  await logAuditEvent(context, "admin_created_employee", "profile", data.user.id, {
+  await logAuditEvent(
+    context,
+    body.data.role === "super_admin_dev" ? "superadmin_created_privileged_user" : "admin_created_employee",
+    "profile",
+    data.user.id,
+    {
     email: body.data.email,
     role: body.data.role
-  });
+    }
+  );
 
   return NextResponse.json({ user: profile, temporaryPassword: password });
 }
@@ -121,6 +129,9 @@ export async function PATCH(request: Request) {
   const body = updateUserSchema.safeParse(await request.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues.map((issue) => issue.message).join(" ") }, { status: 400 });
+  }
+  if (body.data.role === "super_admin_dev" && !isSuperAdminDev(context.profile.role)) {
+    return NextResponse.json({ error: "Only Super Admin Dev can promote a profile to Super Admin Dev." }, { status: 403 });
   }
 
   if (body.data.userId === context.profile.id && isSuperAdminDev(context.profile.role) && body.data.role) {
@@ -154,10 +165,6 @@ export async function PATCH(request: Request) {
       .in("role", ["admin", "super_admin_dev"])
       .eq("is_active", true);
 
-    if (isSuperAdminDev(targetRole) && (body.data.role || body.data.is_active === false)) {
-      return NextResponse.json({ error: "Super Admin Dev cannot be demoted or deactivated from the admin screen." }, { status: 403 });
-    }
-
     if ((count ?? 0) <= 1 && isAdmin(targetRole)) {
       return NextResponse.json({ error: "Cannot deactivate or demote the last active admin." }, { status: 400 });
     }
@@ -187,12 +194,11 @@ export async function PATCH(request: Request) {
     if (authUpdateError) return NextResponse.json({ error: "Unable to update auth email." }, { status: 500 });
   }
 
-  const { data, error } = await context.supabase!
-    .from("profiles")
-    .update(updatePayload)
-    .eq("id", body.data.userId)
-    .select("*")
-    .single();
+  const { data, error } = await context.supabase!.rpc("update_profile_admin_v1", {
+    target_profile_id: body.data.userId,
+    profile_patch: updatePayload,
+    confirm_self_deactivate: body.data.confirmSelfDeactivate === true
+  });
 
   if (error) return NextResponse.json({ error: "Unable to update user." }, { status: 500 });
 
@@ -237,7 +243,11 @@ export async function DELETE(request: Request) {
 
   if (context.isDemoMode) return NextResponse.json({ ok: true, demo: true });
 
-  const { error } = await context.supabase!.from("profiles").update({ is_active: false }).eq("id", body.data.userId);
+  const { error } = await context.supabase!.rpc("update_profile_admin_v1", {
+    target_profile_id: body.data.userId,
+    profile_patch: { is_active: false },
+    confirm_self_deactivate: false
+  });
   if (error) return NextResponse.json({ error: "Unable to deactivate user." }, { status: 500 });
 
   await logAuditEvent(context, "admin_deactivated_employee", "profile", body.data.userId, { softDelete: true });

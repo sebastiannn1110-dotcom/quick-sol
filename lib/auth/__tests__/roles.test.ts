@@ -5,6 +5,7 @@ import {
   getRoleCapabilities,
   isAdmin,
   isSuperAdminDev,
+  roleHasCapability,
   roleSatisfiesAny
 } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/types";
@@ -44,5 +45,17 @@ describe("central role capabilities", () => {
     expect(roleSatisfiesAny("manager", ["admin", "manager"])).toBe(true);
     expect(roleSatisfiesAny("employee", ["admin", "manager", "employee"])).toBe(true);
     expect(roleSatisfiesAny("super_admin_dev", ["admin", "manager"])).toBe(true);
+  });
+
+  it.each([
+    ["AUTHENTICATED", ["employee", "manager", "admin", "super_admin_dev"]],
+    ["ADMIN", ["admin", "super_admin_dev"]],
+    ["SUPERADMIN", ["super_admin_dev"]],
+    ["MANAGE_CLIENTS", ["manager", "admin", "super_admin_dev"]],
+    ["OF_TENANT_ADMIN", ["admin", "super_admin_dev"]]
+  ] as const)("keeps the %s capability on its exact allowlist", (capability, allowed) => {
+    for (const role of roles) {
+      expect(roleHasCapability(role, capability)).toBe((allowed as readonly UserRole[]).includes(role));
+    }
   });
 });

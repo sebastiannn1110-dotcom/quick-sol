@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
+import { useProfile } from "@/components/ProfileProvider";
+import { isSuperAdminDev } from "@/lib/auth/roles";
 import type { Profile } from "@/lib/types";
 import UserAvatar from "@/components/chat/UserAvatar";
 
@@ -31,6 +33,8 @@ const EMPTY_FORM: UserForm = {
 
 export default function AdminUsersPage() {
   const { t } = useLanguage();
+  const { profile: currentProfile } = useProfile();
+  const hasPrivilegedRoleManagement = isSuperAdminDev(currentProfile?.role);
   const [users, setUsers] = useState<Profile[]>([]);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<UserForm>(EMPTY_FORM);
@@ -178,12 +182,16 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3 text-slate-600">{user.is_active ? t("admin.active") : t("admin.inactive")}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">
-                        <button onClick={() => openEdit(user)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
-                          Edit
-                        </button>
-                        <button onClick={() => setActive(user, !user.is_active)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
-                          {user.is_active ? t("admin.deactivate") : t("admin.activate")}
-                        </button>
+                        {user.role !== "super_admin_dev" || hasPrivilegedRoleManagement ? (
+                          <>
+                            <button onClick={() => openEdit(user)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
+                              Edit
+                            </button>
+                            <button onClick={() => setActive(user, !user.is_active)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
+                              {user.is_active ? t("admin.deactivate") : t("admin.activate")}
+                            </button>
+                          </>
+                        ) : null}
                         <a href={`/admin/uploads?employee=${user.id}`} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
                           View Uploads
                         </a>
@@ -229,6 +237,7 @@ export default function AdminUsersPage() {
                     <option value="employee">{t("role.employee")}</option>
                     <option value="manager">{t("role.manager")}</option>
                     <option value="admin">{t("role.admin")}</option>
+                    {hasPrivilegedRoleManagement ? <option value="super_admin_dev">Super Admin Dev</option> : null}
                   </select>
                 </label>
                 <label className="grid gap-1 text-sm font-medium text-slate-700">
