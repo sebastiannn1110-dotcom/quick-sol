@@ -8,6 +8,7 @@ function source(relativePath: string) {
 
 const migration = source("supabase/migrations/20260823120000_harden_import_job_pipeline.sql");
 const grantsHotfix = source("supabase/migrations/20260823213620_harden_import_table_grants.sql");
+const expiredLeaseHotfix = source("supabase/migrations/20260823230602_fix_import_fail_expired_lease.sql");
 const worker = source("lib/upload/import-worker.ts");
 
 describe("Ronda 4 trusted import pipeline", () => {
@@ -71,6 +72,17 @@ describe("Ronda 4 trusted import pipeline", () => {
     expect(recovery).toContain("delete from public.import_job_staging_rows");
     expect(claim).toContain("lease_token=lease_token+1");
     expect(claim).toContain("for update of job skip locked limit 1");
+  });
+
+  it("requires a non-null unexpired lease in every active worker mutator", () => {
+    expect(expiredLeaseHotfix.match(/create or replace function public\./g)).toHaveLength(5);
+    expect(expiredLeaseHotfix.match(/job\.lease_expires_at is null/g)).toHaveLength(5);
+    expect(expiredLeaseHotfix.match(/job\.lease_expires_at<=clock_timestamp\(\)/g)).toHaveLength(5);
+    expect(expiredLeaseHotfix).toContain("create or replace function public.fail_import_job_v2(");
+    expect(expiredLeaseHotfix).toContain("raise exception 'IMPORT_WORKER_FENCED' using errcode='55000'");
+    expect(expiredLeaseHotfix).not.toContain("create or replace function public.renew_import_job_lease_v2");
+    expect(expiredLeaseHotfix).not.toContain("generation=generation+1");
+    expect(expiredLeaseHotfix).not.toMatch(/\b(?:grant|revoke)\b/);
   });
 
   it("stages and validates all rows before the transactional replacement", () => {
