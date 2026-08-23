@@ -54,11 +54,40 @@ $$;
 
 do $$
 begin
+  if exists(
+    select 1
+    from pg_class relation
+    join pg_namespace namespace on namespace.oid=relation.relnamespace
+    cross join lateral aclexplode(coalesce(relation.relacl,acldefault('r',relation.relowner))) privilege
+    where namespace.nspname='public'
+      and relation.relname in ('import_jobs','upload_batches')
+      and privilege.grantee=(select oid from pg_roles where rolname='anon')
+  ) then
+    raise exception 'ANON_IMPORT_TABLE_PRIVILEGES_PRESENT';
+  end if;
+  if exists(
+    select 1
+    from pg_class relation
+    join pg_namespace namespace on namespace.oid=relation.relnamespace
+    cross join lateral aclexplode(coalesce(relation.relacl,acldefault('r',relation.relowner))) privilege
+    where namespace.nspname='public'
+      and relation.relname in ('import_jobs','upload_batches')
+      and privilege.grantee=(select oid from pg_roles where rolname='authenticated')
+      and privilege.privilege_type<>'SELECT'
+  ) then
+    raise exception 'AUTHENTICATED_NON_READ_IMPORT_PRIVILEGES_PRESENT';
+  end if;
+  if not has_table_privilege('authenticated','public.import_jobs','select')
+     or not has_table_privilege('authenticated','public.upload_batches','select') then
+    raise exception 'AUTHENTICATED_IMPORT_READ_ACCESS_MISSING';
+  end if;
   if has_table_privilege('authenticated','public.import_jobs','insert')
      or has_table_privilege('authenticated','public.import_jobs','update')
      or has_table_privilege('authenticated','public.import_jobs','delete')
      or has_table_privilege('authenticated','public.upload_batches','insert')
-     or has_table_privilege('authenticated','public.upload_batches','update') then
+     or has_table_privilege('authenticated','public.upload_batches','update')
+     or has_table_privilege('authenticated','public.import_jobs','truncate')
+     or has_table_privilege('authenticated','public.upload_batches','truncate') then
     raise exception 'AUTHENTICATED_IMPORT_LIFECYCLE_DML_PRESENT';
   end if;
 end;
@@ -223,9 +252,24 @@ select public.finalize_import_upload_v2(
   '30000000-0000-4000-8000-000000000002'
 );
 create temporary table stale_claim_a as select * from public.claim_import_job_v2('stale-a',30);
+select public.stage_import_job_rows_v2(
+  '30000000-0000-4000-8000-000000000002','stale-a',1,
+  (select lease_token from stale_claim_a),'sheet',
+  '[{"rowKey":"stale-a-sheet","payload":{"id":"60000000-0000-4000-8000-000000000009","sheet_name":"STALE-A","detected_header_row":1,"total_rows":1,"valid_rows":1,"invalid_rows":0,"detected_category":"Generic","recognized_columns":["MPN"]}}]'
+);
 update public.import_jobs set lease_expires_at=clock_timestamp()-interval '1 second'
 where id='30000000-0000-4000-8000-000000000002';
 select public.recover_stale_import_jobs_v2('recovery-worker',25);
+do $$
+begin
+  if exists(
+    select 1 from public.import_job_staging_rows
+    where job_id='30000000-0000-4000-8000-000000000002'
+  ) then
+    raise exception 'STALE_STAGING_NOT_CLEANED';
+  end if;
+end;
+$$;
 create temporary table stale_claim_b as select * from public.claim_import_job_v2('stale-b',120);
 
 insert into public.business_records(
@@ -236,16 +280,78 @@ insert into public.business_records(
 );
 
 do $$
+declare
+  stale_error text;
 begin
   if (select count(*) from stale_claim_b)<>1 then raise exception 'STALE_JOB_NOT_RECLAIMED'; end if;
+  if (select generation from stale_claim_b)<>(select generation from stale_claim_a) then
+    raise exception 'STALE_RECOVERY_CHANGED_LOGICAL_GENERATION';
+  end if;
   if (select lease_token from stale_claim_b)<=(select lease_token from stale_claim_a) then raise exception 'FENCE_TOKEN_NOT_MONOTONIC'; end if;
+  if (select lease_owner from stale_claim_b)<>'stale-b' or (select attempts from stale_claim_b)<>2 then
+    raise exception 'NEW_WORKER_CLAIM_STATE_INVALID';
+  end if;
+  begin
+    perform public.stage_import_job_rows_v2(
+      '30000000-0000-4000-8000-000000000002','stale-a',1,
+      (select lease_token from stale_claim_a),'sheet','[]'
+    );
+    raise exception 'STALE_STAGE_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_WORKER_FENCED' then raise exception 'STALE_STAGE_WRONG_REJECTION: %',stale_error; end if;
+  end;
   begin
     perform public.update_import_job_progress_v2(
       '30000000-0000-4000-8000-000000000002','stale-a',1,
       (select lease_token from stale_claim_a),'{"totalRows":1}'
     );
-    raise exception 'STALE_WORKER_WRITE_WAS_ALLOWED';
-  exception when sqlstate '55000' then null;
+    raise exception 'STALE_PROGRESS_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_WORKER_FENCED' then raise exception 'STALE_PROGRESS_WRONG_REJECTION: %',stale_error; end if;
+  end;
+  begin
+    perform public.validate_import_job_staging_v2(
+      '30000000-0000-4000-8000-000000000002','stale-a',1,
+      (select lease_token from stale_claim_a),64,repeat('a',64)
+    );
+    raise exception 'STALE_VALIDATE_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_WORKER_FENCED' then raise exception 'STALE_VALIDATE_WRONG_REJECTION: %',stale_error; end if;
+  end;
+  begin
+    perform public.publish_import_job_v2(
+      '30000000-0000-4000-8000-000000000002','stale-a',1,
+      (select lease_token from stale_claim_a),
+      '{"validRows":1,"invalidRows":0,"totalRows":1,"sheetCount":1}'
+    );
+    raise exception 'STALE_PUBLISH_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_WORKER_FENCED' then raise exception 'STALE_PUBLISH_WRONG_REJECTION: %',stale_error; end if;
+  end;
+  begin
+    perform public.fail_import_job_v2(
+      '30000000-0000-4000-8000-000000000002','stale-a',1,
+      (select lease_token from stale_claim_a),'STALE_WORKER_FAILURE',false
+    );
+    raise exception 'STALE_FAIL_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_WORKER_FENCED' then raise exception 'STALE_FAIL_WRONG_REJECTION: %',stale_error; end if;
+  end;
+  update public.profiles set role='admin' where id='10000000-0000-4000-8000-000000000002';
+  begin
+    perform public.safe_finalize_import_job_v2(
+      '10000000-0000-4000-8000-000000000002',
+      '30000000-0000-4000-8000-000000000002','stale worker attempted finalize'
+    );
+    raise exception 'STALE_SAFE_FINALIZE_WAS_ALLOWED';
+  exception when sqlstate '55000' then
+    get stacked diagnostics stale_error=message_text;
+    if stale_error<>'IMPORT_SAFE_FINALIZE_NOT_AVAILABLE' then raise exception 'STALE_FINALIZE_WRONG_REJECTION: %',stale_error; end if;
   end;
 end;
 $$;

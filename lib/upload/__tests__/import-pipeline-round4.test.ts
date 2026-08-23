@@ -7,6 +7,7 @@ function source(relativePath: string) {
 }
 
 const migration = source("supabase/migrations/20260823120000_harden_import_job_pipeline.sql");
+const grantsHotfix = source("supabase/migrations/20260823213620_harden_import_table_grants.sql");
 const worker = source("lib/upload/import-worker.ts");
 
 describe("Ronda 4 trusted import pipeline", () => {
@@ -18,6 +19,16 @@ describe("Ronda 4 trusted import pipeline", () => {
     expect(migration).toMatch(/revoke all on function public\.create_import_upload_v2[\s\S]*?from public,anon,authenticated/);
     expect(migration).toContain("grant execute on function public.create_import_upload_v2");
     expect(migration).toContain("to service_role");
+  });
+
+  it("removes anonymous access and leaves authenticated sessions read-only", () => {
+    expect(grantsHotfix.match(/revoke all privileges/g)).toHaveLength(4);
+    expect(grantsHotfix).toContain("on table public.import_jobs");
+    expect(grantsHotfix).toContain("on table public.upload_batches");
+    expect(grantsHotfix.match(/from anon/g)).toHaveLength(2);
+    expect(grantsHotfix.match(/from authenticated/g)).toHaveLength(2);
+    expect(grantsHotfix).toMatch(/grant select[\s\S]*?to authenticated/);
+    expect(grantsHotfix).not.toMatch(/service_role|create policy|drop policy|alter table/);
   });
 
   it("issues provenance server-side and validates Storage identity before queueing", () => {
@@ -37,6 +48,29 @@ describe("Ronda 4 trusted import pipeline", () => {
     expect(migration).toContain("job.lease_token<>input_lease_token");
     expect(migration).toContain("IMPORT_WORKER_FENCED");
     expect(migration).toContain("IMPORT_JOB_SUPERSEDED");
+  });
+
+  it("keeps logical generations separate from stale-lease ownership fencing", () => {
+    const retry = migration.slice(
+      migration.indexOf("create or replace function public.request_import_job_retry_v2"),
+      migration.indexOf("create or replace function public.recover_stale_import_jobs_v2")
+    );
+    const recovery = migration.slice(
+      migration.indexOf("create or replace function public.recover_stale_import_jobs_v2"),
+      migration.indexOf("create or replace function public.claim_import_job_v2")
+    );
+    const claim = migration.slice(
+      migration.indexOf("create or replace function public.claim_import_job_v2"),
+      migration.indexOf("create or replace function public.renew_import_job_lease_v2")
+    );
+
+    expect(retry).toContain("generation=generation+1");
+    expect(retry).toContain("lease_token=lease_token+1");
+    expect(recovery).not.toContain("generation=generation+1");
+    expect(recovery).toContain("lease_token=lease_token+1");
+    expect(recovery).toContain("delete from public.import_job_staging_rows");
+    expect(claim).toContain("lease_token=lease_token+1");
+    expect(claim).toContain("for update of job skip locked limit 1");
   });
 
   it("stages and validates all rows before the transactional replacement", () => {
