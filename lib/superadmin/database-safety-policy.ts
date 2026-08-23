@@ -39,6 +39,7 @@ function preserveTable(
 
 // This is an explicit allowlist. The order follows foreign-key dependencies from leaves to roots.
 export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] = [
+  deleteTable("import_job_staging_rows", "OPERATIONAL_DATA", 5, "Transient import staging can contain business data."),
   deleteTable("admin_email_attachments", "BUSINESS_DATA", 10, "Business email attachment metadata."),
   deleteTable("admin_email_messages", "BUSINESS_DATA", 20, "Business email messages."),
   deleteTable("ai_messages", "BUSINESS_DATA", 10, "AI conversation content."),
@@ -103,6 +104,7 @@ export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] 
   preserveTable("public", "system_logs", "AUDIT_DATA", "System observability is preserved."),
   preserveTable("public", "client_logs", "AUDIT_DATA", "Client observability is preserved."),
   preserveTable("public", "performance_logs", "AUDIT_DATA", "Performance evidence is preserved."),
+  preserveTable("public", "worker_runtime_heartbeats", "SYSTEM_EPHEMERAL", "Worker liveness contains no business payload and is preserved."),
   preserveTable("auth", "users", "AUTH_IDENTITY", "Supabase Auth identities are never part of the purge allowlist."),
   preserveTable("supabase_migrations", "schema_migrations", "MIGRATIONS_SCHEMA", "Migration history is never modified."),
   preserveTable("storage", "objects", "STORAGE_METADATA", "Storage metadata and physical blobs require a separate backup protocol."),

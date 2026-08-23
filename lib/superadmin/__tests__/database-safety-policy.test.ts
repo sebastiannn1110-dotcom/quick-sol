@@ -10,8 +10,10 @@ import {
 
 const baseMigrationPath = "supabase/migrations/20260816120000_super_admin_database_safety_center.sql";
 const migrationPath = "supabase/migrations/20260822140000_harden_database_safety_backend_evidence.sql";
+const roundFourMigrationPath = "supabase/migrations/20260823120000_harden_import_job_pipeline.sql";
 const baseMigration = readFileSync(path.join(process.cwd(), baseMigrationPath), "utf8");
 const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
+const roundFourMigration = readFileSync(path.join(process.cwd(), roundFourMigrationPath), "utf8");
 const normalized = migration.toLowerCase();
 
 const historicalPublicTables = [
@@ -20,7 +22,7 @@ const historicalPublicTables = [
   "business_upload_versions", "chat_attachments", "chat_conversation_members", "chat_conversations", "chat_messages",
   "client_logs", "client_private_details", "client_upload_assignments", "clients", "email_alert_rules",
   "email_notification_events", "file_schema_profiles", "import_errors", "import_job_error_summary", "import_job_errors",
-  "import_jobs", "observability_log_outbox", "opportunity_finder_allocations", "opportunity_finder_audit_events",
+  "import_job_staging_rows", "import_jobs", "observability_log_outbox", "opportunity_finder_allocations", "opportunity_finder_audit_events",
   "opportunity_finder_dataset_snapshot_rows", "opportunity_finder_dataset_snapshots", "opportunity_finder_demand_events",
   "opportunity_finder_demand_part_options", "opportunity_finder_files", "opportunity_finder_historical_signals",
   "opportunity_finder_jobs", "opportunity_finder_manufacturer_aliases", "opportunity_finder_manufacturer_registry_versions",
@@ -29,7 +31,8 @@ const historicalPublicTables = [
   "opportunity_finder_rejected_rows", "opportunity_finder_result_commercials", "opportunity_finder_result_financials",
   "opportunity_finder_results", "opportunity_finder_review_decisions", "opportunity_finder_rows",
   "opportunity_finder_supply_lots", "opportunity_finder_tenant_memberships", "opportunity_finder_tenants",
-  "password_reset_codes", "performance_logs", "profiles", "security_events", "system_logs", "upload_batches", "upload_sheets"
+  "password_reset_codes", "performance_logs", "profiles", "security_events", "system_logs", "upload_batches", "upload_sheets",
+  "worker_runtime_heartbeats"
 ].sort();
 
 const newSafetyTables = [
@@ -37,13 +40,13 @@ const newSafetyTables = [
 ].sort();
 
 describe("Database Safety Center policy", () => {
-  it("covers the exact 60 existing public tables and four new protected safety tables", () => {
+  it("covers the exact 62 existing public tables and four protected safety tables", () => {
     const publicTables = DATABASE_SAFETY_TABLE_POLICY.filter((entry) => entry.schema === "public").map((entry) => entry.table);
     expect([...new Set(publicTables)].sort()).toEqual([...historicalPublicTables, ...newSafetyTables].sort());
-    expect(publicTables).toHaveLength(64);
+    expect(publicTables).toHaveLength(66);
   });
 
-  it("derives the 60-table baseline from the actual local migration corpus", () => {
+  it("derives the 62-table baseline from the actual local migration corpus", () => {
     const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
     const corpus = readdirSync(migrationsDirectory)
       .filter((name) => name.endsWith(".sql") && ![path.basename(migrationPath), path.basename(baseMigrationPath)].includes(name))
@@ -57,16 +60,22 @@ describe("Database Safety Center policy", () => {
   it("keeps the TypeScript and SQL catalogs synchronized", () => {
     const sqlTables = [...baseMigration.matchAll(/\('([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
       .map((match) => `${match[1]}.${match[2]}`);
+    const roundFourTables = [...roundFourMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+      .map((match) => `${match[1]}.${match[2]}`);
     const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
-    expect([...new Set(sqlTables)].sort()).toEqual([...policyTables].sort());
+    expect([...new Set([...sqlTables, ...roundFourTables])].sort()).toEqual([...policyTables].sort());
   });
 
-  it("uses an explicit 44-table DELETE allowlist and preserves identity, security and observability", () => {
-    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(44);
+  it("uses an explicit 45-table DELETE allowlist and preserves identity, security and observability", () => {
+    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(45);
+    expect(DATABASE_SAFETY_DELETE_TABLES.map((entry) => `${entry.schema}.${entry.table}`)).toContain(
+      "public.import_job_staging_rows"
+    );
     expect(DATABASE_SAFETY_PROTECTED_TABLES.map((entry) => `${entry.schema}.${entry.table}`)).toEqual(expect.arrayContaining([
       "public.profiles", "auth.users", "supabase_migrations.schema_migrations", "storage.objects", "storage.buckets",
       "public.database_safety_audit_events", "public.audit_logs", "public.security_events",
-      "public.system_logs", "public.client_logs", "public.performance_logs", "public.api_rate_limits"
+      "public.system_logs", "public.client_logs", "public.performance_logs", "public.api_rate_limits",
+      "public.worker_runtime_heartbeats"
     ]));
   });
 

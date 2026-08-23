@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { assertCriticalSameOrigin, requireSuperadmin, superadminJson } from "@/lib/superadmin/auth";
 import { logger } from "@/lib/logger/logger";
 import { requestIp } from "@/lib/security/rateLimit";
+import { importLifecycleError } from "@/lib/upload/lifecycle-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,29 +13,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
-  const cancelledAt = new Date().toISOString();
-  const { data: job, error } = await context.service
-    .from("import_jobs")
-    .update({
-      status: "cancelled",
-      cancel_requested: true,
-      error_message: "Cancelled by superadmin.",
-      locked_at: null,
-      locked_by: null,
-      worker_id: null,
-      cancelled_at: cancelledAt,
-      updated_at: cancelledAt
-    })
-    .eq("id", id)
-    .select("id,upload_batch_id")
-    .maybeSingle();
-  if (error || !job) return superadminJson({ error: "Unable to cancel job." }, { status: 500 });
-
-  await context.service.from("upload_batches").update({
-    status: "cancelled",
-    error_message: "Cancelled by superadmin.",
-    cancelled_at: cancelledAt
-  }).eq("id", job.upload_batch_id);
+  const { data: job, error } = await context.service.rpc("request_import_job_cancel_v2", {
+    input_actor_id: context.profile.id,
+    input_job_id: id
+  });
+  if (error) {
+    const mapped = importLifecycleError(error, "Unable to cancel job.");
+    return superadminJson({ error: mapped.error }, { status: mapped.status });
+  }
+  if (!job) return superadminJson({ error: "Unable to cancel job." }, { status: 500 });
+  const typedJob = job as { uploadId: string; status: string };
 
   await logger.audit({
     traceId: crypto.randomUUID(),
@@ -47,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     action: "superadmin_job_cancel",
     message: "Superadmin cancelled an import job.",
     status: "completed",
-    metadata: { jobId: id, uploadBatchId: job.upload_batch_id }
+    metadata: { jobRef: id.slice(0, 8), uploadRef: typedJob.uploadId.slice(0, 8) }
   });
-  return superadminJson({ ok: true, jobId: id, uploadId: job.upload_batch_id });
+  return superadminJson({ ok: true, jobId: id, uploadId: typedJob.uploadId, status: typedJob.status });
 }

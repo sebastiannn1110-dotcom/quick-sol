@@ -100,7 +100,9 @@ class FakeQuery {
           finished_at: null,
           duration_ms: null,
           original_file_name: "synthetic.xlsx",
-          worker_id: "worker-1"
+          worker_id: "worker-1",
+          backend_issued: false,
+          publication_state: "pending"
         },
         error: null
       });
@@ -176,6 +178,10 @@ function createFakeSupabase() {
   const supabase = {
     from(table: string) {
       return new FakeQuery(table, state);
+    },
+    rpc(name: string, parameters: Record<string, unknown>) {
+      state.updates.push({ table: `rpc:${name}`, payload: parameters });
+      return Promise.resolve({ data: { status: "completed_with_warnings" }, error: null });
     }
   } as unknown as SupabaseClient;
   return { supabase, state };
@@ -208,34 +214,21 @@ describe("import safe finalize", () => {
     );
   });
 
-  it("updates existing job and upload columns to completed_with_warnings", async () => {
+  it("uses the backend-only safe-finalize RPC instead of direct lifecycle writes", async () => {
     const { supabase, state } = createFakeSupabase();
-    const result = await finalizeImportJobSafely(supabase, "job-1");
+    const result = await finalizeImportJobSafely(supabase, "job-1", { actorId: "actor-1" });
 
     expect(result.finalized).toBe(true);
     expect(result.status).toBe("completed_with_warnings");
     expect(state.updates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          table: "import_jobs",
-          payload: expect.objectContaining({
-            status: "completed_with_warnings",
-            progress_percent: 100,
-            error_message: null,
-            last_error: null,
-            technical_error_count: 0
-          })
-        }),
-        expect.objectContaining({
-          table: "upload_batches",
-          payload: expect.objectContaining({
-            status: "completed_with_warnings",
-            processing_progress_percent: 100,
-            error_message: "Archivo procesado con advertencias de calidad.",
-            technical_error_count: 0
-          })
-        })
-      ])
+      [{
+        table: "rpc:safe_finalize_import_job_v2",
+        payload: {
+          input_actor_id: "actor-1",
+          input_job_id: "job-1",
+          input_reason: expect.any(String)
+        }
+      }]
     );
   });
 

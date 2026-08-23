@@ -42,7 +42,7 @@ export async function buildSuperadminHealth(service: SupabaseClient) {
     failed,
     completed,
     stuck,
-    latestHeartbeat,
+    runtimeHeartbeat,
     recentTechnicalErrors,
     storageBucket
   ] = await Promise.all([
@@ -51,12 +51,12 @@ export async function buildSuperadminHealth(service: SupabaseClient) {
     service.from("import_jobs").select("id", { count: "exact", head: true }).eq("status", "failed"),
     service.from("import_jobs").select("id", { count: "exact", head: true }).in("status", ["completed", "completed_with_warnings"]),
     service.from("import_jobs").select("id,original_file_name,heartbeat_at,locked_at").eq("status", "processing").lt("heartbeat_at", staleCutoff).limit(10),
-    service.from("import_jobs").select("heartbeat_at,worker_id,original_file_name").not("heartbeat_at", "is", null).order("heartbeat_at", { ascending: false }).limit(1).maybeSingle(),
+    service.from("worker_runtime_heartbeats").select("heartbeat_at,worker_id,started_at").eq("worker_name", "import-worker").maybeSingle(),
     service.from("system_logs").select("created_at,action,message,route,level").in("level", ["error", "fatal"]).order("created_at", { ascending: false }).limit(10),
     service.storage.getBucket(process.env.SUPABASE_STORAGE_BUCKET || DEFAULT_UPLOAD_BUCKET)
   ]);
 
-  const heartbeatAt = latestHeartbeat.data ? text(latestHeartbeat.data as Row, "heartbeat_at") : null;
+  const heartbeatAt = runtimeHeartbeat.data ? text(runtimeHeartbeat.data as Row, "heartbeat_at") : null;
   const workerStale = !heartbeatAt || new Date(heartbeatAt).getTime() < Date.now() - SECURITY_LIMITS.workerStaleAfterMinutes * 60 * 1000;
   const alerts = [
     workerStale ? "Worker sin heartbeat reciente." : null,
@@ -70,7 +70,7 @@ export async function buildSuperadminHealth(service: SupabaseClient) {
     worker: {
       status: workerStale ? "stale" : "ok",
       heartbeatAt,
-      workerId: latestHeartbeat.data ? text(latestHeartbeat.data as Row, "worker_id") : null,
+      workerId: runtimeHeartbeat.data ? text(runtimeHeartbeat.data as Row, "worker_id") : null,
       staleAfterMinutes: SECURITY_LIMITS.workerStaleAfterMinutes
     },
     jobs: {

@@ -16,6 +16,11 @@ const services = [
     critical: true,
   },
   {
+    name: "import-worker",
+    args: [tsxCli, "scripts/import-worker.ts"],
+    critical: false,
+  },
+  {
     name: "opportunity-finder-worker",
     args: [tsxCli, "scripts/opportunity-finder-worker.ts"],
     critical: false,

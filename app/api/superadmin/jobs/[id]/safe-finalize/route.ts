@@ -13,7 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
-  const result = await finalizeImportJobSafely(context.service, id, { reason: "Superadmin safe finalize requested." });
+  const result = await finalizeImportJobSafely(context.service, id, { actorId: context.profile.id, reason: "Superadmin safe finalize requested." });
 
   if (!result.diagnostics) return superadminJson({ error: "Import job not found." }, { status: 404 });
   if (!result.finalized) {
