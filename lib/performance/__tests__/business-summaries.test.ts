@@ -172,6 +172,23 @@ describe("versioned business summaries", () => {
     expect(migration).not.toMatch(/\b(drop|truncate|delete)\b/i);
   });
 
+  it("ships a role-scoped page-first rollup for Stock Needs", () => {
+    const migration = readFileSync(path.join(
+      process.cwd(),
+      "supabase/migrations/20260822130000_optimize_stock_needs_summary_fast_path.sql"
+    ), "utf8");
+
+    expect(migration).toContain("business_mpn_summaries_stock_rollup_idx");
+    expect(migration).toContain("security definer");
+    expect(migration).toContain("public.can_read_upload(upload.uploaded_by)");
+    expect(migration).toContain("visible_uploads as materialized");
+    expect(migration).toContain("page as materialized");
+    expect(migration.indexOf("page_sources as")).toBeGreaterThan(migration.indexOf("page as materialized"));
+    expect(migration).toContain("from page\n  join public.business_mpn_summaries");
+    expect(migration).toContain("to authenticated, service_role");
+    expect(migration).not.toMatch(/\b(drop|truncate|delete)\b/i);
+  });
+
   it("publishes large derived datasets in bounded chunks", () => {
     const rows = Array.from({ length: BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE * 2 + 1 }, (_, index) => index);
     const chunks = businessSummaryPublishChunks(rows);
