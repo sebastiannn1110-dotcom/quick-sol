@@ -21,22 +21,38 @@ type BackupRow = {
   sha256: string;
   size_bytes: number;
   data_version: number;
+  storage_version: number;
+  catalog_version: string;
+  schema_inventory_hash: string;
   restore_list_verified: boolean;
+  restore_verified: boolean;
+  storage_files_included: boolean;
+  storage_manifest_sha256: string | null;
+  storage_object_count: number;
+  evidence_hash: string | null;
+  auth_scope: string;
   status: string;
 };
 
 type StatusPayload = {
   snapshot: {
     dataVersion: number;
+    storageVersion: number;
+    catalogVersion: string;
+    schemaInventoryHash: string;
     schemaVersion: string;
     migrationVersion: string;
     tableCount: number;
     storageObjectCount: number | null;
-    storageFilesIncluded: false;
+    storageFilesIncluded: true;
+    deleteEnabledInDatabase: boolean;
+    storageScope: Array<{ bucket: string; action: string; reason: string }>;
+    authScope: string;
     tables: TableState[];
   };
   latestBackup: BackupRow | null;
-  storageWarning: string;
+  config: { deleteEnabled: boolean; backupDatabaseConfigured: boolean; restoreVerificationDatabaseConfigured: boolean };
+  scopeNotice: string;
 };
 
 type ArmedOperation = {
@@ -116,11 +132,19 @@ export default function DatabaseSafetyCenter() {
     backup &&
     backup.status === "verified" &&
     backup.restore_list_verified &&
+    backup.restore_verified &&
+    backup.storage_files_included &&
+    Boolean(backup.storage_manifest_sha256) &&
+    backup.auth_scope === "PRESERVED_NOT_INCLUDED" &&
     backup.downloaded_at &&
     new Date(backup.expires_at).getTime() > clock &&
-    backup.data_version === status?.snapshot.dataVersion
+    backup.data_version === status?.snapshot.dataVersion &&
+    backup.storage_version === status?.snapshot.storageVersion &&
+    backup.catalog_version === status?.snapshot.catalogVersion &&
+    backup.schema_inventory_hash === status?.snapshot.schemaInventoryHash
   );
-  const canArm = backupCurrent && downloadConfirmed && phrase === DATABASE_DESTRUCTION_PHRASE && password.length > 0 && !armed;
+  const deleteReady = backupCurrent && status?.config.deleteEnabled === true && status?.snapshot.deleteEnabledInDatabase === true;
+  const canArm = deleteReady && downloadConfirmed && phrase === DATABASE_DESTRUCTION_PHRASE && password.length > 0 && !armed;
   const totalBusinessRows = useMemo(
     () => dryRun?.wouldDelete.reduce((sum, table) => sum + (table.count ?? 0), 0) ?? null,
     [dryRun]
@@ -146,7 +170,7 @@ export default function DatabaseSafetyCenter() {
         { method: "POST", body: "{}" }
       );
       setDownloadConfirmed(false);
-      setMessage(`Backup verificado: ${created.manifest.fileName} (${bytes(created.manifest.sizeBytes)}).`);
+      setMessage(`Bundle creado: ${created.manifest.fileName} (${bytes(created.manifest.sizeBytes)}). Verifícalo antes de descargar.`);
       await refresh();
     });
   }
@@ -155,7 +179,7 @@ export default function DatabaseSafetyCenter() {
     if (!backup) return;
     await run("verify", async () => {
       await jsonRequest(`/api/admindev/database-safety/backups/${backup.id}/verify`, { method: "POST", body: "{}" });
-      setMessage("Integridad SHA-256 y pg_restore --list verificados nuevamente.");
+      setMessage("SHA-256, pg_restore --list, restore estructural y cobertura Storage verificados nuevamente.");
     });
   }
 
@@ -171,7 +195,7 @@ export default function DatabaseSafetyCenter() {
       const handle = browser.showSaveFilePicker
         ? await browser.showSaveFilePicker({
           suggestedName: backup.file_name,
-          types: [{ description: "PostgreSQL custom backup", accept: { "application/octet-stream": [".dump"] } }]
+          types: [{ description: "QuikSol Safety Bundle", accept: { "application/x-tar": [".tar"] } }]
         })
         : null;
       if (!browser.showSaveFilePicker && backup.size_bytes > SAFE_BLOB_FALLBACK_MAX_BYTES) {
@@ -206,7 +230,7 @@ export default function DatabaseSafetyCenter() {
         link.remove();
         URL.revokeObjectURL(url);
       }
-      setMessage("Descarga completada por el navegador. Confirma que guardaste el archivo en un lugar seguro.");
+      setMessage("El servidor terminó de transmitir el bundle. Confirma manualmente que el archivo continúa guardado en tu PC; el servidor no puede demostrarlo después de la descarga.");
       await refresh();
     });
   }
@@ -266,8 +290,8 @@ export default function DatabaseSafetyCenter() {
           <h2 id="database-safety-title" className="mt-1 text-xl font-semibold">Respaldo y eliminación de datos</h2>
           <p className="mt-1 text-sm text-slate-400">Acceso exclusivo para el rol Super Admin Dev.</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${backupCurrent ? "bg-emerald-950 text-emerald-300" : "bg-red-950 text-red-300"}`}>
-          {backupCurrent ? "BACKUP VERIFICADO ✅" : "DELETE LOCKED"}
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${deleteReady ? "bg-emerald-950 text-emerald-300" : "bg-red-950 text-red-300"}`}>
+          {deleteReady ? "READY — todas las condiciones verificadas" : "DELETE LOCKED"}
         </span>
       </div>
 
@@ -280,21 +304,24 @@ export default function DatabaseSafetyCenter() {
         <div className="rounded border border-slate-700 bg-slate-950 p-3"><p className="text-xs text-slate-400">Objetos en Storage (aprox.)</p><p className="text-xl font-semibold">{count(status?.snapshot.storageObjectCount ?? null)}</p></div>
       </div>
 
-      <div className="mt-4 rounded border border-red-800 bg-red-950/60 p-3 text-sm text-red-100">
-        <strong>Backup empresarial del schema public.</strong> NO incluye los archivos físicos de Supabase Storage ni constituye un backup independiente de Supabase Auth. Esos recursos se conservan y requieren protocolos separados.
+      <div className="mt-4 rounded border border-amber-700 bg-amber-950/40 p-3 text-sm text-amber-100">
+        <strong>Alcance exacto:</strong> database schema <code>public</code> incluido; archivos de Storage empresarial incluidos por streaming; Supabase Auth identities, migrations, perfiles y auditoría de seguridad PRESERVED / NOT INCLUDED. No se describe como un backup completo de Supabase.
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <section className="rounded border border-slate-700 p-4">
-          <h3 className="font-semibold">Backup de base de datos empresarial — schema public</h3>
+          <h3 className="font-semibold">Bundle: Database + Business Storage</h3>
           {backup ? <div className="mt-2 space-y-1 break-all text-sm text-slate-300">
             <p>Archivo: {backup.file_name}</p><p>Tamaño: {bytes(backup.size_bytes)}</p><p>SHA-256: <code>{backup.sha256}</code></p>
-            <p>Fecha: {new Date(backup.created_at).toLocaleString()}</p><p>Descarga completada por servidor: {backup.downloaded_at ? "sí" : "no"}</p>
+            <p>Manifest hash: <code>{backup.evidence_hash ?? "pendiente"}</code></p>
+            <p>Catalog version: {backup.catalog_version}</p><p>Data version: {backup.data_version}</p><p>Storage version: {backup.storage_version}</p>
+            <p>Restore verified: {backup.restore_verified ? "sí" : "no"}</p><p>Storage coverage: {backup.storage_files_included ? `${backup.storage_object_count} objetos` : "incompleta"}</p>
+            <p>Auth: {backup.auth_scope}</p><p>Fecha: {new Date(backup.created_at).toLocaleString()}</p><p>Stream completado por servidor: {backup.downloaded_at ? "sí" : "no"}</p>
           </div> : <p className="mt-2 text-sm text-slate-400">Último backup: ninguno.</p>}
           <div className="mt-3 flex flex-wrap gap-2">
             <button disabled={Boolean(busy)} onClick={generateBackup} className="rounded bg-amber-600 px-3 py-2 text-sm font-bold disabled:opacity-50">GENERAR BACKUP LOCAL</button>
             <button disabled={!backup || Boolean(busy)} onClick={verifyBackup} className="rounded bg-slate-700 px-3 py-2 text-sm disabled:opacity-50">Verificar respaldo</button>
-            <button disabled={!backup || Boolean(busy)} onClick={downloadBackup} className="rounded bg-emerald-800 px-3 py-2 text-sm disabled:opacity-50">Descargar .dump</button>
+            <button disabled={!backup || backup.status !== "verified" || Boolean(busy)} onClick={downloadBackup} className="rounded bg-emerald-800 px-3 py-2 text-sm disabled:opacity-50">Descargar .tar</button>
             {backup ? <a href={`/api/admindev/database-safety/backups/${backup.id}/manifest`} className="rounded bg-slate-700 px-3 py-2 text-sm">Descargar manifest</a> : null}
             <button disabled={Boolean(busy)} onClick={() => void refresh()} className="rounded border border-slate-600 px-3 py-2 text-sm disabled:opacity-50">Actualizar estado</button>
           </div>
@@ -316,7 +343,8 @@ export default function DatabaseSafetyCenter() {
       <section className="mt-5 rounded border-2 border-red-700 bg-red-950/30 p-4">
         <p className="text-xs font-bold tracking-[0.18em] text-red-300">DANGER ZONE</p>
         <h3 className="mt-1 text-lg font-semibold">Eliminar información empresarial</h3>
-        <p className="mt-1 text-sm text-red-100">No elimina estructura, migraciones, Auth, perfiles, configuración protegida ni Storage.</p>
+        <p className="mt-1 text-sm text-red-100">Elimina datos empresariales de Database y los cinco buckets empresariales respaldados. Preserva estructura, migrations, Auth, perfiles, avatars, configuración y auditoría de seguridad.</p>
+        {!status?.config.deleteEnabled ? <p className="mt-3 rounded border border-red-700 p-2 text-sm font-bold">DELETE LOCKED: DATABASE_SAFETY_DELETE_ENABLED no está habilitado en el servidor.</p> : null}
 
         <div className="mt-4 grid gap-3">
           <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={downloadConfirmed} onChange={(event) => setDownloadConfirmed(event.target.checked)} />Confirmo que he descargado y guardado el respaldo en un lugar seguro.</label>

@@ -8,7 +8,9 @@ import {
   DATABASE_SAFETY_TABLE_POLICY
 } from "@/lib/superadmin/database-safety-policy";
 
-const migrationPath = "supabase/migrations/20260816120000_super_admin_database_safety_center.sql";
+const baseMigrationPath = "supabase/migrations/20260816120000_super_admin_database_safety_center.sql";
+const migrationPath = "supabase/migrations/20260822140000_harden_database_safety_backend_evidence.sql";
+const baseMigration = readFileSync(path.join(process.cwd(), baseMigrationPath), "utf8");
 const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
 const normalized = migration.toLowerCase();
 
@@ -44,7 +46,7 @@ describe("Database Safety Center policy", () => {
   it("derives the 60-table baseline from the actual local migration corpus", () => {
     const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
     const corpus = readdirSync(migrationsDirectory)
-      .filter((name) => name.endsWith(".sql") && name !== path.basename(migrationPath))
+      .filter((name) => name.endsWith(".sql") && ![path.basename(migrationPath), path.basename(baseMigrationPath)].includes(name))
       .map((name) => readFileSync(path.join(migrationsDirectory, name), "utf8"))
       .join("\n");
     const discovered = [...corpus.matchAll(/create table(?: if not exists)? public\.([a-z0-9_]+)/gi)]
@@ -53,17 +55,18 @@ describe("Database Safety Center policy", () => {
   });
 
   it("keeps the TypeScript and SQL catalogs synchronized", () => {
-    const sqlTables = [...migration.matchAll(/\('([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+    const sqlTables = [...baseMigration.matchAll(/\('([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
       .map((match) => `${match[1]}.${match[2]}`);
     const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
     expect([...new Set(sqlTables)].sort()).toEqual([...policyTables].sort());
   });
 
-  it("uses an explicit 52-table DELETE allowlist and preserves identity/configuration", () => {
-    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(52);
+  it("uses an explicit 44-table DELETE allowlist and preserves identity, security and observability", () => {
+    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(44);
     expect(DATABASE_SAFETY_PROTECTED_TABLES.map((entry) => `${entry.schema}.${entry.table}`)).toEqual(expect.arrayContaining([
       "public.profiles", "auth.users", "supabase_migrations.schema_migrations", "storage.objects", "storage.buckets",
-      "public.database_safety_audit_events"
+      "public.database_safety_audit_events", "public.audit_logs", "public.security_events",
+      "public.system_logs", "public.client_logs", "public.performance_logs", "public.api_rate_limits"
     ]));
   });
 
@@ -82,10 +85,12 @@ describe("Database Safety Center policy", () => {
   });
 
   it("implements purge as one transactional, idempotent, single-use operation", () => {
-    const execute = normalized.slice(normalized.indexOf("create or replace function public.execute_database_business_purge"));
+    const execute = normalized.slice(normalized.indexOf("create or replace function public.execute_database_business_purge_v2"));
     expect(normalized.startsWith("begin;")).toBe(true);
     expect(normalized.trimEnd().endsWith("commit;")).toBe(true);
-    expect(execute).toContain("if operation.status = 'completed' then return operation.result");
+    expect(execute).toContain("if operation.status in ('database_completed','completed') then");
+    expect(execute).toContain("operation.challenge_hash<>input_challenge_hash");
+    expect(execute).toContain("operation.session_binding_hash<>input_session_binding_hash");
     expect(execute).toContain("challenge_used_at is not null");
     expect(execute).toContain("for update");
     expect(execute).toContain("lock table %i.%i in share row exclusive mode");
@@ -96,8 +101,17 @@ describe("Database Safety Center policy", () => {
     expect(execute).not.toContain("truncate table");
   });
 
+  it("keeps the real two-session concurrency regression executable only on its named disposable database", () => {
+    const concurrency = readFileSync(path.join(process.cwd(), "supabase/tests/database_safety_round3_concurrency_runtime.sql"), "utf8");
+    expect(concurrency).toContain("current_database() <> 'quiksol_round3_concurrency_test'");
+    expect(concurrency.match(/dblink_send_query/g)).toHaveLength(2);
+    expect(concurrency.indexOf("dblink_send_query('round3_concurrent_b'")).toBeLessThan(concurrency.indexOf("dblink_get_result('round3_concurrent_a'"));
+    expect(concurrency).toContain("count(distinct payload)");
+    expect(concurrency).toContain("CONCURRENT_AUDIT_NOT_SINGLE");
+  });
+
   it("blocks missing, corrupt, stale, expired and reused backup/challenge states in SQL", () => {
-    for (const marker of ["BACKUP_NOT_VERIFIED", "BACKUP_STALE", "BACKUP_INVALID", "CHALLENGE_EXPIRED", "CHALLENGE_ALREADY_USED", "COUNTDOWN_ACTIVE", "SESSION_CHANGED"]) {
+    for (const marker of ["BACKUP_NOT_VERIFIED", "BACKUP_STALE", "BACKEND_EVIDENCE_INVALID", "CHALLENGE_EXPIRED", "CHALLENGE_ALREADY_USED", "COUNTDOWN_ACTIVE", "SESSION_CHANGED", "REAUTH_EXPIRED", "CATALOG_UNCLASSIFIED", "DELETE_KILL_SWITCH_DISABLED"]) {
       expect(migration).toContain(marker);
     }
     expect(migration).toContain("restore_list_verified");
@@ -105,17 +119,18 @@ describe("Database Safety Center policy", () => {
     expect(migration).toContain("manifest.expires_at <= clock_timestamp()");
   });
 
-  it("does not let security rate-limit writes stale their own backup", () => {
-    expect(migration).toContain("table_name not in ('api_rate_limits', 'password_reset_codes', 'observability_log_outbox')");
-    expect(migration).toContain("category in ('BUSINESS_DATA', 'OPERATIONAL_DATA')");
+  it("stales every DELETE table while preserving rate-limit and observability writes", () => {
+    expect(migration).toContain("if item.planned_action = 'DELETE'");
+    expect(migration).toContain("'api_rate_limits','observability_log_outbox'");
+    expect(migration).toContain("then 'PRESERVE'");
   });
 
   it("enforces RLS without granting direct writes", () => {
-    for (const table of newSafetyTables) {
-      expect(normalized).toContain(`alter table public.${table} enable row level security`);
-      expect(normalized).toContain(`alter table public.${table} force row level security`);
-      expect(normalized).toContain(`revoke all on public.${table} from anon, authenticated`);
-    }
+    for (const table of newSafetyTables) expect(baseMigration.toLowerCase()).toContain(`alter table public.${table} force row level security`);
+    expect(normalized).toContain("revoke all on public.database_backup_manifests from authenticated");
+    expect(normalized).toContain("grant select, insert, update on public.database_backup_manifests to service_role");
+    expect(normalized).toContain("revoke all on function public.execute_database_business_purge_v2(uuid,uuid,text,text) from public,anon,authenticated");
+    expect(normalized).toContain("grant execute on function public.execute_database_business_purge_v2(uuid,uuid,text,text) to service_role");
     expect(normalized).not.toContain("grant insert on public.database_");
     expect(normalized).not.toContain("grant update on public.database_");
     expect(normalized).not.toContain("grant delete on public.database_");

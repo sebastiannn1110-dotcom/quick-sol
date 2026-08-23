@@ -5,6 +5,7 @@ export type DatabaseSafetyCategory =
   | "AUTH_IDENTITY"
   | "MIGRATIONS_SCHEMA"
   | "SYSTEM_CONFIG"
+  | "SYSTEM_EPHEMERAL"
   | "STORAGE_METADATA";
 
 export type DatabaseSafetyAction = "DELETE" | "PRESERVE";
@@ -82,15 +83,6 @@ export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] 
   deleteTable("business_records", "BUSINESS_DATA", 30, "Canonical business records."),
   deleteTable("upload_sheets", "OPERATIONAL_DATA", 40, "Upload sheet metadata."),
   deleteTable("upload_batches", "OPERATIONAL_DATA", 50, "Upload metadata and lifecycle state."),
-  deleteTable("password_reset_codes", "OPERATIONAL_DATA", 10, "Ephemeral reset codes."),
-  deleteTable("api_rate_limits", "OPERATIONAL_DATA", 10, "Ephemeral rate-limit buckets."),
-  deleteTable("observability_log_outbox", "OPERATIONAL_DATA", 10, "Pending observability delivery queue."),
-  deleteTable("audit_logs", "AUDIT_DATA", 10, "General audit metadata may reference business entities."),
-  deleteTable("security_events", "AUDIT_DATA", 10, "Security events outside the protected safety ledger."),
-  deleteTable("system_logs", "AUDIT_DATA", 10, "Technical logs may contain business correlation metadata."),
-  deleteTable("client_logs", "AUDIT_DATA", 10, "Browser logs may contain business correlation metadata."),
-  deleteTable("performance_logs", "AUDIT_DATA", 10, "Performance traces may contain business correlation metadata."),
-
   preserveTable("public", "profiles", "AUTH_IDENTITY", "Profiles are required to preserve authentication identities, including Super Admin Dev."),
   preserveTable("public", "opportunity_finder_tenants", "SYSTEM_CONFIG", "Tenant scope configuration required for restart."),
   preserveTable("public", "opportunity_finder_tenant_memberships", "SYSTEM_CONFIG", "Tenant authorization configuration required for restart."),
@@ -103,6 +95,14 @@ export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] 
   preserveTable("public", "database_backup_manifests", "AUDIT_DATA", "Backup evidence without backup content or secrets."),
   preserveTable("public", "database_destruction_operations", "AUDIT_DATA", "Idempotency and destruction audit state."),
   preserveTable("public", "database_safety_audit_events", "AUDIT_DATA", "Protected append-only safety ledger."),
+  preserveTable("public", "password_reset_codes", "SYSTEM_EPHEMERAL", "Authentication recovery state is outside business-data purge scope."),
+  preserveTable("public", "api_rate_limits", "SYSTEM_EPHEMERAL", "Security rate-limit state must not invalidate business backups."),
+  preserveTable("public", "observability_log_outbox", "SYSTEM_EPHEMERAL", "Observability delivery state is preserved and does not stale business backups."),
+  preserveTable("public", "audit_logs", "AUDIT_DATA", "General audit evidence is preserved."),
+  preserveTable("public", "security_events", "AUDIT_DATA", "Security evidence is preserved."),
+  preserveTable("public", "system_logs", "AUDIT_DATA", "System observability is preserved."),
+  preserveTable("public", "client_logs", "AUDIT_DATA", "Client observability is preserved."),
+  preserveTable("public", "performance_logs", "AUDIT_DATA", "Performance evidence is preserved."),
   preserveTable("auth", "users", "AUTH_IDENTITY", "Supabase Auth identities are never part of the purge allowlist."),
   preserveTable("supabase_migrations", "schema_migrations", "MIGRATIONS_SCHEMA", "Migration history is never modified."),
   preserveTable("storage", "objects", "STORAGE_METADATA", "Storage metadata and physical blobs require a separate backup protocol."),
@@ -117,7 +117,27 @@ export const DATABASE_SAFETY_PROTECTED_TABLES = DATABASE_SAFETY_TABLE_POLICY
   .filter((entry) => entry.action === "PRESERVE");
 
 export const DATABASE_DESTRUCTION_PHRASE = "ELIMINAR INFORMACION QUIKSOL";
-export const DATABASE_BACKUP_FORMAT = "postgres-custom";
+export const DATABASE_SAFETY_CATALOG_VERSION = "20260822140000-r3-v1";
+export const DATABASE_BACKUP_FORMAT = "quiksol-safety-bundle-v2";
 export const DATABASE_BACKUP_MAX_AGE_MS = 30 * 60 * 1000;
 export const DATABASE_DESTRUCTION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const DATABASE_DESTRUCTION_COUNTDOWN_MS = 30 * 1000;
+
+export type DatabaseSafetyStorageAction = "BUSINESS_DELETE" | "PRESERVE" | "SYSTEM";
+
+export const DATABASE_SAFETY_STORAGE_POLICY = [
+  { bucket: "excel-uploads", action: "BUSINESS_DELETE", reason: "Physical source workbooks are business information." },
+  { bucket: "chat-attachments", action: "BUSINESS_DELETE", reason: "Business chat attachments are business information." },
+  { bucket: "email-attachments", action: "BUSINESS_DELETE", reason: "Business email attachments are business information." },
+  { bucket: "client-assets", action: "BUSINESS_DELETE", reason: "Client assets are business information." },
+  { bucket: "opportunity-finder", action: "BUSINESS_DELETE", reason: "Opportunity Finder inputs and outputs are business information." },
+  { bucket: "avatars", action: "PRESERVE", reason: "Profile avatars are preserved with authentication identities." }
+] as const satisfies readonly { bucket: string; action: DatabaseSafetyStorageAction; reason: string }[];
+
+export const DATABASE_SAFETY_BUSINESS_BUCKETS = DATABASE_SAFETY_STORAGE_POLICY
+  .filter((entry) => entry.action === "BUSINESS_DELETE")
+  .map((entry) => entry.bucket);
+
+export function databaseSafetyDeleteEnabled() {
+  return process.env.DATABASE_SAFETY_DELETE_ENABLED === "true";
+}

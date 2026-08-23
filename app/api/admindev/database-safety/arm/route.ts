@@ -53,7 +53,8 @@ export async function POST(request: Request) {
   }
 
   const challenge = createDestructionChallenge();
-  const { data, error } = await context.supabase.rpc("arm_database_destruction", {
+  const { data, error } = await context.service.rpc("arm_database_destruction_v2", {
+    input_actor_id: context.user.id,
     input_backup_manifest_id: parsed.data.backupId,
     input_challenge_hash: challengeHash(challenge),
     input_session_binding_hash: sessionBinding,

@@ -8,7 +8,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
-  const { data, error } = await context.supabase
+  const { data, error } = await context.service
     .from("database_backup_manifests")
     .select("*")
     .eq("id", id)
@@ -17,7 +17,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (error || !data) return superadminJson({ error: "BACKUP_MANIFEST_NOT_FOUND" }, { status: 404 });
 
   const manifest = {
-    backupVersion: 1,
+    backupVersion: 2,
     createdAt: data.created_at,
     databaseProject: data.database_project,
     schemaVersion: data.schema_version,
@@ -28,10 +28,29 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     sizeBytes: data.size_bytes,
     tableCount: data.table_count,
     fileName: data.file_name,
+    catalogVersion: data.catalog_version,
+    schemaInventoryHash: data.schema_inventory_hash,
+    storageVersion: data.storage_version,
+    evidenceHash: data.evidence_hash,
     restoreListVerified: data.restore_list_verified,
-    storageFilesIncluded: false
+    restoreVerified: data.restore_verified,
+    database: {
+      scope: "public",
+      sha256: data.database_sha256,
+      sizeBytes: data.database_size_bytes
+    },
+    storage: {
+      filesIncluded: data.storage_files_included,
+      manifestSha256: data.storage_manifest_sha256,
+      objectCount: data.storage_object_count,
+      sizeBytes: data.storage_size_bytes,
+      scope: data.backup_scope?.storage ?? [],
+      restoreProcedure: "extract-tar-and-upload-verified-object-manifest"
+    },
+    auth: data.auth_scope,
+    migrations: "PRESERVED_NOT_INCLUDED"
   };
   const response = superadminJson(manifest);
-  response.headers.set("Content-Disposition", `attachment; filename="${String(data.file_name).replace(/\.dump$/, "")}.manifest.json"`);
+  response.headers.set("Content-Disposition", `attachment; filename="${String(data.file_name).replace(/\.(dump|tar)$/, "")}.manifest.json"`);
   return response;
 }

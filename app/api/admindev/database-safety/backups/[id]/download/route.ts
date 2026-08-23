@@ -11,6 +11,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
+  const { data: manifestRow, error: manifestError } = await context.service
+    .from("database_backup_manifests")
+    .select("id,status,created_by,evidence_hash")
+    .eq("id", id)
+    .eq("created_by", context.user.id)
+    .maybeSingle();
+  if (manifestError || !manifestRow || manifestRow.status !== "verified") {
+    return superadminJson({ error: "BACKUP_NOT_VERIFIED", deleteLocked: true }, { status: 409 });
+  }
   try {
     await verifyRetainedDatabaseBackup(id, context.user.id);
   } catch {
@@ -28,9 +37,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     finalized = true;
     if (downloaded) {
       try {
-        await context.supabase.rpc("mark_database_backup_downloaded", {
+        await context.service.rpc("mark_database_backup_downloaded_v2", {
+          input_actor_id: context.user.id,
           input_manifest_id: id,
-          input_sha256: backup.manifest.sha256
+          input_evidence_hash: backup.manifest.evidenceHash
         });
       } catch {
         // The file must still be removed. A missing DB acknowledgement keeps deletion locked.
@@ -47,7 +57,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   return new Response(webFileStream(stream), {
     status: 200,
     headers: {
-      "Content-Type": "application/octet-stream",
+      "Content-Type": "application/x-tar",
       "Content-Length": String(backup.manifest.sizeBytes),
       "Content-Disposition": `attachment; filename="${backup.manifest.fileName}"`,
       "Cache-Control": CRITICAL_CACHE_CONTROL,

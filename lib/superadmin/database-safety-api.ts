@@ -13,7 +13,16 @@ const SAFE_DATABASE_CODES = [
   "COUNTDOWN_ACTIVE",
   "SESSION_CHANGED",
   "OPERATION_NOT_FOUND",
-  "OPERATION_NOT_ARMED"
+  "OPERATION_NOT_ARMED",
+  "BACKEND_SERVICE_ROLE_REQUIRED",
+  "BACKEND_EVIDENCE_INVALID",
+  "BACKUP_STATE_INVALID",
+  "CATALOG_UNCLASSIFIED",
+  "CATALOG_VERSION_MISMATCH",
+  "DELETE_KILL_SWITCH_DISABLED",
+  "REAUTH_EXPIRED",
+  "STORAGE_CLEANUP_STATE_INVALID",
+  "STORAGE_DELETE_FAILED"
 ] as const;
 
 export async function databaseSafetyRateLimit(
@@ -57,15 +66,25 @@ export function databaseSafetyErrorResponse(error: unknown, fallback?: string) {
 }
 
 export async function loadDatabaseSafetySnapshot(context: SuperadminContext) {
-  const { data, error } = await context.supabase.rpc("database_safety_current_snapshot");
+  const { data, error } = await context.service.rpc("database_safety_current_snapshot_v2", {
+    input_actor_id: context.user.id
+  });
   if (error || !data) throw error ?? new Error("DATABASE_SAFETY_SNAPSHOT_MISSING");
   return data as {
     dataVersion: number;
+    storageVersion: number;
+    catalogVersion: string;
+    schemaInventoryHash: string;
     schemaVersion: string;
     migrationVersion: string;
     tableCount: number;
     storageObjectCount: number | null;
-    storageFilesIncluded: false;
+    storageFilesIncluded: true;
+    deleteEnabledInDatabase: boolean;
+    databaseScope: { schema: "public"; included: true };
+    storageScope: Array<{ bucket: string; action: "BUSINESS_DELETE" | "PRESERVE" | "SYSTEM"; reason: string }>;
+    authScope: "PRESERVED_NOT_INCLUDED";
+    catalog: { classified: boolean; unclassified: string[]; missing: string[] };
     tables: Array<{
       schema: string;
       table: string;

@@ -58,8 +58,10 @@ export function superadminConfigStatus() {
     bootstrapPasswordConfigured: Boolean(process.env.QUIKSOL_ADMIN_PROVISIONING_PASSWORD),
     auditSecretConfigured: Boolean(process.env.DATABASE_SAFETY_AUDIT_SECRET),
     backupDatabaseConfigured: Boolean(process.env.QUIKSOL_BACKUP_DATABASE_URL),
+    restoreVerificationDatabaseConfigured: Boolean(process.env.QUIKSOL_BACKUP_VERIFY_DATABASE_URL),
+    deleteEnabled: process.env.DATABASE_SAFETY_DELETE_ENABLED === "true",
     mfaCapable: true,
-    mfaRequired: false
+    mfaRequired: process.env.DATABASE_SAFETY_REQUIRE_AAL2 === "true"
   };
 }
 

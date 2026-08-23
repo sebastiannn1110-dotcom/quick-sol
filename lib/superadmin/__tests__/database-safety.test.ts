@@ -26,20 +26,44 @@ async function fixture(content = "AAAA") {
   const prepared: PreparedDatabaseBackup = {
     directory,
     filePath,
+    databaseDumpPath: filePath,
+    storageObjectKeys: [],
     manifest: {
-      backupVersion: 1,
+      backupVersion: 2,
       createdAt: "2026-08-16T13:15:00.000Z",
+      expiresAt: "2026-08-16T13:45:00.000Z",
       databaseProject: "test-project",
       schemaVersion: "1",
       migrationVersion: "1",
       dataVersion: 7,
-      format: "postgres-custom",
+      storageVersion: 3,
+      catalogVersion: "20260822140000-r3-v1",
+      schemaInventoryHash: "1".repeat(64),
+      format: "quiksol-safety-bundle-v2",
       sha256: createHash("sha256").update(content).digest("hex"),
       sizeBytes: Buffer.byteLength(content),
       tableCount: 64,
       fileName,
-      restoreListVerified: true,
-      storageFilesIncluded: false
+      evidenceHash: "2".repeat(64),
+      database: {
+        format: "postgres-custom",
+        schema: "public",
+        sha256: createHash("sha256").update(content).digest("hex"),
+        sizeBytes: Buffer.byteLength(content),
+        restoreListVerified: true,
+        restoreVerified: true
+      },
+      storage: {
+        included: true,
+        scope: "BUSINESS_DELETE",
+        buckets: ["excel-uploads", "chat-attachments", "email-attachments", "client-assets", "opportunity-finder"],
+        manifestSha256: "3".repeat(64),
+        objectCount: 0,
+        sizeBytes: 0,
+        recovery: "manifest-keys-retry"
+      },
+      auth: { identities: "PRESERVED_NOT_INCLUDED" },
+      system: { migrations: "PRESERVED_NOT_INCLUDED", securityAudit: "PRESERVED_NOT_INCLUDED" }
     }
   };
   created.push(prepared);
@@ -52,14 +76,15 @@ afterEach(async () => {
 
 describe("database backup safety", () => {
   it("generates the exact deterministic local-download filename", () => {
-    expect(databaseBackupFileName(new Date("2026-08-16T13:15:00.000Z"))).toBe("backup-respaldo-base-datos-general-2026-08-16-131500.dump");
+    expect(databaseBackupFileName(new Date("2026-08-16T13:15:00.000Z"))).toBe("backup-respaldo-seguridad-quiksol-2026-08-16-131500.tar");
   });
 
   it("creates a secret-free manifest with SHA-256 metadata", async () => {
     const backup = await fixture();
     const json = backupManifestJson(backup.manifest);
-    expect(json).toContain('"format": "postgres-custom"');
-    expect(json).toContain('"storageFilesIncluded": false');
+    expect(json).toContain('"format": "quiksol-safety-bundle-v2"');
+    expect(json).toContain('"included": true');
+    expect(json).toContain('"identities": "PRESERVED_NOT_INCLUDED"');
     expect(json).not.toMatch(/password|service.role|connection.string|access.token/i);
   });
 
@@ -91,13 +116,23 @@ describe("database backup safety", () => {
     await expect(removePreparedDatabaseBackup({ directory: process.cwd(), filePath: path.join(process.cwd(), "x") })).rejects.toBeInstanceOf(DatabaseBackupError);
   });
 
-  it("invokes pg_dump custom format without a shell and validates pg_restore --list", () => {
+  it("invokes pg_dump without a shell and requires list plus disposable restore verification", () => {
     const source = readFileSync(path.join(process.cwd(), "lib/superadmin/database-safety.ts"), "utf8");
     expect(source).toContain('"--format=custom"');
     expect(source).toContain('"--schema=public"');
     expect(source).toContain('shell: false');
-    expect(source).toContain('PGDATABASE: databaseUrl');
+    expect(source).toContain('PGDATABASE: databaseOverride ?? decodeURIComponent(parsed.pathname.replace');
+    expect(source).toContain('PGPASSWORD: decodeURIComponent(parsed.password)');
+    expect(source).not.toContain('`--dbname=${databaseUrl}`');
     expect(source).toContain('["--list", filePath]');
+    expect(source).toContain("verifyPgRestoreRoundTrip");
+    expect(source).toContain('process.env.QUIKSOL_BACKUP_VERIFY_DATABASE_URL');
+    expect(source).toContain('process.env.QUIKSOL_CREATEDB_PATH || "createdb"');
+    expect(source).toContain('process.env.QUIKSOL_DROPDB_PATH || "dropdb"');
+    expect(source).toContain('"--section=pre-data"');
+    expect(source).toContain('"--section=data"');
+    expect(source).toContain('"--section=post-data"');
+    expect(source).toContain("insert into auth.users(id) select id from public.profiles");
     expect(source).toContain("PG_RESTORE_LIST_INVALID");
     expect(source).toContain('DatabaseBackupError("BACKUP_UNAVAILABLE")');
   });
@@ -113,9 +148,9 @@ describe("database backup safety", () => {
 
   it("describes the backup scope without implying a complete Supabase backup", () => {
     const ui = readFileSync(path.join(process.cwd(), "components/admindev/DatabaseSafetyCenter.tsx"), "utf8");
-    expect(ui).toContain("schema public");
-    expect(ui).toContain("NO incluye los archivos físicos de Supabase Storage");
-    expect(ui).toContain("ni constituye un backup independiente de Supabase Auth");
+    expect(ui).toContain("Storage empresarial incluidos por streaming");
+    expect(ui).toContain("Supabase Auth identities");
+    expect(ui).toContain("PRESERVED / NOT INCLUDED");
   });
 
   it("removes temporary files on backup errors and after download", () => {
@@ -123,7 +158,7 @@ describe("database backup safety", () => {
     const downloadSource = readFileSync(path.join(process.cwd(), "app/api/admindev/database-safety/backups/[id]/download/route.ts"), "utf8");
     expect(backupSource).toContain("removePreparedDatabaseBackup");
     expect(backupSource).toContain("mode: 0o700");
-    expect(backupSource).toContain("fs.chmod(filePath, 0o600)");
+    expect(backupSource).toContain("fs.chmod(databaseDumpPath, 0o600)");
     expect(downloadSource).toContain("removePreparedDatabaseBackup(backup)");
     expect(downloadSource).toContain("BACKUP_INTEGRITY_CHECK_FAILED");
   });

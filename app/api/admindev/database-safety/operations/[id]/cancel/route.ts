@@ -13,7 +13,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const limited = await databaseSafetyRateLimit(context, "cancel", 10, 60 * 60);
   if (limited) return limited;
   const { id } = await params;
-  const { data, error } = await context.supabase.rpc("cancel_database_destruction", {
+  const { data, error } = await context.service.rpc("cancel_database_destruction_v2", {
+    input_actor_id: context.user.id,
     input_operation_id: id
   });
   if (error) return databaseSafetyErrorResponse(error, "CANCEL_FAILED");

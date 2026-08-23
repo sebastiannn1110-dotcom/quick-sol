@@ -11,15 +11,15 @@ export async function GET(request: Request) {
   try {
     const [snapshot, latestBackup, latestOperation] = await Promise.all([
       loadDatabaseSafetySnapshot(context),
-      context.supabase.from("database_backup_manifests").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle(),
-      context.supabase.from("database_destruction_operations").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle()
+      context.service.from("database_backup_manifests").select("*").eq("created_by", context.user.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      context.service.from("database_destruction_operations").select("*").eq("created_by", context.user.id).order("created_at", { ascending: false }).limit(1).maybeSingle()
     ]);
     return superadminJson({
       snapshot,
       latestBackup: latestBackup.data ?? null,
       latestOperation: latestOperation.data ?? null,
       config: superadminConfigStatus(),
-      storageWarning: "Respaldo limitado al schema public: NO incluye archivos físicos de Supabase Storage ni un backup independiente de Supabase Auth."
+      scopeNotice: "Database: schema public incluido. Storage empresarial: incluido en bundle verificado. Supabase Auth, migrations y auditoría de seguridad: preservados y no incluidos."
     });
   } catch (error) {
     return databaseSafetyErrorResponse(error, "DATABASE_SAFETY_STATUS_FAILED");

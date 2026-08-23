@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertCriticalSameOrigin, requireSuperadmin, superadminJson } from "@/lib/superadmin/auth";
-import { createDatabaseBackup, DatabaseBackupError, removePreparedDatabaseBackup, retainDatabaseBackup } from "@/lib/superadmin/database-safety";
+import { createDatabaseBackup, databaseBackupFileName, DatabaseBackupError, removePreparedDatabaseBackup, retainDatabaseBackup } from "@/lib/superadmin/database-safety";
+import { createSupabaseStorageBackupSource } from "@/lib/superadmin/database-safety-storage";
 import { databaseSafetyErrorResponse, databaseSafetyRateLimit, loadDatabaseSafetySnapshot } from "@/lib/superadmin/database-safety-api";
 
 export const runtime = "nodejs";
@@ -16,37 +17,66 @@ export async function POST(request: Request) {
   if (limited) return limited;
 
   let prepared: Awaited<ReturnType<typeof createDatabaseBackup>> | null = null;
+  let manifestId: string | null = null;
   try {
     const snapshot = await loadDatabaseSafetySnapshot(context);
-    prepared = await createDatabaseBackup(snapshot);
+    const now = new Date();
+    const { data: begun, error: beginError } = await context.service.rpc("begin_database_backup_manifest_v2", {
+      input_actor_id: context.user.id,
+      input_file_name: databaseBackupFileName(now)
+    });
+    if (beginError || !begun) throw beginError ?? new Error("BACKUP_MANIFEST_BEGIN_FAILED");
+    const begunRow = Array.isArray(begun) ? begun[0] : begun;
+    manifestId = String(begunRow.id);
+    prepared = await createDatabaseBackup({
+      ...snapshot,
+      now,
+      storageSource: createSupabaseStorageBackupSource(context.service)
+    });
     const manifest = prepared.manifest;
-    const { data, error } = await context.supabase.rpc("register_database_backup_manifest", {
-      input_file_name: manifest.fileName,
-      input_sha256: manifest.sha256,
-      input_size_bytes: manifest.sizeBytes,
-      input_table_count: manifest.tableCount,
+    const { data, error } = await context.service.rpc("record_database_backup_created_v2", {
+      input_actor_id: context.user.id,
+      input_manifest_id: manifestId,
+      input_bundle_sha256: manifest.sha256,
+      input_bundle_size_bytes: manifest.sizeBytes,
       input_database_project: manifest.databaseProject,
       input_schema_version: manifest.schemaVersion,
       input_migration_version: manifest.migrationVersion,
-      input_data_version: manifest.dataVersion,
-      input_restore_list_verified: true
+      input_database_sha256: manifest.database.sha256,
+      input_database_size_bytes: manifest.database.sizeBytes,
+      input_table_count: manifest.tableCount,
+      input_storage_manifest_sha256: manifest.storage.manifestSha256,
+      input_storage_object_count: manifest.storage.objectCount,
+      input_storage_size_bytes: manifest.storage.sizeBytes,
+      input_storage_object_keys: prepared.storageObjectKeys,
+      input_evidence_hash: manifest.evidenceHash
     });
     if (error || !data) throw error ?? new Error("BACKUP_MANIFEST_REGISTRATION_FAILED");
     const row = Array.isArray(data) ? data[0] : data;
-    const manifestId = String(row.id);
     await retainDatabaseBackup(manifestId, context.user.id, prepared);
     prepared = null;
     return superadminJson({
       backupId: manifestId,
       manifest,
       expiresAt: row.expires_at,
-      status: "verified",
+      status: "created",
       deleteLocked: true,
       downloadUrl: `/api/admindev/database-safety/backups/${manifestId}/download`,
       manifestUrl: `/api/admindev/database-safety/backups/${manifestId}/manifest`
     });
   } catch (error) {
     if (prepared) await removePreparedDatabaseBackup(prepared).catch(() => undefined);
+    if (manifestId) {
+      try {
+        await context.service.rpc("fail_database_backup_manifest_v2", {
+          input_actor_id: context.user.id,
+          input_manifest_id: manifestId,
+          input_failure_code: error instanceof DatabaseBackupError ? error.code : "BACKUP_GENERATION_FAILED"
+        });
+      } catch {
+        // The safe API response remains authoritative; backup content is removed below.
+      }
+    }
     if (error instanceof DatabaseBackupError) {
       return superadminJson({ error: error.code, deleteLocked: true }, { status: 409 });
     }

@@ -16,12 +16,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const { id } = await params;
     const backup = await verifyRetainedDatabaseBackup(id, context.user.id);
+    const { data, error } = await context.service.rpc("verify_database_backup_manifest_v2", {
+      input_actor_id: context.user.id,
+      input_manifest_id: id,
+      input_evidence_hash: backup.manifest.evidenceHash
+    });
+    if (error || !data) throw error ?? new DatabaseBackupError("BACKUP_VERIFICATION_FAILED");
     return superadminJson({
       backupId: id,
       status: "verified",
       sha256: backup.manifest.sha256,
       sizeBytes: backup.manifest.sizeBytes,
       restoreListVerified: true,
+      restoreVerified: true,
+      storageFilesIncluded: true,
       deleteLocked: true
     });
   } catch (error) {
