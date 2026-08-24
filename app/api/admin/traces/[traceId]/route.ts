@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
+import { IMPORT_ERRORS_SAFE_VIEW } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ trac
   const [logs, performanceLogs, importErrors, securityEvents] = await Promise.all([
     context.supabase!.from("system_logs").select("*").eq("trace_id", traceId).order("created_at"),
     context.supabase!.from("performance_logs").select("*").eq("trace_id", traceId).order("created_at"),
-    context.supabase!.from("import_errors").select("*").eq("trace_id", traceId).order("created_at"),
+    context.supabase!.from(IMPORT_ERRORS_SAFE_VIEW).select("id,trace_id,upload_batch_id,upload_sheet_id,row_index,column_name,error_type,message,severity,created_at").eq("trace_id", traceId).order("created_at"),
     context.supabase!.from("security_events").select("*").eq("trace_id", traceId).order("created_at")
   ]);
 

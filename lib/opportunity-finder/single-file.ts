@@ -6,6 +6,7 @@ import type {
 } from "@/lib/opportunity-finder/types";
 import { isAdmin } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/types";
+import { BUSINESS_OPPORTUNITY_ENTITIES_SAFE_VIEW } from "@/lib/security/business-records";
 
 export const SINGLE_FILE_HISTORY_ROLES = new Set<OpportunitySelectedRole>([
   "received_history",
@@ -144,7 +145,7 @@ export async function loadAuthorizedPlatformCandidates(input: {
         let from = 0;
         while (true) {
           const { data, error } = await input.supabase
-            .from("business_opportunity_entities")
+            .from(BUSINESS_OPPORTUNITY_ENTITIES_SAFE_VIEW)
             .select("upload_batch_id,owner_id,data_version,source_record_id,entity_kind,entity_key,normalized_mpn,display_mpn,customer_name,supplier_name,manufacturer_name,required_qty,available_qty,excess_qty,required_date,lead_time_weeks,unit_of_measure,moq,spq,date_code,coo,condition,expires_at,is_active_demand,is_live_supply,warnings")
             .eq("data_version", dataVersion)
             .in("upload_batch_id", uploadIds)

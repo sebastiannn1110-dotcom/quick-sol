@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import { summarizeMpnOffers, buildSupplierRanking, type MpnOffer } from "@/lib/mpn/recommendation";
-import { cleanMpnOfferForOutput, loadMpnComparatorOffers, MpnLookupError, normalizedMpnDisplay } from "@/lib/mpn/lookup";
+import { cleanMpnOfferForOutput, loadMpnComparatorOffers, MPN_COMPARATOR_LIMIT, MpnLookupError, normalizedMpnDisplay } from "@/lib/mpn/lookup";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { canViewCosts, canViewGp, canViewSensitivePricing, canViewSupplierDetails, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import type { UserRole } from "@/lib/types";
@@ -149,7 +149,7 @@ export async function GET(request: Request) {
 
   let offers: Array<MpnOffer & { upload_batches?: { original_file_name?: string | null; created_at?: string | null } | null }>;
   try {
-    offers = (await loadMpnComparatorOffers(context.supabase, mpn)).map(cleanMpnOfferForOutput);
+    offers = (await loadMpnComparatorOffers(context.supabase, mpn, MPN_COMPARATOR_LIMIT, context.profile.role)).map(cleanMpnOfferForOutput);
   } catch (error) {
     const lookupError = error instanceof MpnLookupError ? error : null;
     await logger.error({

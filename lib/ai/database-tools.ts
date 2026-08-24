@@ -28,6 +28,12 @@ import {
   type OpportunityFinderAiMode
 } from "@/lib/ai/opportunity-finder-tool";
 import { allowlistedStructuralColumnNames } from "@/lib/ai/safe-structure-columns";
+import {
+  BUSINESS_RECORDS_SAFE_VIEW,
+  IMPORT_ERRORS_SAFE_VIEW,
+  ilikeAny,
+  permittedRecordSearchColumns
+} from "@/lib/security/business-records";
 
 export type AiDatabaseToolName =
   | "policySafetyBoundary"
@@ -617,7 +623,7 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
     .limit(20);
   const summariesPromise = supabase
     .from("import_job_error_summary")
-    .select("upload_batch_id, error_type, severity, message, occurrence_count, sample_raw_data")
+    .select("upload_batch_id, error_type, severity, message, occurrence_count")
     .in("upload_batch_id", uploadIds)
     .order("occurrence_count", { ascending: false })
     .limit(50);
@@ -944,12 +950,11 @@ export async function searchBusinessRecords(context: AuthContext, searchTerm: st
   const supabase = requireSupabase(context);
   const term = cleanSearchTerm(searchTerm);
   if (term.length < 2) return result(context, "searchBusinessRecords", [], "La busqueda necesita al menos dos caracteres.", true);
-  const pattern = `%${term}%`;
   let query = supabase
-    .from("business_records")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
     .select("category, mpn, mpn_quoted, qty, has_errors, created_at")
     .is("archived_at", null)
-    .or(`searchable_text.ilike.${pattern},mpn.ilike.${pattern},mpn_quoted.ilike.${pattern}`)
+    .or(ilikeAny(permittedRecordSearchColumns(context.profile.role, { aiSafe: true }), term))
     .order("created_at", { ascending: false })
     .limit(50);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
@@ -962,7 +967,7 @@ export async function getRecordsByMpn(context: AuthContext, mpnInput: string) {
   const supabase = requireSupabase(context);
   const mpn = cleanSearchTerm(mpnInput, 80);
   let query = supabase
-    .from("business_records")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
     .select("category, mpn, mpn_quoted, qty, has_errors, created_at")
     .is("archived_at", null)
     .or(`mpn.ilike.%${mpn}%,mpn_quoted.ilike.%${mpn}%`)
@@ -994,7 +999,7 @@ export async function getUploadsByUser(context: AuthContext, userSearch: string)
 
 export async function getImportErrors(context: AuthContext, uploadId?: string) {
   const supabase = requireSupabase(context);
-  let query = supabase.from("import_errors").select("row_index, column_name, error_type, severity, created_at").order("created_at", { ascending: false }).limit(50);
+  let query = supabase.from(IMPORT_ERRORS_SAFE_VIEW).select("row_index, column_name, error_type, severity, created_at").order("created_at", { ascending: false }).limit(50);
   if (uploadId) query = query.eq("upload_batch_id", uploadId);
   const { data, error } = await query;
   if (error) throw error;
@@ -1023,10 +1028,10 @@ export async function getDashboardSummary(context: AuthContext) {
   }
   if (counter.error && !["PGRST202", "42883"].includes(counter.error.code ?? "")) throw counter.error;
   const ownerId = mustForceOwnerScope(context.profile.role) ? context.profile.id : null;
-  let recordsCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null);
+  let recordsCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null);
   let uploadsCount = supabase.from("upload_batches").select("id", { count: "exact", head: true }).neq("status", "archived");
-  let errorCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null).eq("has_errors", true);
-  let missingMpnCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null).is("mpn", null);
+  let errorCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null).eq("has_errors", true);
+  let missingMpnCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null).is("mpn", null);
   if (ownerId) {
     recordsCount = recordsCount.eq("uploaded_by", ownerId);
     uploadsCount = uploadsCount.eq("uploaded_by", ownerId);
@@ -1072,7 +1077,7 @@ export async function getLowGpRecords(context: AuthContext, threshold = 0.15) {
 
 export async function getMissingMpnRecords(context: AuthContext) {
   const supabase = requireSupabase(context);
-  let query = supabase.from("business_records").select("category, has_errors, created_at").is("archived_at", null).is("mpn", null).order("created_at", { ascending: false }).limit(50);
+  let query = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("category, has_errors, created_at").is("archived_at", null).is("mpn", null).order("created_at", { ascending: false }).limit(50);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;

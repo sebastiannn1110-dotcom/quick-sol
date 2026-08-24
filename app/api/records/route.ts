@@ -8,7 +8,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { canViewCosts, canViewCustomerDetails, canViewGp, canViewSensitivePricing, canViewSupplierDetails, getRolePermissions, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import { recordsFilterSchema } from "@/lib/excel/validators";
-import { RECORD_LIST_SELECT } from "@/lib/platform/query-columns";
+import { businessRecordReadContract, ilikeAny, permittedRecordSearchColumns } from "@/lib/security/business-records";
 import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -90,7 +90,10 @@ function applyDemoFilters(records: Awaited<ReturnType<typeof getDemoPlatformData
 function permissionScopedFilters(filters: ReturnType<typeof recordsFilterSchema.parse>, role: UserRole) {
   const scoped = { ...filters };
   const permissions = getRolePermissions(role);
-  if (!canViewSupplierDetails(role)) scoped.supplier = undefined;
+  if (!canViewSupplierDetails(role)) {
+    scoped.supplier = undefined;
+    scoped.manufacturer = undefined;
+  }
   if (!canViewCustomerDetails(role)) scoped.customer = undefined;
   if (!permissions.canViewPurchaseOrders) scoped.po = undefined;
   if (!canViewCosts(role)) {
@@ -184,17 +187,18 @@ export async function GET(request: Request) {
       { ...filterMetadata, source: "demo" },
       { slowAction: "slow_query_detected" }
     );
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
 
+  const recordContract = businessRecordReadContract(context.profile.role);
   let query = context.supabase!
-    .from("business_records")
-    .select(RECORD_LIST_SELECT, dynamicCount ? { count: "exact" } : undefined)
+    .from(recordContract.table)
+    .select(recordContract.select, dynamicCount ? { count: "exact" } : undefined)
     .is("archived_at", null)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
 
-  if (filters.query) query = query.textSearch("searchable_text", filters.query, { type: "websearch", config: "simple" });
+  if (filters.query) query = query.or(ilikeAny(permittedRecordSearchColumns(context.profile.role), filters.query));
   if (filters.category) query = query.eq("category", filters.category);
   if (filters.uploadedBy) query = query.eq("uploaded_by", filters.uploadedBy);
   if (filters.customer) query = query.or(`customer.ilike.%${filters.customer}%,client.ilike.%${filters.customer}%`);
@@ -266,7 +270,7 @@ export async function GET(request: Request) {
     let countSource = filters.includeCount ? (dynamicCount ? "dynamic_exact" : "versioned_exact") : "omitted";
     if (filters.includeCount && !dynamicCount && counterResult.error) {
       const fallbackCounter = await context.supabase!
-        .from("business_records")
+        .from(recordContract.table)
         .select("id", { count: "exact", head: true })
         .is("archived_at", null);
       if (fallbackCounter.error) throw fallbackCounter.error;
@@ -281,7 +285,7 @@ export async function GET(request: Request) {
       nextCursor: recordRows.length === filters.pageSize ? encodeCursor(recordRows.at(-1)) : null,
       pagination: "keyset",
       countSource
-    });
+    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     await logger.error({
       ...logContext,

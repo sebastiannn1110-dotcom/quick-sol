@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
+import { IMPORT_ERRORS_SAFE_VIEW } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +14,8 @@ export async function GET(request: Request) {
   if (context.isDemoMode) return NextResponse.json({ errors: [] });
 
   let query = context.supabase!
-    .from("import_errors")
-    .select("id,upload_batch_id,upload_sheet_id,business_record_id,row_index,column_name,error_type,message,severity,created_at,trace_id,upload_batches(original_file_name,uploaded_by),upload_sheets(sheet_name)")
+    .from(IMPORT_ERRORS_SAFE_VIEW)
+    .select("id,upload_batch_id,upload_sheet_id,row_index,column_name,error_type,message,severity,created_at,trace_id,upload_batches,upload_sheets")
     .order("created_at", { ascending: false })
     .limit(500);
 
@@ -23,10 +24,5 @@ export async function GET(request: Request) {
   const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: "Unable to load import errors." }, { status: 500 });
-  const errors = (data ?? []).map((row) => {
-    const safeRow = { ...(row as Record<string, unknown>) };
-    safeRow.raw_value = null;
-    return safeRow;
-  });
-  return NextResponse.json({ errors });
+  return NextResponse.json({ errors: data ?? [] }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

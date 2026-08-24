@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
-import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
+import { BUSINESS_RECORDS_COMMERCIAL_VIEW, IMPORT_ERRORS_SAFE_VIEW } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +17,10 @@ export async function GET(request: Request) {
   const pattern = `%${query.replace(/[%_]/g, "")}%`;
   const [records, uploads, employees, errors] = await Promise.all([
     context.supabase!
-      .from("business_records")
-      .select(`id, category, customer, supplier, supplier_name, mpn, mpn_quoted, po, description, created_at, profiles(full_name,email), ${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name)`)
+      .from(BUSINESS_RECORDS_COMMERCIAL_VIEW)
+      .select("id,category,customer,supplier,supplier_name,mpn,mpn_quoted,po,description,created_at,profiles,upload_batches")
       .is("archived_at", null)
-      .or(`searchable_text.ilike.${pattern},mpn.ilike.${pattern},mpn_quoted.ilike.${pattern},supplier.ilike.${pattern},supplier_name.ilike.${pattern},customer.ilike.${pattern},po.ilike.${pattern}`)
+      .or(`mpn.ilike.${pattern},mpn_quoted.ilike.${pattern},supplier.ilike.${pattern},supplier_name.ilike.${pattern},customer.ilike.${pattern},po.ilike.${pattern},description.ilike.${pattern}`)
       .limit(20),
     context.supabase!
       .from("upload_batches")
@@ -33,9 +33,9 @@ export async function GET(request: Request) {
       .or(`full_name.ilike.${pattern},email.ilike.${pattern},department.ilike.${pattern},region.ilike.${pattern}`)
       .limit(20),
     context.supabase!
-      .from("import_errors")
-      .select("id, upload_batch_id, row_index, column_name, error_type, message, severity, created_at, upload_batches(original_file_name)")
-      .or(`column_name.ilike.${pattern},error_type.ilike.${pattern},message.ilike.${pattern},raw_value.ilike.${pattern}`)
+      .from(IMPORT_ERRORS_SAFE_VIEW)
+      .select("id,upload_batch_id,row_index,column_name,error_type,message,severity,created_at,upload_batches")
+      .or(`column_name.ilike.${pattern},error_type.ilike.${pattern},message.ilike.${pattern}`)
       .limit(20)
   ]);
 
@@ -47,5 +47,5 @@ export async function GET(request: Request) {
     uploads: uploads.data ?? [],
     employees: employees.data ?? [],
     errors: errors.data ?? []
-  });
+  }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

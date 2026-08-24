@@ -7,10 +7,14 @@ import { buildPlatformAnalytics } from "@/lib/platform/analytics";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
-import { ANALYTICS_PROFILE_SELECT, ANALYTICS_RECORD_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
+import { ANALYTICS_PROFILE_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
+import { businessRecordReadContract } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const RECORD_SAMPLE_LIMIT = 10000;
+const UPLOAD_SAMPLE_LIMIT = 5000;
 
 export async function GET(request: Request) {
   const context = await requireAdmin(request);
@@ -26,7 +30,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    const analytics = await measureAsync(
+    const result = await measureAsync(
       "analytics_query",
       "analytics",
       logContext,
@@ -43,21 +47,22 @@ export async function GET(request: Request) {
               metadata: { source: "demo" }
             });
           }
-          return buildPlatformAnalytics(data);
+          return { analytics: buildPlatformAnalytics(data), recordCount: data.records.length, uploadCount: data.uploads.length, demo: true };
         }
 
+        const recordContract = businessRecordReadContract(context.profile.role);
         const [recordsResult, uploadsResult, profilesResult] = await Promise.all([
           safeQuery<PlatformRecord[]>(
             "business_records",
             logContext,
             () =>
               context.supabase!
-                .from("business_records")
-                .select(ANALYTICS_RECORD_SELECT)
+                .from(recordContract.table)
+                .select(recordContract.select)
                 .is("archived_at", null)
-                .limit(10000)
+                .limit(RECORD_SAMPLE_LIMIT)
                 .overrideTypes<PlatformRecord[]>(),
-            { filters: { archived_at: null }, limit: 10000, scope: "admin_global_analytics" }
+            { filters: { archived_at: null }, limit: RECORD_SAMPLE_LIMIT, scope: "admin_global_analytics" }
           ),
           safeQuery<UploadBatch[]>(
             "upload_batches",
@@ -66,9 +71,9 @@ export async function GET(request: Request) {
               context.supabase!
                 .from("upload_batches")
                 .select(ANALYTICS_UPLOAD_SELECT)
-                .limit(5000)
+                .limit(UPLOAD_SAMPLE_LIMIT)
                 .overrideTypes<UploadBatch[]>(),
-            { limit: 5000, scope: "admin_global_analytics" }
+            { limit: UPLOAD_SAMPLE_LIMIT, scope: "admin_global_analytics" }
           ),
           safeQuery<Profile[]>(
             "profiles",
@@ -91,11 +96,11 @@ export async function GET(request: Request) {
           });
         }
 
-        return buildPlatformAnalytics({
+        return { analytics: buildPlatformAnalytics({
           records,
           uploads: (uploadsResult.data ?? []) as UploadBatch[],
           profiles: (profilesResult.data ?? []) as Profile[]
-        });
+        }), recordCount: records.length, uploadCount: (uploadsResult.data ?? []).length, demo: false };
       },
       { scope: "admin_global_analytics" },
       { slowAction: "slow_query_detected" }
@@ -108,9 +113,9 @@ export async function GET(request: Request) {
       message: "Admin global analytics loaded.",
       status: "completed",
       metadata: {
-        totalRecords: analytics.totals.totalRecords,
-        totalUploads: analytics.totals.totalUploads,
-        activeEmployees: analytics.totals.totalEmployeesActive
+        totalRecords: result.analytics.totals.totalRecords,
+        totalUploads: result.analytics.totals.totalUploads,
+        activeEmployees: result.analytics.totals.totalEmployeesActive
       }
     });
     await logger.info({
@@ -119,10 +124,18 @@ export async function GET(request: Request) {
       action: "category_analytics_loaded",
       message: "Admin category analytics loaded.",
       status: "completed",
-      metadata: { categoriesDetected: analytics.totals.categoriesDetected }
+      metadata: { categoriesDetected: result.analytics.totals.categoriesDetected }
     });
 
-    return NextResponse.json({ analytics });
+    const partial = !result.demo && (result.recordCount >= RECORD_SAMPLE_LIMIT || result.uploadCount >= UPLOAD_SAMPLE_LIMIT);
+    return NextResponse.json({
+      analytics: result.analytics,
+      meta: {
+        partial,
+        sampled: partial,
+        sampleLimit: { records: RECORD_SAMPLE_LIMIT, uploads: UPLOAD_SAMPLE_LIMIT }
+      }
+    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     await logger.error({
       ...logContext,
@@ -132,6 +145,9 @@ export async function GET(request: Request) {
       status: "failed",
       error
     });
-    return NextResponse.json({ error: "Unable to load admin analytics." }, { status: 500 });
+    return NextResponse.json(
+      { error: "Unable to load admin analytics.", code: "ANALYTICS_UNAVAILABLE" },
+      { status: 500, headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
   }
 }

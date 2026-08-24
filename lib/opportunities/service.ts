@@ -145,6 +145,7 @@ export async function loadSalesOpportunities(
     maxUploads: uploadIds ? Math.min(Math.max(uploadIds.length, 1), 50) : 30,
     recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000,
     complete: true,
+    role,
   });
   const result = buildSalesOpportunitiesResult({
     records: input.records,

@@ -8,6 +8,7 @@ interface PersistentRateLimitInput {
   limit: number;
   windowSeconds: number;
   blockSeconds?: number;
+  alwaysEnforce?: boolean;
 }
 
 export interface PersistentRateLimitResult {
@@ -26,9 +27,10 @@ export async function checkPersistentRateLimit({
   identifier,
   limit,
   windowSeconds,
-  blockSeconds = 60
+  blockSeconds = 60,
+  alwaysEnforce = false
 }: PersistentRateLimitInput): Promise<PersistentRateLimitResult> {
-  if (process.env.ENABLE_RATE_LIMITING === "false") {
+  if (process.env.ENABLE_RATE_LIMITING === "false" && !alwaysEnforce) {
     return { allowed: true, remaining: limit, resetAt: Date.now() + windowSeconds * 1000, persistent: false };
   }
 

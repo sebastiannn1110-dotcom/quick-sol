@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
-import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { parseExecutiveQuery, type NumericFilter } from "@/lib/search/executive-query-parser";
 import { executiveSearchDomains } from "@/lib/search/executive-domains";
+import { businessRecordReadContract, ilikeAny, IMPORT_ERRORS_SAFE_VIEW, permittedRecordSearchColumns } from "@/lib/security/business-records";
+import { getRolePermissions } from "@/lib/security/permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,15 +19,8 @@ const searchSchema = z.object({
   offset: z.number().int().min(0).default(0)
 });
 
-const EXECUTIVE_RECORD_SELECT = [
-  "id", "upload_batch_id", "uploaded_by", "category", "created_at", "line_id", "client", "customer",
-  "supplier", "supplier_name", "mpn", "mpn_quoted", "manufacturer", "description", "generic", "po",
-  "qty", "req_qty", "price", "gp_rate", "lead_time_weeks", "shipping_point_country", "has_errors",
-  "profiles(full_name,email,department,region,role)",
-  `${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`
-].join(",");
 const EXECUTIVE_UPLOAD_SELECT = "id,uploaded_by,original_file_name,status,detected_category,total_rows,valid_rows,invalid_rows,error_count,data_quality_score,created_at,profiles(full_name,email,department,region,role)";
-const EXECUTIVE_ERROR_SELECT = "id,upload_batch_id,row_index,column_name,error_type,message,severity,created_at,upload_batches(original_file_name,uploaded_by),upload_sheets(sheet_name)";
+const EXECUTIVE_ERROR_SELECT = "id,upload_batch_id,row_index,column_name,error_type,message,severity,created_at,upload_batches,upload_sheets";
 const EXECUTIVE_USER_SELECT = "id,full_name,email,role,department,region,is_active";
 
 function like(value: string) {
@@ -101,6 +95,19 @@ export async function POST(request: Request) {
   }
 
   const filters = parsed.filters;
+  const permissions = getRolePermissions(context.profile.role);
+  const forbiddenFilter =
+    (!permissions.canViewCustomerDetails && Boolean(filters.customer)) ||
+    (!permissions.canViewSupplierDetails && Boolean(filters.supplier)) ||
+    (!permissions.canViewPurchaseOrders && Boolean(filters.po)) ||
+    (!permissions.canViewSensitivePricing && Boolean(filters.price)) ||
+    (!permissions.canViewGp && Boolean(filters.gpRate));
+  if (forbiddenFilter) {
+    return NextResponse.json(
+      { error: "You do not have permission to use one or more requested filters.", code: "EXECUTIVE_FILTER_FORBIDDEN" },
+      { status: 403, headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
+  }
   const domains = executiveSearchDomains(parsed);
   const pureMpnSearch = Boolean(filters.mpn) && domains.length === 1 && domains[0] === "records" &&
     Object.keys(filters).every((key) => key === "text" || key === "mpn");
@@ -114,9 +121,10 @@ export async function POST(request: Request) {
     employeeIds = (employeeResult.data ?? []).map((employee) => employee.id);
   }
 
+  const recordContract = businessRecordReadContract(context.profile.role);
   let recordsQuery = context.supabase
-    .from("business_records")
-    .select(EXECUTIVE_RECORD_SELECT, { count: "exact" })
+    .from(recordContract.table)
+    .select(recordContract.select, { count: "exact" })
     .is("archived_at", null)
     .order("created_at", { ascending: false });
 
@@ -140,7 +148,9 @@ export async function POST(request: Request) {
       value: Number((filters.leadTimeDays.value / 7).toFixed(3))
     });
   }
-  if (filters.text && !parsed.detectedTerms.length) recordsQuery = recordsQuery.textSearch("searchable_text", filters.text, { type: "websearch", config: "simple" });
+  if (filters.text && !parsed.detectedTerms.length) {
+    recordsQuery = recordsQuery.or(ilikeAny(permittedRecordSearchColumns(context.profile.role), filters.text));
+  }
 
   let uploadsQuery = context.supabase
     .from("upload_batches")
@@ -154,7 +164,7 @@ export async function POST(request: Request) {
   if (filters.text && !filters.employee && !filters.uploadErrorThreshold) uploadsQuery = uploadsQuery.ilike("original_file_name", like(filters.text));
 
   let errorsQuery = context.supabase
-    .from("import_errors")
+    .from(IMPORT_ERRORS_SAFE_VIEW)
     .select(EXECUTIVE_ERROR_SELECT, { count: "exact" })
     .order("created_at", { ascending: false });
   if (filters.errorField) errorsQuery = errorsQuery.or(`column_name.ilike.${like(filters.errorField)},message.ilike.${like(filters.errorField)},error_type.ilike.${like(filters.errorField)}`);
@@ -173,7 +183,7 @@ export async function POST(request: Request) {
   const emptyResult = { data: [], count: 0, error: null };
   const recordsPromise = pureMpnSearch
     ? (async () => {
-        const rpc = await context.supabase!.rpc("search_executive_mpn_v1", {
+        const rpc = await context.supabase!.rpc("search_executive_mpn_safe_v2", {
           p_mpn: filters.mpn!,
           p_limit: limit,
           p_offset: offset
@@ -221,7 +231,7 @@ export async function POST(request: Request) {
       error: firstError,
       metadata: { intent: parsed.intent, failedDomains }
     });
-    return NextResponse.json({ error: "Executive search failed." }, { status: 500 });
+    return NextResponse.json({ error: "Executive search failed." }, { status: 500, headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
 
   const counts = {
@@ -265,5 +275,5 @@ export async function POST(request: Request) {
     aiSummary: buildSummaryText(parsed, counts),
     partial: failedDomains.length > 0,
     unavailableDomains: failedDomains
-  });
+  }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

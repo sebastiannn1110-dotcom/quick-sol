@@ -71,7 +71,9 @@ describe("GET /api/admin/opportunities", () => {
 
     expect(source).toContain("loadSalesOpportunities");
     expect(service).toContain("loadStockNeedsInput");
-    expect(loader).toContain('.from("business_records")');
+    expect(loader).toContain("businessRecordReadContract");
+    expect(loader).toContain('.from(options.recordContract.table)');
+    expect(loader).not.toContain('.from("business_records")');
     expect(loader).toContain('.is("archived_at", null)');
     expect(service).toContain("buildSalesOpportunitiesResult");
     expect(source).toContain("redactSensitiveFieldsForRole");

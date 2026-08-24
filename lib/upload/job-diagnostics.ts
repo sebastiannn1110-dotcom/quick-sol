@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { BUSINESS_RECORDS_SAFE_VIEW, IMPORT_ERRORS_SAFE_VIEW } from "@/lib/security/business-records";
 
 type ImportTerminalStatus = "completed" | "completed_with_warnings" | "cancelled";
 
@@ -148,7 +149,13 @@ export function buildSafeFinalizeAssessment(input: {
   };
 }
 
-export async function getImportJobDiagnostics(supabase: SupabaseClient, jobId: string) {
+export async function getImportJobDiagnostics(
+  supabase: SupabaseClient,
+  jobId: string,
+  options: { trustedBackend?: boolean } = {}
+) {
+  const recordsSource = options.trustedBackend ? "business_records" : BUSINESS_RECORDS_SAFE_VIEW;
+  const errorsSource = options.trustedBackend ? "import_errors" : IMPORT_ERRORS_SAFE_VIEW;
   const { data: job, error: jobError } = await supabase
     .from("import_jobs")
     .select("id,upload_batch_id,status,total_rows,processed_rows,successful_rows,failed_rows,attempts,max_attempts,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count,progress_percent,error_message,last_error,heartbeat_at,locked_by,locked_at,next_retry_at,started_at,finished_at,duration_ms,original_file_name,worker_id,backend_issued,publication_state")
@@ -174,10 +181,10 @@ export async function getImportJobDiagnostics(supabase: SupabaseClient, jobId: s
       .select("id,status,total_rows,processed_rows,valid_rows,invalid_rows,successful_rows,failed_rows,error_count,warning_count,rows_with_warnings,technical_error_count,suppressed_error_count,processing_progress_percent,error_message,worker_last_heartbeat_at")
       .eq("id", uploadBatchId)
       .maybeSingle(),
-    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null),
-    supabase.from("business_records").select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null).eq("has_errors", true),
-    supabase.from("import_errors").select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId),
-    supabase.from("import_errors").select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId).or("error_type.eq.technical_error,severity.eq.critical"),
+    supabase.from(recordsSource).select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null),
+    supabase.from(recordsSource).select("id", { count: "estimated", head: true }).eq("upload_batch_id", uploadBatchId).is("archived_at", null).eq("has_errors", true),
+    supabase.from(errorsSource).select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId),
+    supabase.from(errorsSource).select("id", { count: "exact", head: true }).eq("upload_batch_id", uploadBatchId).or("error_type.eq.technical_error,severity.eq.critical"),
     supabase.from("import_job_errors").select("id", { count: "exact", head: true }).eq("job_id", jobId),
     supabase.from("import_job_error_summary").select("id", { count: "exact", head: true }).eq("job_id", jobId),
     supabase
@@ -270,7 +277,7 @@ export async function finalizeImportJobSafely(
   jobId: string,
   options: { actorId: string; reason?: string }
 ) {
-  const diagnostics = await getImportJobDiagnostics(supabase, jobId);
+  const diagnostics = await getImportJobDiagnostics(supabase, jobId, { trustedBackend: true });
   if (!diagnostics?.safeFinalize.possible) {
     return { finalized: false, diagnostics };
   }

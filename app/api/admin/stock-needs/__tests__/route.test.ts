@@ -29,7 +29,9 @@ describe("GET /api/admin/stock-needs", () => {
     const loader = readFileSync(path.join(process.cwd(), "lib/stock-needs/data-source.ts"), "utf8");
 
     expect(source).toContain("loadStockNeedsInput");
-    expect(loader).toContain('.from("business_records")');
+    expect(loader).toContain("businessRecordReadContract");
+    expect(loader).toContain('.from(options.recordContract.table)');
+    expect(loader).not.toContain('.from("business_records")');
     expect(loader).toContain('.is("archived_at", null)');
     expect(loader).toContain('.eq("upload_batch_id", uploadId)');
     expect(source).toContain("buildStockNeedsResult");

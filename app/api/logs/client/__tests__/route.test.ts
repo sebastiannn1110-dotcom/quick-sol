@@ -16,20 +16,24 @@ function createLoggerMock() {
 describe("POST /api/logs/client", () => {
   const logger = createLoggerMock();
   const getAuthContext = vi.fn();
+  const checkPersistentRateLimit = vi.fn();
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     getAuthContext.mockResolvedValue(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
+    checkPersistentRateLimit.mockResolvedValue({ allowed: true, remaining: 29, resetAt: Date.now() + 60_000, persistent: true });
     vi.doMock("@/lib/logger/logger", () => ({ logger }));
     vi.doMock("@/lib/auth/context", () => ({ getAuthContext }));
+    vi.doMock("@/lib/security/persistent-rate-limit", () => ({ checkPersistentRateLimit }));
   });
 
   it("accepts sanitized public logs from password reset pages without returning 401", async () => {
     const { POST } = await import("../route");
     const response = await POST(new Request("https://app.test/api/logs/client", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Origin: "https://app.test" },
       body: JSON.stringify({
         level: "info",
         action: "page_view",
@@ -45,5 +49,66 @@ describe("POST /api/logs/client", () => {
       action: "page_view",
       metadata: expect.objectContaining({ publicLog: true })
     }));
+    expect(checkPersistentRateLimit).toHaveBeenCalledWith(expect.objectContaining({ action: "public_client_log", limit: 30, alwaysEnforce: true }));
+    expect(getAuthContext).not.toHaveBeenCalled();
+  });
+
+  it("rate limits public log flooding before writing an event", async () => {
+    checkPersistentRateLimit.mockResolvedValueOnce({ allowed: false, remaining: 0, resetAt: Date.now() + 60_000, persistent: true });
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://app.test", "x-forwarded-for": "192.0.2.10" },
+      body: JSON.stringify({ level: "info", action: "page_view", message: "Page viewed", route: "/login" })
+    }));
+
+    expect(response.status).toBe(429);
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(response.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("fails closed in production when the persistent limiter is unavailable", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    checkPersistentRateLimit.mockResolvedValueOnce({ allowed: true, remaining: 29, resetAt: Date.now() + 60_000, persistent: false });
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://app.test" },
+      body: JSON.stringify({ level: "info", action: "page_view", message: "Page viewed", route: "/login" })
+    }));
+
+    expect(response.status).toBe(503);
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized and sensitive public payloads", async () => {
+    const { POST } = await import("../route");
+    const oversized = await POST(new Request("https://app.test/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://app.test" },
+      body: JSON.stringify({ level: "info", action: "page_view", message: "x".repeat(5000), route: "/login" })
+    }));
+    expect(oversized.status).toBe(413);
+
+    const sensitive = await POST(new Request("https://app.test/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://app.test" },
+      body: JSON.stringify({ level: "error", action: "page_view", message: "Bearer secret-value", route: "/login" })
+    }));
+    expect(sensitive.status).toBe(422);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects control characters in public log fields", async () => {
+    const { POST } = await import("../route");
+    const response = await POST(new Request("https://app.test/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://app.test" },
+      body: JSON.stringify({ level: "warn", action: "page_view", message: "Page\u0000viewed", route: "/login" })
+    }));
+
+    expect(response.status).toBe(422);
+    expect(checkPersistentRateLimit).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

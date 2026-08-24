@@ -261,7 +261,25 @@ class FakeSupabase {
   audit: Array<{ table: string; operation: string }> = [];
   private sequence = 1;
 
-  constructor(public readonly tables: Tables) {}
+  constructor(public readonly tables: Tables) {
+    const safeRecordFields = new Set([
+      "id", "upload_batch_id", "upload_sheet_id", "uploaded_by", "category", "row_index",
+      "has_errors", "created_at", "archived_at", "line_id", "mpn", "mpn_quoted",
+      "description", "generic", "qty", "req_qty", "date_code", "moq", "spq", "on_hand",
+      "lead_time_weeks", "transit_time_weeks", "earliest_shipping_date",
+      "shipping_point_country", "delivery_point", "profiles", "upload_batches"
+    ]);
+    this.tables.business_records_safe_v1 = (this.tables.business_records ?? []).map((row) =>
+      Object.fromEntries(Object.entries(row).filter(([field]) => safeRecordFields.has(field)))
+    );
+    const safeImportErrorFields = new Set([
+      "id", "trace_id", "upload_batch_id", "upload_sheet_id", "row_index", "column_name",
+      "error_type", "message", "severity", "created_at", "upload_batches", "upload_sheets"
+    ]);
+    this.tables.import_errors_safe_v1 = (this.tables.import_errors ?? []).map((row) =>
+      Object.fromEntries(Object.entries(row).filter(([field]) => safeImportErrorFields.has(field)))
+    );
+  }
 
   from(table: string) {
     return new FakeQuery(this, table);
@@ -314,12 +332,15 @@ const FUTURE = "2099-12-31T23:59:59.000Z";
 const NOW = "2026-07-30T12:00:00.000Z";
 const COMMERCIAL_TABLES = new Set([
   "business_records",
+  "business_records_safe_v1",
+  "business_records_commercial_v1",
   "upload_batches",
   "file_schema_profiles",
   "import_jobs",
   "upload_sheets",
   "import_job_error_summary",
   "import_errors",
+  "import_errors_safe_v1",
   "profiles",
   "opportunity_finder_jobs",
   "opportunity_finder_results"

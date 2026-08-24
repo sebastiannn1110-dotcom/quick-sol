@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import type { StockNeedsFilters, StockNeedsImportJob, StockNeedsProfile, StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
+import { businessRecordReadContract, type BusinessRecordReadContract } from "@/lib/security/business-records";
+import type { UserRole } from "@/lib/types";
 
-const BUSINESS_RECORD_SELECT: string = `id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`;
-const AI_SAFE_BUSINESS_RECORD_SELECT: string = `upload_batch_id,category,has_errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,${BUSINESS_RECORD_UPLOAD_RELATION}(detected_category,status,created_at)`;
+export const AI_SAFE_BUSINESS_RECORD_SELECT: string = "upload_batch_id,category,has_errors,mpn,mpn_quoted,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,upload_batches";
 const PROFILE_SELECT = "upload_batch_id,detected_template,detected_mappings_json,column_count";
 const JOB_SELECT = "upload_batch_id,status";
 
@@ -18,6 +18,7 @@ export type LoadStockNeedsInputOptions = {
    * process. Existing operational callers keep the richer shape by default.
    */
   includeRawData?: boolean;
+  role?: UserRole;
   /**
    * Uses one bounded records query across the visible uploads. This avoids the
    * former query-per-upload pattern for assistant summaries.
@@ -52,10 +53,10 @@ type NormalizedLoadOptions = {
   ownerId: string | null;
   maxUploads: number;
   recordsPerUploadLimit: number;
-  includeRawData: boolean;
   singleQueryLimit: number | null;
   mpn: string | null;
   complete: boolean;
+  recordContract: BusinessRecordReadContract;
 };
 
 async function loadVisibleUploadIds(supabase: SupabaseClient, options: NormalizedLoadOptions) {
@@ -91,8 +92,8 @@ async function loadVisibleUploadIds(supabase: SupabaseClient, options: Normalize
 
 async function loadRecordsForUpload(supabase: SupabaseClient, uploadId: string, options: NormalizedLoadOptions) {
   let query = supabase
-    .from("business_records")
-    .select(options.includeRawData ? BUSINESS_RECORD_SELECT : AI_SAFE_BUSINESS_RECORD_SELECT)
+    .from(options.recordContract.table)
+    .select(options.recordContract.select)
     .is("archived_at", null)
     .eq("upload_batch_id", uploadId)
     .order("created_at", { ascending: false })
@@ -148,8 +149,8 @@ async function loadCompleteRecords(
     const uploadChunk = uploadIds.slice(chunkStart, chunkStart + UPLOAD_FILTER_CHUNK_SIZE);
     for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
       let query = supabase
-        .from("business_records")
-        .select(options.includeRawData ? BUSINESS_RECORD_SELECT : AI_SAFE_BUSINESS_RECORD_SELECT)
+        .from(options.recordContract.table)
+        .select(options.recordContract.select)
         .is("archived_at", null)
         .in("upload_batch_id", uploadChunk)
         .order("created_at", { ascending: false })
@@ -200,8 +201,8 @@ async function loadRecordsInOneQuery(
   options: NormalizedLoadOptions
 ) {
   let query = supabase
-    .from("business_records")
-    .select(options.includeRawData ? BUSINESS_RECORD_SELECT : AI_SAFE_BUSINESS_RECORD_SELECT)
+    .from(options.recordContract.table)
+    .select(options.recordContract.select)
     .is("archived_at", null)
     .in("upload_batch_id", uploadIds)
     .order("created_at", { ascending: false })
@@ -223,12 +224,12 @@ export async function loadStockNeedsInput(
     ownerId: options.ownerId ?? null,
     maxUploads: Math.min(Math.max(Number(options.maxUploads ?? 20) || 20, 1), 50),
     recordsPerUploadLimit: Math.min(Math.max(Number(options.recordsPerUploadLimit ?? 5000) || 5000, 100), 10000),
-    includeRawData: options.includeRawData !== false,
     singleQueryLimit: options.singleQueryLimit == null
       ? null
       : Math.min(Math.max(Number(options.singleQueryLimit) || 1000, 100), 5000),
     mpn: options.mpn?.trim().replace(/[^A-Za-z0-9._/-]/g, "").slice(0, 80) || null,
     complete: options.complete === true,
+    recordContract: businessRecordReadContract(options.role ?? "employee", { aiSafe: options.includeRawData === false }),
   };
 
   const uploadIds = await loadVisibleUploadIds(supabase, safeOptions);

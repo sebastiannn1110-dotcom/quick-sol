@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/auth/context";
 import { recordsFilterSchema } from "@/lib/excel/validators";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
-import { RECORD_LIST_SELECT } from "@/lib/platform/query-columns";
+import { businessRecordReadContract } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,9 +27,10 @@ export async function GET(request: Request) {
     });
   }
 
+  const contract = businessRecordReadContract(context.profile.role);
   let query = context.supabase!
-    .from("business_records")
-    .select(RECORD_LIST_SELECT, {
+    .from(contract.table)
+    .select(contract.select, {
       count: "exact"
     })
     .is("archived_at", null)
@@ -48,5 +49,5 @@ export async function GET(request: Request) {
     count: count ?? 0,
     page: filters.page,
     pageSize: filters.pageSize
-  });
+  }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

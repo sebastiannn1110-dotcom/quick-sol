@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const { id } = await params;
-  const diagnostics = await getImportJobDiagnostics(context.service, id);
+  const diagnostics = await getImportJobDiagnostics(context.service, id, { trustedBackend: true });
   if (diagnostics?.safeFinalize.possible) {
     return superadminJson({
       error: "This job appears fully imported. Use safe finalize instead of retrying.",

@@ -7,7 +7,7 @@ import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
-import { RECORD_LIST_SELECT } from "@/lib/platform/query-columns";
+import { businessRecordReadContract, ilikeAny, permittedRecordSearchColumns } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,20 +63,21 @@ export async function GET(request: Request) {
           return { records: redactSensitiveFieldsForRole(filtered.slice(0, 50), context.profile.role), count: filtered.length };
         }
 
+        const contract = businessRecordReadContract(context.profile.role);
         const { data, error, count } = await safeQuery<unknown[]>(
           "business_records",
           logContext,
           () =>
             context
-              .supabase!.from("business_records")
-              .select(RECORD_LIST_SELECT, {
+              .supabase!.from(contract.table)
+              .select(contract.select, {
                 count: "exact"
               })
               .is("archived_at", null)
-              .textSearch("searchable_text", query, { type: "websearch" })
+              .or(ilikeAny(permittedRecordSearchColumns(context.profile.role), query))
               .limit(50),
           {
-            filters: { archived_at: null, textSearch: "searchable_text" },
+            filters: { archived_at: null, safeSearch: true },
             queryLength: query.length,
             limit: 50
           }
@@ -98,7 +99,7 @@ export async function GET(request: Request) {
       metadata: { queryLength: query.length, resultCount: result.count }
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     await logger.error({
       ...logContext,

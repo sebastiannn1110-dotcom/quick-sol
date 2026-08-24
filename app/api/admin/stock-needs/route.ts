@@ -66,6 +66,7 @@ export async function GET(request: Request) {
       maxUploads: 20,
       recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000,
       complete: true,
+      role: context.profile.role,
     });
 
     const result = buildStockNeedsResult({ records: input.records, profiles: input.profiles, importJobs: input.importJobs, filters });
