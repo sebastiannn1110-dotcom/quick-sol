@@ -111,4 +111,73 @@ describe("POST /api/logs/client", () => {
     expect(checkPersistentRateLimit).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
   });
+
+  it("accepts authenticated logging behind a trusted reverse proxy", async () => {
+    const insert = vi.fn(async () => ({ error: null }));
+    const from = vi.fn(() => ({ insert }));
+    getAuthContext.mockResolvedValueOnce({
+      user: { id: "00000000-0000-4000-8000-000000000010" },
+      profile: {
+        id: "00000000-0000-4000-8000-000000000010",
+        email: "redacted@example.test",
+        role: "super_admin_dev",
+        is_active: true
+      },
+      supabase: { from },
+      isDemoMode: false,
+      requestMeta: {
+        traceId: "00000000-0000-4000-8000-000000000011",
+        requestId: "00000000-0000-4000-8000-000000000012",
+        route: "/api/logs/client",
+        ipAddress: "192.0.2.20",
+        userAgent: "test"
+      }
+    });
+    const { POST } = await import("../route");
+    const response = await POST(new Request("http://10.0.0.5:10000/api/logs/client", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://quick-sol.onrender.com",
+        "x-forwarded-host": "quick-sol.onrender.com",
+        "x-forwarded-proto": "https"
+      },
+      body: JSON.stringify({
+        level: "info",
+        action: "page_view",
+        message: "Page viewed",
+        route: "/records",
+        metadata: { source: "test" }
+      })
+    }));
+
+    expect(response.status).toBe(200);
+    expect(getAuthContext).toHaveBeenCalledOnce();
+    expect(from).toHaveBeenCalledWith("client_logs");
+    expect(insert).toHaveBeenCalledOnce();
+  });
+
+  it("continues rejecting missing and mismatched origins before authentication", async () => {
+    const { POST } = await import("../route");
+    const payload = JSON.stringify({ level: "info", action: "page_view", message: "Page viewed", route: "/records" });
+    const missing = await POST(new Request("https://quick-sol.onrender.com/api/logs/client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload
+    }));
+    const mismatched = await POST(new Request("http://10.0.0.5:10000/api/logs/client", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil.example",
+        "x-forwarded-host": "quick-sol.onrender.com",
+        "x-forwarded-proto": "https"
+      },
+      body: payload
+    }));
+
+    expect(missing.status).toBe(403);
+    expect(mismatched.status).toBe(403);
+    expect(getAuthContext).not.toHaveBeenCalled();
+  });
 });

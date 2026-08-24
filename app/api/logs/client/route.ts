@@ -37,7 +37,21 @@ const MAX_BODY_BYTES = 4096;
 
 function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");
-  return Boolean(origin && origin === new URL(request.url).origin);
+  if (!origin) return false;
+
+  let supplied: URL;
+  try {
+    supplied = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const requestUrl = new URL(request.url);
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const expectedHost = forwardedHost || requestUrl.host;
+  const expectedProtocol = forwardedProto ? `${forwardedProto}:` : requestUrl.protocol;
+  return supplied.host === expectedHost && supplied.protocol === expectedProtocol;
 }
 
 function containsForbiddenPublicContent(value: unknown) {
