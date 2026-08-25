@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { finalizeImportJobSafely } from "@/lib/upload/job-diagnostics";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,7 +12,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (context.isDemoMode || !context.supabase) return NextResponse.json({ error: "Supabase is required." }, { status: 503 });
 
   const { id } = await params;
-  const result = await finalizeImportJobSafely(context.supabase, id, { reason: "Admin safe finalize requested." });
+  const service = createSupabaseServiceRoleClient();
+  if (!service) return NextResponse.json({ error: "Trusted backend configuration is required." }, { status: 503 });
+  const result = await finalizeImportJobSafely(service, id, { actorId: context.profile.id, reason: "Admin safe finalize requested." });
   if (!result.diagnostics) return NextResponse.json({ error: "Import job not found." }, { status: 404 });
   if (!result.finalized) {
     return NextResponse.json({ error: "Safe finalize is not available for this job.", diagnostics: result.diagnostics }, { status: 409 });

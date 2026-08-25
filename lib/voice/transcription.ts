@@ -1,5 +1,13 @@
 import OpenAI, { toFile } from "openai";
 import { detectAssistantLanguage, normalizeAssistantLanguage, type AssistantLanguage } from "@/lib/ai/language-detection";
+import {
+  createTimedSignal,
+  getVoiceMaxAudioBytes,
+  getVoiceMaxTranscriptChars,
+  getVoiceTranscriptionTimeoutMs,
+  validateTranscript,
+  VoiceRequestError
+} from "@/lib/voice/safety";
 
 const ALLOWED_AUDIO_TYPES = new Set([
   "audio/webm",
@@ -29,18 +37,37 @@ const EXTENSION_BY_TYPE: Record<string, string> = {
   "audio/ogg": "ogg"
 };
 
-export class VoiceInputError extends Error {
-  status = 400;
+export class VoiceInputError extends VoiceRequestError {
+  constructor(
+    code:
+      | "audio_empty"
+      | "audio_too_large"
+      | "unsupported_audio"
+      | "transcript_empty"
+      | "transcript_too_long"
+      | "transcription_unreadable",
+    status = 400
+  ) {
+    super(code, status);
+    this.name = "VoiceInputError";
+  }
 }
 
-export class VoiceConfigError extends Error {
-  status = 503;
+export class VoiceConfigError extends VoiceRequestError {
+  constructor() {
+    super("transcription_not_configured", 503);
+    this.name = "VoiceConfigError";
+  }
 }
 
-export function getVoiceMaxAudioBytes() {
-  const mb = Number(process.env.VOICE_MAX_AUDIO_MB ?? 15);
-  return (Number.isFinite(mb) && mb > 0 ? mb : 15) * 1024 * 1024;
+export class VoiceTranscriptionTimeoutError extends VoiceRequestError {
+  constructor() {
+    super("transcription_timeout", 504);
+    this.name = "VoiceTranscriptionTimeoutError";
+  }
 }
+
+export { getVoiceMaxAudioBytes, getVoiceMaxTranscriptChars };
 
 export function normalizeLanguage(language: unknown): AssistantLanguage {
   return normalizeAssistantLanguage(language);
@@ -55,13 +82,13 @@ export function normalizeAudioMimeType(type: string) {
 }
 
 export function validateAudioFile(file: File) {
-  if (!file.size) throw new VoiceInputError("Audio file is empty.");
+  if (!file.size) throw new VoiceInputError("audio_empty");
   if (file.size > getVoiceMaxAudioBytes()) {
-    throw new VoiceInputError(`Audio file exceeds the ${Math.round(getVoiceMaxAudioBytes() / 1024 / 1024)} MB limit.`);
+    throw new VoiceInputError("audio_too_large", 413);
   }
   const normalizedType = normalizeAudioMimeType(file.type);
   if (normalizedType && !ALLOWED_AUDIO_TYPES.has(normalizedType)) {
-    throw new VoiceInputError("Unsupported audio format. Use webm, mp3, wav, m4a or ogg.");
+    throw new VoiceInputError("unsupported_audio", 422);
   }
 }
 
@@ -88,35 +115,53 @@ function isUnreadableAudioError(error: unknown) {
 
 async function fileWithTranscriptionName(file: File) {
   const normalizedType = normalizeAudioMimeType(file.type) || "audio/webm";
-  const hasExtension = Boolean(file.name && /\.[a-z0-9]+$/i.test(file.name));
   const extension = EXTENSION_BY_TYPE[normalizedType] ?? "webm";
-  const name = hasExtension ? file.name : `voice-message.${extension}`;
-  return toFile(await file.arrayBuffer(), name, { type: normalizedType });
+  return toFile(await file.arrayBuffer(), `voice-message.${extension}`, { type: normalizedType });
 }
 
-export async function transcribeAudio(file: File) {
+export async function transcribeAudio(file: File, options: { signal?: AbortSignal } = {}) {
+  if (options.signal?.aborted) throw new VoiceRequestError("request_cancelled", 499);
+  validateAudioFile(file);
   const apiKey = getOpenAIKey();
   if (!apiKey) {
-    throw new VoiceConfigError("Voice assistant transcription is not configured. Please add OPEN_IA.");
+    throw new VoiceConfigError();
   }
 
-  validateAudioFile(file);
-
   const client = new OpenAI({ apiKey });
-  const result = await client.audio.transcriptions.create({
-    file: await fileWithTranscriptionName(file),
-    model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
-    response_format: "json"
-  }).catch((error: unknown) => {
+  const timedSignal = createTimedSignal(getVoiceTranscriptionTimeoutMs(), options.signal);
+  let result: unknown;
+  try {
+    result = await client.audio.transcriptions.create({
+      file: await fileWithTranscriptionName(file),
+      model: process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe",
+      response_format: "json"
+    }, {
+      signal: timedSignal.signal
+    });
+  } catch (error) {
+    if (timedSignal.didTimeout()) throw new VoiceTranscriptionTimeoutError();
+    if (options.signal?.aborted) throw new VoiceRequestError("request_cancelled", 499);
     if (isUnreadableAudioError(error)) {
-      throw new VoiceInputError("OpenAI could not read this recording. Please record again or upload an mp3, wav, m4a, ogg, or webm file.");
+      throw new VoiceInputError("transcription_unreadable", 422);
     }
     throw error;
-  });
+  } finally {
+    timedSignal.dispose();
+  }
 
   const payload = result as { text?: string; language?: string; duration?: number };
-  const transcript = payload.text?.trim() ?? "";
-  if (!transcript) throw new VoiceInputError("OpenAI transcription returned an empty transcript.");
+  let transcript: string;
+  try {
+    transcript = validateTranscript(payload.text ?? "");
+  } catch (error) {
+    if (error instanceof VoiceRequestError) {
+      throw new VoiceInputError(
+        error.code === "transcript_too_long" ? "transcript_too_long" : "transcript_empty",
+        error.status
+      );
+    }
+    throw error;
+  }
 
   return {
     transcript,

@@ -1,11 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  buildSalesOpportunitiesResult,
-  type SalesOpportunitiesResult
-} from "@/lib/opportunities/opportunities";
-import { enrichOpportunitiesWithConfidence } from "@/lib/opportunities/quality";
-import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
-import { normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
+  aggregateSummaryStates,
+  isSummaryContractUnavailable,
+  loadBusinessSummaryState,
+  type SummaryReadState
+} from "@/lib/performance/summary-readiness";
 import type { UserRole } from "@/lib/types";
 import {
   type AccountClient,
@@ -17,7 +16,7 @@ import {
 } from "@/lib/clients/clients";
 
 const CLIENT_SELECT = "id,name,description,industry,region,website,logo_path,status,created_at,updated_at,archived_at";
-const ASSIGNMENT_SELECT = "client_id,upload_batch_id,assigned_at,upload_batches(id,original_file_name,detected_category,status,total_rows,warning_count,created_at,archived_at)";
+const ASSIGNMENT_SELECT = "id,client_id,upload_batch_id,assigned_at,upload_batches(id,original_file_name,detected_category,status,total_rows,warning_count,created_at,archived_at)";
 
 type ClientRow = {
   id: string;
@@ -34,6 +33,7 @@ type ClientRow = {
 };
 
 type AssignmentRow = {
+  id?: string;
   client_id: string;
   upload_batch_id: string;
   assigned_at: string;
@@ -49,17 +49,16 @@ type AssignmentRow = {
   } | null;
 };
 
+type ClientPrivateImageRow = {
+  client_id: string;
+  identification_image_path: string | null;
+};
+
 type ClientListOptions = {
   clientId?: string | null;
   includeArchived?: boolean;
   limit?: number;
 };
-
-async function signedAssetUrl(supabase: SupabaseClient, path: string | null) {
-  if (!path) return null;
-  const { data, error } = await supabase.storage.from("client-assets").createSignedUrl(path, 3600);
-  return error ? null : data.signedUrl;
-}
 
 async function loadClientRows(supabase: SupabaseClient, options: ClientListOptions) {
   let query = supabase
@@ -78,13 +77,44 @@ async function loadClientRows(supabase: SupabaseClient, options: ClientListOptio
 
 async function loadAssignments(supabase: SupabaseClient, clientIds: string[]) {
   if (!clientIds.length) return [] as AssignmentRow[];
+  const rows: AssignmentRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("client_upload_assignments")
+      .select(ASSIGNMENT_SELECT)
+      .in("client_id", clientIds)
+      .order("assigned_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + 999);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as AssignmentRow[];
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
+  return rows;
+}
+
+async function loadAuthorizedIdentificationImagePaths(
+  supabase: SupabaseClient,
+  clientIds: string[],
+  canViewPrivateIdentification: boolean
+) {
+  if (!canViewPrivateIdentification || !clientIds.length) {
+    return new Map<string, string | null>();
+  }
+
   const { data, error } = await supabase
-    .from("client_upload_assignments")
-    .select(ASSIGNMENT_SELECT)
-    .in("client_id", clientIds)
-    .order("assigned_at", { ascending: false });
+    .from("client_private_details")
+    .select("client_id,identification_image_path")
+    .in("client_id", clientIds);
   if (error) throw error;
-  return (data ?? []) as unknown as AssignmentRow[];
+
+  return new Map(
+    ((data ?? []) as ClientPrivateImageRow[]).map((row) => [
+      row.client_id,
+      row.identification_image_path
+    ])
+  );
 }
 
 function assignmentsForClient(assignments: AssignmentRow[], clientId: string) {
@@ -96,17 +126,10 @@ function assignmentsForClient(assignments: AssignmentRow[], clientId: string) {
   );
 }
 
-function opportunityMetrics(result: SalesOpportunitiesResult) {
-  const confidence = enrichOpportunitiesWithConfidence(result);
-  return {
-    opportunityCount: result.totals.totalOpportunities,
-    immediateSaleCount: result.totals.immediateSale,
-    partialSaleCount: result.totals.partialSale,
-    sourcingNeededCount: result.totals.sourcingNeeded,
-    stockWithoutDemandCount: result.totals.stockWithoutDemand,
-    highConfidenceCount: confidence.totals.highConfidence,
-    highConfidenceTruncated: confidence.meta.confidenceTruncated
-  };
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function listClientSummaries(
@@ -115,34 +138,58 @@ export async function listClientSummaries(
   options: ClientListOptions = {}
 ): Promise<AccountClient[]> {
   const clients = await loadClientRows(supabase, options);
-  const assignments = await loadAssignments(supabase, clients.map((client) => client.id));
-  const allUploadIds = Array.from(new Set(assignments
-    .filter((assignment) => assignment.upload_batches && !assignment.upload_batches.archived_at && assignment.upload_batches.status !== "archived")
-    .map((assignment) => assignment.upload_batch_id)));
-  const input = allUploadIds.length
-    ? await loadStockNeedsInput(supabase, {
-        uploadIds: allUploadIds,
-        maxUploads: Math.min(Math.max(allUploadIds.length, 1), 50),
-        recordsPerUploadLimit: 5000
-      })
-    : { records: [], profiles: [], importJobs: [], uploadIds: [] };
   const capabilities = clientCapabilities(role);
+  const clientIds = clients.map((client) => client.id);
+  const [assignments, identificationImagePaths, lifecycle] = await Promise.all([
+    loadAssignments(supabase, clientIds),
+    loadAuthorizedIdentificationImagePaths(supabase, clientIds, capabilities.canViewPrivateIdentification),
+    clientIds.length
+      ? loadBusinessSummaryState(supabase, { clientId: options.clientId })
+      : Promise.resolve<SummaryReadState>({
+          status: "ready",
+          currentVersion: null,
+          requiredVersion: null,
+          retryable: false,
+          retryAfterSeconds: 0
+        })
+  ]);
+  const metricsResult = lifecycle.status === "ready" && clientIds.length
+    ? await supabase.rpc("get_client_business_metrics_v1", { target_client_ids: clientIds })
+    : { data: [], error: null };
+  const metricsLifecycle: SummaryReadState = metricsResult.error
+    ? {
+        status: isSummaryContractUnavailable(metricsResult.error) ? "contract_unavailable" : "stale",
+        currentVersion: lifecycle.currentVersion,
+        requiredVersion: lifecycle.requiredVersion,
+        retryable: !isSummaryContractUnavailable(metricsResult.error),
+        retryAfterSeconds: isSummaryContractUnavailable(metricsResult.error) ? 60 : 3
+      }
+    : lifecycle;
+  const metrics = new Map(((metricsResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [String(row.client_id), row]));
 
-  return Promise.all(clients.map(async (client) => {
+  return clients.map((client) => {
     const clientAssignments = assignmentsForClient(assignments, client.id);
-    const uploadIds = new Set(clientAssignments.map((assignment) => assignment.upload_batch_id));
-    const records = input.records.filter((record) => uploadIds.has(record.upload_batch_id));
-    const profiles = input.profiles.filter((profile) => uploadIds.has(profile.upload_batch_id));
-    const importJobs = input.importJobs.filter((job) => uploadIds.has(job.upload_batch_id));
-    const opportunities = buildSalesOpportunitiesResult({
-      records,
-      profiles,
-      importJobs,
-      filters: { limit: 200 }
-    });
-    const mpns = new Set(records
-      .map((record) => normalizePartNumberForMatch(record.mpn ?? record.mpn_quoted ?? null))
-      .filter(Boolean));
+    const metric = metrics.get(client.id);
+    const clientLifecycle: SummaryReadState = metricsLifecycle.status !== "ready"
+      ? metricsLifecycle
+      : !metric
+        ? {
+          status: "contract_unavailable",
+          currentVersion: metricsLifecycle.currentVersion,
+          requiredVersion: metricsLifecycle.requiredVersion,
+          retryable: false,
+          retryAfterSeconds: 60
+        }
+        : metric.summary_ready === true
+          ? metricsLifecycle
+          : {
+              status: "stale",
+              currentVersion: metricsLifecycle.currentVersion,
+              requiredVersion: metricsLifecycle.requiredVersion,
+              retryable: true,
+              retryAfterSeconds: 3
+            };
+    const summaryReady = clientLifecycle.status === "ready";
 
     return {
       id: client.id,
@@ -151,16 +198,53 @@ export async function listClientSummaries(
       industry: client.industry,
       region: client.region,
       website: client.website,
-      logoUrl: await signedAssetUrl(supabase, client.logo_path),
+      logoUrl: client.logo_path ? `/api/clients/${client.id}/image?kind=logo` : null,
+      authorizedIdentificationImageUrl: identificationImagePaths.get(client.id)
+        ? `/api/clients/${client.id}/image?kind=identification`
+        : null,
       status: client.status,
       fileCount: clientAssignments.length,
-      mpnCount: mpns.size,
-      ...opportunityMetrics(opportunities),
+      summaryStatus: clientLifecycle.status,
+      summaryCurrentVersion: clientLifecycle.currentVersion,
+      summaryRequiredVersion: clientLifecycle.requiredVersion,
+      mpnCount: summaryReady ? nullableNumber(metric?.mpn_count) : null,
+      opportunityCount: summaryReady ? nullableNumber(metric?.opportunity_count) : null,
+      immediateSaleCount: summaryReady ? nullableNumber(metric?.immediate_sale_count) : null,
+      partialSaleCount: summaryReady ? nullableNumber(metric?.partial_sale_count) : null,
+      sourcingNeededCount: summaryReady ? nullableNumber(metric?.sourcing_needed_count) : null,
+      stockWithoutDemandCount: summaryReady ? nullableNumber(metric?.stock_without_demand_count) : null,
+      highConfidenceCount: summaryReady ? nullableNumber(metric?.high_confidence_count) : null,
+      highConfidenceTruncated: summaryReady && typeof metric?.high_confidence_truncated === "boolean"
+        ? metric.high_confidence_truncated
+        : null,
       createdAt: client.created_at,
       updatedAt: client.updated_at,
       canManage: capabilities.canManage
     };
-  }));
+  });
+}
+
+export function aggregateClientSummaryState(clients: AccountClient[]) {
+  return aggregateSummaryStates(clients.map((client) => ({
+    status: client.summaryStatus,
+    currentVersion: client.summaryCurrentVersion,
+    requiredVersion: client.summaryRequiredVersion,
+    retryable: client.summaryStatus !== "ready" && client.summaryStatus !== "contract_unavailable",
+    retryAfterSeconds: client.summaryStatus === "failed" ? 30 : client.summaryStatus === "contract_unavailable" ? 60 : 3
+  })));
+}
+
+export async function clientExistsInScope(
+  supabase: SupabaseClient,
+  role: UserRole,
+  clientId: string
+) {
+  const clients = await loadClientRows(supabase, {
+    clientId,
+    includeArchived: role !== "employee",
+    limit: 1
+  });
+  return clients.length === 1;
 }
 
 export async function getClientDetail(
@@ -175,11 +259,11 @@ export async function getClientDetail(
   if (clientCapabilities(role).canViewPrivateIdentification) {
     const { data } = await supabase
       .from("client_private_details")
-      .select("identification_image_path,internal_notes")
+      .select("internal_notes")
       .eq("client_id", clientId)
       .maybeSingle();
     privateDetails = {
-      identificationImageUrl: await signedAssetUrl(supabase, data?.identification_image_path ?? null),
+      identificationImageUrl: client.authorizedIdentificationImageUrl,
       internalNotes: data?.internal_notes ?? null
     };
   }

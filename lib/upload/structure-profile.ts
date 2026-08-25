@@ -286,7 +286,7 @@ function templateFromSignals(input: {
   return "general";
 }
 
-function profileFromDb(row: JsonRecord): UploadStructureProfile {
+export function uploadStructureProfileFromDb(row: JsonRecord): UploadStructureProfile {
   return {
     id: String(row.id ?? ""),
     uploadBatchId: String(row.upload_batch_id ?? ""),
@@ -437,7 +437,7 @@ export async function ensureUploadStructureProfile(
     .eq("upload_batch_id", uploadBatchId)
     .maybeSingle();
   if (existing.error) throw existing.error;
-  if (existing.data) return profileFromDb(existing.data as unknown as JsonRecord);
+  if (existing.data) return uploadStructureProfileFromDb(existing.data as unknown as JsonRecord);
 
   const uploadResult = await supabase
     .from("upload_batches")
@@ -495,7 +495,7 @@ export async function ensureUploadStructureProfile(
     .select(PROFILE_SELECT)
     .single();
   if (upsertResult.error) throw upsertResult.error;
-  return profileFromDb(upsertResult.data as unknown as JsonRecord);
+  return uploadStructureProfileFromDb(upsertResult.data as unknown as JsonRecord);
 }
 
 export function formatDetectedFields(profile: UploadStructureProfile) {

@@ -7,10 +7,14 @@ function source(relativePath: string) {
 }
 
 describe("AI upload profile integration", () => {
-  it("answers upload column questions from structural profiles", () => {
+  it("answers upload column questions from stored structural profiles without hidden writes", () => {
     const databaseTools = source("lib/ai/database-tools.ts");
 
-    expect(databaseTools).toContain("ensureUploadStructureProfile");
+    expect(databaseTools).toContain('.from("file_schema_profiles")');
+    expect(databaseTools).toContain("uploadStructureProfileFromDb");
+    expect(databaseTools).not.toContain("ensureUploadStructureProfile");
+    const withoutAllowlistedReadRpc = databaseTools.replace('.rpc("get_dashboard_summary_v1")', "");
+    expect(withoutAllowlistedReadRpc).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
     expect(databaseTools).toContain("formatColumnsAnswer(latestProfile)");
     expect(databaseTools).toContain("formatDetectedFields(latestProfile)");
     expect(databaseTools).toContain("profiles: profilesList.map");

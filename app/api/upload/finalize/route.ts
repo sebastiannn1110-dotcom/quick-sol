@@ -4,6 +4,8 @@ import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { SupabaseError, ValidationError } from "@/lib/errors/AppError";
 import { handleRouteError } from "@/lib/errors/errorHandler";
 import { logger } from "@/lib/logger/logger";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { importLifecycleError } from "@/lib/upload/lifecycle-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,31 +44,18 @@ export async function POST(request: Request) {
     if (!parsed.success) throw new ValidationError("Upload finalize validation failed.", { issues: parsed.error.issues });
     if (context.isDemoMode || !context.supabase) return NextResponse.json({ error: "Background uploads require Supabase." }, { status: 503 });
 
-    const queuedAt = new Date().toISOString();
-    const { error: batchError } = await context.supabase
-      .from("upload_batches")
-      .update({
-        status: "queued",
-        upload_progress_percent: parsed.data.uploadProgressPercent,
-        upload_speed_bps: parsed.data.uploadSpeedBps ?? null,
-        upload_eta_seconds: parsed.data.uploadEtaSeconds ?? null,
-        processing_progress_percent: 0,
-        queued_at: queuedAt,
-        error_message: null
-      })
-      .eq("id", parsed.data.uploadId)
-      .eq("uploaded_by", context.profile.id);
-    if (batchError) throw new SupabaseError("Unable to finalize upload batch.", { table: "upload_batches", batchError });
-
-    const { data: job, error: jobError } = await context.supabase
-      .from("import_jobs")
-      .update({ status: "queued", progress_percent: 0, error_message: null, next_retry_at: null, updated_at: queuedAt })
-      .eq("id", parsed.data.jobId)
-      .eq("upload_batch_id", parsed.data.uploadId)
-      .eq("uploaded_by", context.profile.id)
-      .select("*")
-      .single();
-    if (jobError || !job) throw new SupabaseError("Unable to queue import job.", { table: "import_jobs", jobError });
+    const service = createSupabaseServiceRoleClient();
+    if (!service) return NextResponse.json({ error: "Background uploads require trusted server configuration." }, { status: 503 });
+    const { data: job, error: jobError } = await service.rpc("finalize_import_upload_v2", {
+      input_actor_id: context.profile.id,
+      input_upload_id: parsed.data.uploadId,
+      input_job_id: parsed.data.jobId
+    });
+    if (jobError) {
+      const mapped = importLifecycleError(jobError, "Unable to queue import job.");
+      return NextResponse.json({ error: mapped.error }, { status: mapped.status });
+    }
+    if (!job) throw new SupabaseError("Unable to queue import job.", { table: "import_jobs" });
 
     await logger.info({
       ...logContext,
@@ -74,8 +63,8 @@ export async function POST(request: Request) {
       action: "upload_completed",
       message: "Direct storage upload finalized by client.",
       status: "completed",
-      uploadBatchId: parsed.data.uploadId,
-      metadata: { jobId: parsed.data.jobId, uploadProgressPercent: parsed.data.uploadProgressPercent }
+      uploadBatchId: parsed.data.uploadId.slice(0, 8),
+      metadata: { jobRef: parsed.data.jobId.slice(0, 8), uploadProgressPercent: 100 }
     });
     await logger.info({
       ...logContext,
@@ -83,8 +72,8 @@ export async function POST(request: Request) {
       action: "job_queued",
       message: "Import job queued after direct storage upload.",
       status: "completed",
-      uploadBatchId: parsed.data.uploadId,
-      metadata: { jobId: parsed.data.jobId }
+      uploadBatchId: parsed.data.uploadId.slice(0, 8),
+      metadata: { jobRef: parsed.data.jobId.slice(0, 8) }
     });
     await logAuditEvent(context, "import_job_queued", "upload_batch", parsed.data.uploadId, { jobId: parsed.data.jobId });
 

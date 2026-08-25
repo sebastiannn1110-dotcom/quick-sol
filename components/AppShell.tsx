@@ -1,34 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import Navbar from "@/components/Navbar";
 import PageViewLogger from "@/components/PageViewLogger";
-import AIAssistantWidget from "@/components/AIAssistantWidget";
+import LazyAIAssistantLauncher from "@/components/LazyAIAssistantLauncher";
 import { LanguageProvider } from "@/components/LanguageProvider";
-import type { Profile } from "@/lib/types";
+import { ProfileProvider, useProfile } from "@/components/ProfileProvider";
 
 function ShellContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicPage = ["/login", "/forgot-password", "/reset-password"].includes(pathname);
   const isSuperadminArea = pathname.startsWith("/admindev");
   const isAdminArea = pathname.startsWith("/admin");
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  useEffect(() => {
-    if (isPublicPage || isSuperadminArea) return;
-
-    async function loadProfile() {
-      const response = await fetch("/api/me", { cache: "no-store" });
-      if (response.ok) {
-        const payload = (await response.json()) as { profile: Profile };
-        setProfile(payload.profile);
-      }
-    }
-
-    loadProfile();
-  }, [isPublicPage, isSuperadminArea]);
+  const { profile } = useProfile();
 
   if (isSuperadminArea) {
     return <main className="min-h-screen bg-slate-950">{children}</main>;
@@ -53,7 +38,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
-      <AIAssistantWidget profile={profile} />
+      <LazyAIAssistantLauncher profile={profile} />
     </div>
   );
 }
@@ -61,7 +46,9 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <LanguageProvider>
-      <ShellContent>{children}</ShellContent>
+      <ProfileProvider>
+        <ShellContent>{children}</ShellContent>
+      </ProfileProvider>
     </LanguageProvider>
   );
 }

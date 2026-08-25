@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getClientDetail, listClientUploadIds } from "@/lib/clients/data-source";
+import { clientExistsInScope } from "@/lib/clients/data-source";
 import {
-  buildSalesOpportunitiesResult,
+  formatOpportunityReason,
+  formatRecommendedAction,
   type OpportunityType,
   type SalesOpportunitiesResult,
   type SalesOpportunityFilters
@@ -10,7 +11,7 @@ import {
   enrichOpportunitiesWithConfidence,
   type OpportunityConfidenceLabel
 } from "@/lib/opportunities/quality";
-import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
+import { requireBusinessSummaryReady, requireReadySummary } from "@/lib/performance/summary-readiness";
 import type { UserRole } from "@/lib/types";
 
 const OPPORTUNITY_TYPES = new Set<OpportunityType>([
@@ -101,25 +102,34 @@ export async function loadSalesOpportunities(
   role: UserRole,
   filters: SalesOpportunityRequestFilters
 ) {
-  let uploadIds: string[] | undefined;
   if (filters.clientId) {
-    const client = await getClientDetail(supabase, role, filters.clientId);
-    if (!client) return null;
-    uploadIds = await listClientUploadIds(supabase, filters.clientId);
+    if (!await clientExistsInScope(supabase, role, filters.clientId)) return null;
   }
 
-  const input = await loadStockNeedsInput(supabase, {
-    filters: { uploadBatchId: filters.uploadBatchId },
-    uploadIds,
-    maxUploads: uploadIds ? Math.min(Math.max(uploadIds.length, 1), 50) : 30,
-    recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000
+  await requireBusinessSummaryReady(supabase, {
+    uploadBatchId: filters.uploadBatchId,
+    clientId: filters.clientId
   });
-  const result = buildSalesOpportunitiesResult({
-    records: input.records,
-    profiles: input.profiles,
-    importJobs: input.importJobs,
-    filters
+
+  const summary = await supabase.rpc("get_sales_opportunities_page_v1", {
+    p_limit: filters.limit ?? 50,
+    p_offset: filters.offset ?? 0,
+    p_q: filters.q ?? null,
+    p_mpn: filters.mpn ?? null,
+    p_customer: filters.customer ?? null,
+    p_supplier: filters.supplier ?? null,
+    p_manufacturer: filters.manufacturer ?? null,
+    p_opportunity_type: filters.opportunityType ?? null,
+    p_upload_batch_id: filters.uploadBatchId ?? null,
+    p_client_id: filters.clientId ?? null
   });
-  const assignments = await loadAccountClientAssignments(supabase, input.uploadIds);
-  return enrichOpportunitiesWithConfidence(attachAccountClients(result, assignments), filters.confidence);
+  const fast = requireReadySummary<SalesOpportunitiesResult & { summaryReady?: boolean }>(summary.data, summary.error);
+  fast.items = fast.items.map((item) => ({
+    ...item,
+    reason: formatOpportunityReason(item),
+    recommendedAction: formatRecommendedAction(item)
+  }));
+  const pageUploadIds = Array.from(new Set(fast.items.flatMap((item) => item.sourceUploads.map((upload) => upload.uploadBatchId))));
+  const assignments = await loadAccountClientAssignments(supabase, pageUploadIds);
+  return enrichOpportunitiesWithConfidence(attachAccountClients(fast, assignments), filters.confidence);
 }

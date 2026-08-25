@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
+import {
+  isSummaryUnavailableError,
+  requireBusinessSummaryReady,
+  requireReadySummary,
+  summaryResponseHeaders,
+  summaryUnavailableHttpStatus,
+  summaryUnavailablePayload
+} from "@/lib/performance/summary-readiness";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
-import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
 import { buildStockNeedsResult, type CoverageStatus, type StockNeedsFilters } from "@/lib/stock-needs/stock-needs";
 
 export const runtime = "nodejs";
@@ -45,14 +52,29 @@ export async function GET(request: Request) {
   }
 
   try {
-    const input = await loadStockNeedsInput(context.supabase, {
-      filters,
-      maxUploads: 20,
-      recordsPerUploadLimit: filters.uploadBatchId ? 10000 : 5000
+    await requireBusinessSummaryReady(context.supabase, { uploadBatchId: filters.uploadBatchId });
+    const summary = await context.supabase.rpc("get_stock_needs_page_v1", {
+      p_limit: filters.limit,
+      p_offset: filters.offset,
+      p_q: filters.q ?? null,
+      p_customer: filters.customer ?? null,
+      p_supplier: filters.supplier ?? null,
+      p_manufacturer: filters.manufacturer ?? null,
+      p_status: filters.status ?? null,
+      p_coverage: filters.coverageStatus ?? null,
+      p_upload_batch_id: filters.uploadBatchId ?? null
     });
-    const result = buildStockNeedsResult({ records: input.records, profiles: input.profiles, importJobs: input.importJobs, filters });
-    return NextResponse.json(redactSensitiveFieldsForRole(result, context.profile.role));
-  } catch {
+    const result = requireReadySummary(summary.data, summary.error);
+    return NextResponse.json(redactSensitiveFieldsForRole(result, context.profile.role), {
+      headers: summaryResponseHeaders()
+    });
+  } catch (error) {
+    if (isSummaryUnavailableError(error)) {
+      return NextResponse.json(summaryUnavailablePayload(error.state), {
+        status: summaryUnavailableHttpStatus(error.state),
+        headers: summaryResponseHeaders(error.state)
+      });
+    }
     return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });
   }
 }

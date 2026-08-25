@@ -1,0 +1,116 @@
+{
+  "verdict": "CONDITIONAL GO",
+  "currentBranch": "feat/ai-assistant-production-readiness",
+  "head": "af465615c95c30bbf946c18df503f5f3bb9e1cba",
+  "originMain": "49c3dbf74a5818aef073107d7a6f940374afed91",
+  "workingTreeFiles": 97,
+  "branches": [
+    {
+      "name": "main",
+      "head": "9b8a29d60fd0ff9bd71e3391b31c2a4950519547",
+      "ahead": 0,
+      "behind": 2,
+      "integrated": true
+    },
+    {
+      "name": "origin/main",
+      "head": "49c3dbf74a5818aef073107d7a6f940374afed91",
+      "ahead": 0,
+      "behind": 0,
+      "integrated": true
+    },
+    {
+      "name": "fix/opportunity-finder-hardening",
+      "head": "6a355f0f11b141a42afcbd4bbe2fa4c4c27fb6c1",
+      "ahead": 0,
+      "behind": 1,
+      "integrated": true
+    },
+    {
+      "name": "feat/ai-assistant-production-readiness",
+      "head": "af465615c95c30bbf946c18df503f5f3bb9e1cba",
+      "ahead": 6,
+      "behind": 0,
+      "integrated": false
+    }
+  ],
+  "features": {
+    "opportunityFinderHardening": "Integrated in origin/main; the hardening commit and merge commit have identical trees.",
+    "opportunityFinderAdvanced": "Committed on the current feature branch, applied remotely, not integrated into origin/main.",
+    "singleFile": "Implemented and tested only in the local working tree; migration is not remote.",
+    "performance": "Implemented and tested only in the local working tree; migration is not remote.",
+    "aiAssistant": "Six commits are on the current feature branch and not in origin/main; remote AI migrations are already applied.",
+    "clientsPresentation": "Committed presentation changes are on the current branch; later performance-compatible client changes are only in the working tree."
+  },
+  "migrations": [
+    {
+      "version": "20260730120000",
+      "name": "ai_conversation_memory",
+      "inOriginMain": false,
+      "inCurrentHead": true,
+      "remoteApplied": true
+    },
+    {
+      "version": "20260730123000",
+      "name": "ai_observability_retention",
+      "inOriginMain": false,
+      "inCurrentHead": true,
+      "remoteApplied": true
+    },
+    {
+      "version": "20260808120000",
+      "name": "opportunity_finder_advanced",
+      "inOriginMain": false,
+      "inCurrentHead": true,
+      "remoteApplied": true
+    },
+    {
+      "version": "20260813120000",
+      "name": "performance_scalability",
+      "inOriginMain": false,
+      "inCurrentHead": false,
+      "remoteApplied": false
+    },
+    {
+      "version": "20260814120000",
+      "name": "opportunity_finder_single_file",
+      "inOriginMain": false,
+      "inCurrentHead": false,
+      "remoteApplied": false
+    }
+  ],
+  "tests": {
+    "passed": 581,
+    "failed": 0,
+    "skipped": 4
+  },
+  "security": {
+    "rls": "FORCE RLS was added locally to the three performance summary tables and observability_log_outbox. The strengthened role contract is present but its fresh PostgreSQL rerun is pending because local initdb timed out under host saturation.",
+    "crossTenant": "Previously passed in PostgreSQL 16. A stronger User A/User B contract was added, but the fresh local rerun is pending for the same environment timeout.",
+    "sensitiveLeaks": 0
+  },
+  "performance": {
+    "regressionDetected": true
+  },
+  "releaseCommits": [],
+  "excludedFiles": [
+    ".codex-localhost-7876.stderr.log",
+    ".codex-localhost-7876.stdout.log",
+    "10_preguntas_prueba_ia_quiksol.txt",
+    "backup_data.sql",
+    "backup_schema.sql",
+    "supabase/config.toml",
+    "supabase/tests/.tmp_local_supabase_bootstrap.sql",
+    ".next*/",
+    ".env",
+    ".env.local",
+    "private Sanmina/Flex workbooks and any non-synthetic customer Excel files"
+  ],
+  "blockingIssues": [
+    "The strengthened FORCE RLS and cross-tenant SQL contracts could not be rerun in a fresh PostgreSQL cluster because local initdb timed out under severe host I/O/CPU saturation.",
+    "The authenticated desktop/iPad browser smoke test remains pending: no legitimate local test credentials are provided and the integrated browser channel was unavailable.",
+    "The six release commits were intentionally not created because the SQL and authenticated visual gates are still open.",
+    "Production migration history remains ahead of origin/main for AI memory, AI retention and Opportunity Finder Advanced; code and migration history must be reconciled before rollout."
+  ],
+  "recommendedNextAction": "Do not create release commits or deploy yet. Stop or pause the unrelated high-CPU local Next.js processes, rerun the fresh PostgreSQL FORCE RLS contracts, and provide a legitimate local authenticated browser session for desktop/iPad smoke. If both gates pass, create the six selective local commits without push."
+}

@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/types";
+import { isAdmin } from "@/lib/auth/roles";
 
 export type RolePermissions = {
   canViewSensitivePricing: boolean;
@@ -122,7 +123,7 @@ function sensitiveGroupForKey(key: string): SensitiveGroup | null {
 }
 
 export function getRolePermissions(role: UserRole): RolePermissions {
-  if (role === "admin") {
+  if (isAdmin(role)) {
     return {
       canViewSensitivePricing: true,
       canViewCosts: true,
@@ -248,7 +249,7 @@ function redactValue(value: unknown, role: UserRole): unknown {
 }
 
 export function redactSensitiveFieldsForRole<T>(data: T, role: UserRole): T {
-  if (role === "admin") return data;
+  if (isAdmin(role)) return data;
   return redactValue(data, role) as T;
 }
 

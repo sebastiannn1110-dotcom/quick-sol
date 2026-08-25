@@ -3,7 +3,11 @@ import { z } from "zod";
 import { getAuthContext } from "@/lib/auth/context";
 import { logger } from "@/lib/logger/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
+import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { parseExecutiveQuery, type NumericFilter } from "@/lib/search/executive-query-parser";
+import { executiveSearchDomains } from "@/lib/search/executive-domains";
+import { businessRecordReadContract, ilikeAny, IMPORT_ERRORS_SAFE_VIEW, permittedRecordSearchColumns } from "@/lib/security/business-records";
+import { getRolePermissions } from "@/lib/security/permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +18,10 @@ const searchSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
   offset: z.number().int().min(0).default(0)
 });
+
+const EXECUTIVE_UPLOAD_SELECT = "id,uploaded_by,original_file_name,status,detected_category,total_rows,valid_rows,invalid_rows,error_count,data_quality_score,created_at,profiles(full_name,email,department,region,role)";
+const EXECUTIVE_ERROR_SELECT = "id,upload_batch_id,row_index,column_name,error_type,message,severity,created_at,upload_batches,upload_sheets";
+const EXECUTIVE_USER_SELECT = "id,full_name,email,role,department,region,is_active";
 
 function like(value: string) {
   return `%${value.replace(/[%_]/g, "")}%`;
@@ -73,7 +81,7 @@ export async function POST(request: Request) {
     action: "executive_search_started",
     message: "Executive search started.",
     status: "started",
-    metadata: { query, intent: parsed.intent, filters: parsed.filters }
+    metadata: { intent: parsed.intent, detectedFilterNames: Object.keys(parsed.filters), queryLength: query.length }
   });
 
   if (context.isDemoMode || !context.supabase) {
@@ -87,6 +95,22 @@ export async function POST(request: Request) {
   }
 
   const filters = parsed.filters;
+  const permissions = getRolePermissions(context.profile.role);
+  const forbiddenFilter =
+    (!permissions.canViewCustomerDetails && Boolean(filters.customer)) ||
+    (!permissions.canViewSupplierDetails && Boolean(filters.supplier)) ||
+    (!permissions.canViewPurchaseOrders && Boolean(filters.po)) ||
+    (!permissions.canViewSensitivePricing && Boolean(filters.price)) ||
+    (!permissions.canViewGp && Boolean(filters.gpRate));
+  if (forbiddenFilter) {
+    return NextResponse.json(
+      { error: "You do not have permission to use one or more requested filters.", code: "EXECUTIVE_FILTER_FORBIDDEN" },
+      { status: 403, headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
+  }
+  const domains = executiveSearchDomains(parsed);
+  const pureMpnSearch = Boolean(filters.mpn) && domains.length === 1 && domains[0] === "records" &&
+    Object.keys(filters).every((key) => key === "text" || key === "mpn");
   let employeeIds: string[] = [];
   if (filters.employee) {
     const employeeResult = await context.supabase
@@ -97,9 +121,10 @@ export async function POST(request: Request) {
     employeeIds = (employeeResult.data ?? []).map((employee) => employee.id);
   }
 
+  const recordContract = businessRecordReadContract(context.profile.role);
   let recordsQuery = context.supabase
-    .from("business_records")
-    .select("*, profiles(full_name,email,department,region,role), upload_batches(original_file_name,detected_category,status,created_at)", { count: "exact" })
+    .from(recordContract.table)
+    .select(recordContract.select, { count: "exact" })
     .is("archived_at", null)
     .order("created_at", { ascending: false });
 
@@ -123,11 +148,13 @@ export async function POST(request: Request) {
       value: Number((filters.leadTimeDays.value / 7).toFixed(3))
     });
   }
-  if (filters.text && !parsed.detectedTerms.length) recordsQuery = recordsQuery.textSearch("searchable_text", filters.text, { type: "websearch" });
+  if (filters.text && !parsed.detectedTerms.length) {
+    recordsQuery = recordsQuery.or(ilikeAny(permittedRecordSearchColumns(context.profile.role), filters.text));
+  }
 
   let uploadsQuery = context.supabase
     .from("upload_batches")
-    .select("*, profiles(full_name,email,department,region,role)", { count: "exact" })
+    .select(EXECUTIVE_UPLOAD_SELECT, { count: "exact" })
     .order("created_at", { ascending: false });
   if (filters.employee && employeeIds.length) uploadsQuery = uploadsQuery.in("uploaded_by", employeeIds);
   if (filters.category) uploadsQuery = uploadsQuery.eq("detected_category", filters.category);
@@ -137,8 +164,8 @@ export async function POST(request: Request) {
   if (filters.text && !filters.employee && !filters.uploadErrorThreshold) uploadsQuery = uploadsQuery.ilike("original_file_name", like(filters.text));
 
   let errorsQuery = context.supabase
-    .from("import_errors")
-    .select("*, upload_batches(original_file_name,uploaded_by), upload_sheets(sheet_name)", { count: "exact" })
+    .from(IMPORT_ERRORS_SAFE_VIEW)
+    .select(EXECUTIVE_ERROR_SELECT, { count: "exact" })
     .order("created_at", { ascending: false });
   if (filters.errorField) errorsQuery = errorsQuery.or(`column_name.ilike.${like(filters.errorField)},message.ilike.${like(filters.errorField)},error_type.ilike.${like(filters.errorField)}`);
   if (filters.hasErrors && filters.text && !filters.errorField) errorsQuery = errorsQuery.or(`error_type.ilike.${like(filters.text)},column_name.ilike.${like(filters.text)},message.ilike.${like(filters.text)}`);
@@ -147,21 +174,49 @@ export async function POST(request: Request) {
 
   let usersQuery = context.supabase
     .from("profiles")
-    .select("*", { count: "exact" })
+    .select(EXECUTIVE_USER_SELECT, { count: "exact" })
     .order("full_name", { ascending: true });
   if (filters.employee) usersQuery = usersQuery.or(`full_name.ilike.${like(filters.employee)},email.ilike.${like(filters.employee)}`);
   else if (parsed.intent === "users" && filters.text) usersQuery = usersQuery.or(`full_name.ilike.${like(filters.text)},email.ilike.${like(filters.text)},department.ilike.${like(filters.text)}`);
   else usersQuery = usersQuery.limit(0);
 
+  const emptyResult = { data: [], count: 0, error: null };
+  const recordsPromise = pureMpnSearch
+    ? (async () => {
+        const rpc = await context.supabase!.rpc("search_executive_mpn_safe_v2", {
+          p_mpn: filters.mpn!,
+          p_limit: limit,
+          p_offset: offset
+        });
+        const row = (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) as {
+          records?: unknown[];
+          total_count?: number | string;
+        } | null;
+        return {
+          data: row?.records ?? [],
+          count: Number(row?.total_count ?? 0),
+          error: rpc.error
+        };
+      })()
+    : recordsQuery.range(offset, offset + limit - 1);
   const [recordsResult, uploadsResult, errorsResult, usersResult] = await Promise.all([
-    recordsQuery.range(offset, offset + limit - 1),
-    uploadsQuery.range(offset, offset + limit - 1),
-    errorsQuery.range(offset, offset + limit - 1),
-    usersQuery.range(offset, offset + limit - 1)
+    domains.includes("records") ? recordsPromise : Promise.resolve(emptyResult),
+    domains.includes("uploads") ? uploadsQuery.range(offset, offset + limit - 1) : Promise.resolve(emptyResult),
+    domains.includes("errors") ? errorsQuery.range(offset, offset + limit - 1) : Promise.resolve(emptyResult),
+    domains.includes("users") ? usersQuery.range(offset, offset + limit - 1) : Promise.resolve(emptyResult)
   ]);
 
-  const firstError = recordsResult.error ?? uploadsResult.error ?? errorsResult.error ?? usersResult.error;
-  if (firstError) {
+  const domainResults = [
+    ["records", recordsResult],
+    ["uploads", uploadsResult],
+    ["errors", errorsResult],
+    ["users", usersResult]
+  ] as const;
+  const failedDomains = domainResults
+    .filter(([domain, result]) => domains.includes(domain) && result.error)
+    .map(([domain]) => domain);
+  const firstError = domainResults.find(([domain, result]) => domains.includes(domain) && result.error)?.[1].error;
+  if (firstError && failedDomains.length === domains.length) {
     await logger.error({
       traceId: context.requestMeta.traceId,
       requestId: context.requestMeta.requestId,
@@ -174,9 +229,9 @@ export async function POST(request: Request) {
       message: "Executive search failed.",
       status: "failed",
       error: firstError,
-      metadata: { query, intent: parsed.intent }
+      metadata: { intent: parsed.intent, failedDomains }
     });
-    return NextResponse.json({ error: "Executive search failed." }, { status: 500 });
+    return NextResponse.json({ error: "Executive search failed." }, { status: 500, headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
 
   const counts = {
@@ -198,7 +253,7 @@ export async function POST(request: Request) {
     action: "executive_search_completed",
     message: "Executive search completed.",
     status: "completed",
-    metadata: { query, intent: parsed.intent, totalResults }
+    metadata: { intent: parsed.intent, totalResults, queryLength: query.length }
   });
 
   return NextResponse.json({
@@ -212,11 +267,13 @@ export async function POST(request: Request) {
       usersCount: counts.users
     },
     results: {
-      records: recordsResult.data ?? [],
-      uploads: uploadsResult.data ?? [],
-      errors: errorsResult.data ?? [],
-      users: usersResult.data ?? []
+      records: redactSensitiveFieldsForRole(recordsResult.data ?? [], context.profile.role),
+      uploads: redactSensitiveFieldsForRole(uploadsResult.data ?? [], context.profile.role),
+      errors: redactSensitiveFieldsForRole(errorsResult.data ?? [], context.profile.role),
+      users: redactSensitiveFieldsForRole(usersResult.data ?? [], context.profile.role)
     },
-    aiSummary: buildSummaryText(parsed, counts)
-  });
+    aiSummary: buildSummaryText(parsed, counts),
+    partial: failedDomains.length > 0,
+    unavailableDomains: failedDomains
+  }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

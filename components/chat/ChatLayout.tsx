@@ -8,11 +8,14 @@ import ConversationList, { conversationTitle } from "@/components/chat/Conversat
 import CreateGroupDialog from "@/components/chat/CreateGroupDialog";
 import type { ChatConversation, ChatMessage, ChatUser } from "@/components/chat/types";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useProfile } from "@/components/ProfileProvider";
+import { canCreateChatGroup } from "@/lib/chat/chat-permissions";
 
 export default function ChatLayout() {
+  const { profile } = useProfile();
   const searchParams = useSearchParams();
   const requestedConversationId = searchParams.get("conversation") ?? "";
-  const [currentUser, setCurrentUser] = useState<ChatUser | null>(null);
+  const currentUser = profile as ChatUser | null;
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeId, setActiveId] = useState("");
@@ -47,11 +50,7 @@ export default function ChatLayout() {
   useEffect(() => {
     async function initialLoad() {
       setLoading(true);
-      const [profileResponse, usersResponse] = await Promise.all([
-        fetch("/api/me", { cache: "no-store" }),
-        fetch("/api/chat/users", { cache: "no-store" })
-      ]);
-      if (profileResponse.ok) setCurrentUser((await profileResponse.json()).profile);
+      const usersResponse = await fetch("/api/chat/users", { cache: "no-store" });
       if (usersResponse.ok) setUsers((await usersResponse.json()).users ?? []);
       await loadConversations();
       setLoading(false);
@@ -114,10 +113,10 @@ export default function ChatLayout() {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-brand-700">Colaboracion segura</p><h1 className="text-2xl font-semibold text-slate-950">Chat interno</h1><p className="mt-1 text-sm text-slate-600">Conversaciones privadas y grupos protegidos por membresia.</p></div><button type="button" onClick={() => setDialogOpen(true)} className="flex items-center gap-2 rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white"><MessageSquarePlus className="h-4 w-4" />Nueva conversacion</button></header>
+      <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-brand-700">Colaboracion segura</p><h1 className="text-2xl font-semibold text-slate-950">Chat interno</h1></div><button type="button" onClick={() => setDialogOpen(true)} className="flex items-center gap-2 rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white"><MessageSquarePlus className="h-4 w-4" />Nueva conversacion</button></header>
       {error ? <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm lg:grid lg:grid-cols-[320px_minmax(0,1fr)]"><ConversationList conversations={filteredConversations} currentUser={currentUser} activeId={activeId} search={search} onSearch={setSearch} onSelect={setActiveId} /><ChatWindow conversation={activeConversation} messages={messages} currentUser={currentUser} loading={messagesLoading} busy={busy} onSend={sendMessage} onFile={uploadFile} /></div>
-      {dialogOpen ? <CreateGroupDialog users={users} canCreateGroup={currentUser.role === "admin"} currentUserId={currentUser.id} onClose={() => setDialogOpen(false)} onCreated={(id) => void created(id)} /> : null}
+      {dialogOpen ? <CreateGroupDialog users={users} canCreateGroup={canCreateChatGroup(currentUser.role)} currentUserId={currentUser.id} onClose={() => setDialogOpen(false)} onCreated={(id) => void created(id)} /> : null}
     </div>
   );
 }

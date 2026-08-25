@@ -107,6 +107,7 @@ type OpportunityGroup = {
   excessOwnerName: string | null;
   supplierName: string | null;
   manufacturerName: string | null;
+  manufacturerNames: Set<string>;
   approvedPartSignal: boolean;
   receivedSignal: boolean;
   sourceUploads: Map<string, StockNeedsSourceUpload>;
@@ -236,17 +237,28 @@ function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
+const NORMALIZED_KEY_CACHE = new Map<string, string>();
+
 function normalizedKey(value: string) {
-  return value
+  const cached = NORMALIZED_KEY_CACHE.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]/g, "")
     .toLowerCase();
+  NORMALIZED_KEY_CACHE.set(value, normalized);
+  return normalized;
 }
 
+const KEYED_RECORD_CACHE = new WeakMap<JsonRecord, Map<string, unknown>>();
+
 function keyed(record: JsonRecord) {
+  const cached = KEYED_RECORD_CACHE.get(record);
+  if (cached) return cached;
   const out = new Map<string, unknown>();
   for (const [key, value] of Object.entries(record)) out.set(normalizedKey(key), value);
+  KEYED_RECORD_CACHE.set(record, out);
   return out;
 }
 
@@ -438,7 +450,7 @@ function detectRecordSignal(record: StockNeedsRecord, profile: StockNeedsProfile
   };
 }
 
-function detectSignals(input: {
+export function detectOpportunitySignals(input: {
   records: StockNeedsRecord[];
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
@@ -454,7 +466,7 @@ export function detectDemandRecords(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
 }) {
-  return detectSignals(input).filter((signal) => signal.demandSignal);
+  return detectOpportunitySignals(input).filter((signal) => signal.demandSignal);
 }
 
 export function detectStockRecords(input: {
@@ -462,7 +474,7 @@ export function detectStockRecords(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
 }) {
-  return detectSignals(input).filter((signal) => signal.stockSignal);
+  return detectOpportunitySignals(input).filter((signal) => signal.stockSignal);
 }
 
 export function detectExcessRecords(input: {
@@ -470,7 +482,7 @@ export function detectExcessRecords(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
 }) {
-  return detectSignals(input).filter((signal) => signal.excessSignal && (signal.excessQty ?? 0) > 0);
+  return detectOpportunitySignals(input).filter((signal) => signal.excessSignal && (signal.excessQty ?? 0) > 0);
 }
 
 export function detectApprovedPartSignals(input: {
@@ -478,7 +490,7 @@ export function detectApprovedPartSignals(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
 }) {
-  return detectSignals(input).filter((signal) => signal.approvedPartSignal);
+  return detectOpportunitySignals(input).filter((signal) => signal.approvedPartSignal);
 }
 
 export function detectReceivedSignals(input: {
@@ -486,7 +498,7 @@ export function detectReceivedSignals(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
 }) {
-  return detectSignals(input).filter((signal) => signal.receivedSignal);
+  return detectOpportunitySignals(input).filter((signal) => signal.receivedSignal);
 }
 
 function emptyTotals(): SalesOpportunityTotals {
@@ -533,15 +545,11 @@ function mergeSignal(group: OpportunityGroup, signal: OpportunityRecordSignal) {
   if (signal.excessSignal) group.excessOwnerName = group.excessOwnerName ?? signal.customerName ?? signal.supplierName ?? signal.manufacturerName;
   group.supplierName = group.supplierName ?? signal.supplierName;
   group.manufacturerName = group.manufacturerName ?? signal.manufacturerName;
+  if (signal.manufacturerName) group.manufacturerNames.add(signal.manufacturerName);
   group.approvedPartSignal ||= signal.approvedPartSignal;
   group.receivedSignal ||= signal.receivedSignal;
   group.sourceUploads.set(signal.sourceUpload.uploadBatchId, signal.sourceUpload);
   for (const flag of signal.dataQualityFlags) group.dataQualityFlags.add(flag);
-}
-
-function addManufacturerFlags(group: OpportunityGroup, signals: OpportunityRecordSignal[]) {
-  const manufacturers = new Set(signals.filter((signal) => signal.normalizedMpn === group.normalizedMpn).map((signal) => signal.manufacturerName).filter(Boolean));
-  if (manufacturers.size > 1) group.dataQualityFlags.add("manufacturer_context_mixed");
 }
 
 function makeItem(group: OpportunityGroup, opportunityType: OpportunityType): SalesOpportunityItem {
@@ -658,11 +666,13 @@ export function buildSalesOpportunitiesResult(input: {
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
   filters?: SalesOpportunityFilters;
+  /** Internal exact summary reconciliation only. */
+  includeAllItems?: boolean;
 }): SalesOpportunitiesResult {
   const filters = input.filters ?? {};
   const limit = Math.min(Math.max(Number(filters.limit ?? 50) || 50, 1), 200);
   const offset = Math.max(Number(filters.offset ?? 0) || 0, 0);
-  const signals = detectSignals(input).filter((signal) => !filters.uploadBatchId || signal.uploadBatchId === filters.uploadBatchId);
+  const signals = detectOpportunitySignals(input).filter((signal) => !filters.uploadBatchId || signal.uploadBatchId === filters.uploadBatchId);
   const groups = new Map<string, OpportunityGroup>();
 
   for (const signal of signals) {
@@ -677,16 +687,16 @@ export function buildSalesOpportunitiesResult(input: {
       excessOwnerName: null,
       supplierName: null,
       manufacturerName: null,
+      manufacturerNames: new Set<string>(),
       approvedPartSignal: false,
       receivedSignal: false,
       sourceUploads: new Map<string, StockNeedsSourceUpload>(),
       dataQualityFlags: new Set<string>()
     };
     mergeSignal(group, signal);
+    if (group.manufacturerNames.size > 1) group.dataQualityFlags.add("manufacturer_context_mixed");
     groups.set(signal.normalizedMpn, group);
   }
-
-  for (const group of groups.values()) addManufacturerFlags(group, signals);
 
   const allItems = Array.from(groups.values())
     .flatMap((group) => opportunityTypesForGroup(group).map((type) => makeItem(group, type)))
@@ -696,7 +706,7 @@ export function buildSalesOpportunitiesResult(input: {
     .filter((item) => !filters.opportunityType || item.opportunityType === filters.opportunityType)
     .sort(sortItems);
 
-  const items = allItems.slice(offset, offset + limit);
+  const items = input.includeAllItems ? allItems : allItems.slice(offset, offset + limit);
   return {
     items,
     totals: computeTotals(allItems),

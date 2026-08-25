@@ -5,13 +5,13 @@ import {
   cleanMpnOfferForOutput,
   loadMpnComparatorOffers,
   loadMpnSuggestions,
-  MPN_COMPARATOR_SELECT,
   MPN_SUGGESTION_LIMIT,
   MPN_SUGGESTION_MIN_LENGTH,
   MPN_SUGGESTION_QUERY_LIMIT,
   mpnLookupCandidates,
   normalizedMpnDisplay
 } from "@/lib/mpn/lookup";
+import { BUSINESS_RECORDS_SAFE_VIEW, SAFE_RECORD_SELECT } from "@/lib/security/business-records";
 
 type QueryCall = {
   table: string;
@@ -89,8 +89,8 @@ describe("MPN lookup helpers", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].mpn).toBe("1748917");
     expect(calls).toHaveLength(1);
-    expect(calls[0].table).toBe("business_records");
-    expect(calls[0].select).toBe(MPN_COMPARATOR_SELECT);
+    expect(calls[0].table).toBe(BUSINESS_RECORDS_SAFE_VIEW);
+    expect(calls[0].select).toBe(SAFE_RECORD_SELECT);
     expect(calls[0].select).not.toContain("*");
     expect(calls[0].filters).toContainEqual({ method: "is", column: "archived_at", value: null });
     expect(calls[0].filters).toContainEqual(expect.objectContaining({ method: "in", column: "mpn", value: expect.arrayContaining(["1748917"]) }));

@@ -3,9 +3,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
+import { useProfile } from "@/components/ProfileProvider";
 
 export default function ProfilePage() {
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const { profile: sharedProfile, refreshProfile } = useProfile();
+  const [profile, setProfile] = useState<Profile | null>(sharedProfile);
   const [file, setFile] = useState<File | null>(null);
   const [bio, setBio] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -13,16 +15,12 @@ export default function ProfilePage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function load() {
-    const response = await fetch("/api/me", { cache: "no-store" });
-    if (!response.ok) return;
-    const payload = (await response.json()) as { profile: Profile };
-    setProfile(payload.profile);
-    setBio(payload.profile.bio ?? "");
-    setJobTitle(payload.profile.job_title ?? "");
-  }
-
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    if (!sharedProfile) return;
+    setProfile(sharedProfile);
+    setBio(sharedProfile.bio ?? "");
+    setJobTitle(sharedProfile.job_title ?? "");
+  }, [sharedProfile]);
 
   async function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,7 +33,7 @@ export default function ProfilePage() {
     if (response.ok) {
       setMessage("Foto de perfil actualizada.");
       setFile(null);
-      await load();
+      await refreshProfile();
     } else {
       setError(payload?.error ?? "No se pudo actualizar la foto.");
     }
@@ -48,7 +46,7 @@ export default function ProfilePage() {
     const payload = await response.json().catch(() => null);
     if (response.ok) {
       setMessage("Foto eliminada.");
-      await load();
+      await refreshProfile();
     } else {
       setError(payload?.error ?? "No se pudo eliminar la foto.");
     }
@@ -67,6 +65,7 @@ export default function ProfilePage() {
     if (response.ok) {
       setMessage("Perfil actualizado.");
       setProfile(payload.profile);
+      await refreshProfile();
     } else {
       setError(payload?.error ?? "No se pudo actualizar tu perfil.");
     }

@@ -16,6 +16,14 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import OpportunityCard from "@/components/opportunity-finder/OpportunityCard";
 import { evaluateOpportunityCompatibility } from "@/lib/opportunity-finder/compatibility";
+import { sha256OpportunityFileContents } from "@/lib/opportunity-finder/pipeline";
+import {
+  abortRequest,
+  isAbortError,
+  isExpectedAbort,
+  requestAbortError,
+  throwIfRequestAborted
+} from "@/lib/request-lifecycle";
 import {
   FILE_TYPE_LABELS,
   OPPORTUNITY_TYPE_LABELS,
@@ -25,11 +33,17 @@ import {
   opportunityFinderCopy
 } from "@/lib/opportunity-finder/i18n";
 import type {
+  OpportunityComparisonMode,
   OpportunityFileType,
   OpportunityJobStage,
   OpportunityJobStatus,
+  OpportunityColumnMapping,
+  OpportunityConfidence,
+  OpportunityRejectedRow,
   OpportunityResult,
   OpportunitySelectedRole,
+  OpportunitySheetProfile,
+  OpportunitySourceTrace,
   OpportunitySummary,
   OpportunityType
 } from "@/lib/opportunity-finder/types";
@@ -44,11 +58,22 @@ type ApiFile = {
   selectedRole: OpportunitySelectedRole | null;
   classificationScore: number;
   classificationReasons: string[];
-  sheets: Array<{ sheetName: string; rowCount: number }>;
+  sheets: OpportunitySheetProfile[];
   sheetCount: number;
   rowCount: number;
+  usefulRowCount: number;
+  hiddenRowCount: number;
+  templateType: string | null;
+  mappingVersion: string | null;
+  columnMappings: OpportunityColumnMapping[];
+  warnings: string[];
+  errors: string[];
+  actualSizeBytes: number | null;
+  contentVerified: boolean;
+  validationStatus: string | null;
   parseStatus: string;
   storageDeletedAt: string | null;
+  sourceKind?: "uploaded" | "platform_snapshot";
 };
 
 type ApiJob = {
@@ -63,11 +88,18 @@ type ApiJob = {
   processedRows: number;
   resultCount: number;
   warningCount: number;
+  clientContext: string | null;
   summary: Partial<OpportunitySummary>;
   errorCode: string | null;
   pipelineVersion: string | null;
   createdAt: string | null;
   expiresAt: string | null;
+  comparisonMode?: OpportunityComparisonMode;
+  uploadedRole?: OpportunitySelectedRole | null;
+  oppositeDatasetRole?: "demand" | "stock" | null;
+  snapshotStatus?: "not_required" | "pending" | "ready" | "failed";
+  datasetVersion?: string | null;
+  existingEntityCount?: number;
 };
 
 type JobResponse = {
@@ -79,7 +111,19 @@ type JobResponse = {
     demandDisplayMpn: string;
     supplyDisplayMpn: string;
     reasonCode: string;
+    matchTier?: string | null;
+    confidence?: OpportunityConfidence;
+    explanation?: string | null;
+    reviewStatus?: "not_required" | "pending" | "approved" | "rejected";
+    manufacturerCompatible?: boolean;
+    demandTrace?: OpportunitySourceTrace | null;
+    supplyTrace?: OpportunitySourceTrace | null;
   }>;
+  rejectedRows: Array<OpportunityRejectedRow & { id: string }>;
+  capabilities: {
+    canViewPricing: boolean;
+    canViewFinancials: boolean;
+  };
   page: { offset: number; limit: number; total: number };
 };
 
@@ -133,6 +177,9 @@ const ROLE_OPTIONS: OpportunitySelectedRole[] = [
   "excess",
   "supplier_offer",
   "received_history",
+  "purchase_history",
+  "quote_history",
+  "sales_history",
   "ignore"
 ];
 
@@ -151,12 +198,101 @@ const SUMMARY_KEYS: Array<keyof OpportunitySummary> = [
   "reviewRequired",
   "missingMpnRows",
   "invalidQuantityRows",
-  "possibleMatches"
+  "possibleMatches",
+  "rejectedRows",
+  "demandEvents",
+  "demandPartOptions",
+  "supplyLots"
 ];
+
+const TERMINAL_STATUSES: OpportunityJobStatus[] = [
+  "completed",
+  "completed_with_warnings",
+  "failed",
+  "cancelled"
+];
+
+const MODE_COPY = {
+  es: {
+    question: "¿Cómo quieres buscar?",
+    singleTitle: "Buscar con 1 archivo",
+    singleDescription: "Sube un archivo de necesidades, inventario, exceso u ofertas y QuikSol buscará oportunidades contra la información autorizada existente.",
+    singleButton: "Usar un archivo",
+    twoTitle: "Comparar 2 archivos",
+    twoDescription: "Compara directamente un archivo de necesidades contra un archivo de disponibilidad.",
+    twoButton: "Comparar dos archivos",
+    oneFile: "Archivo para analizar",
+    change: "Cambiar modo",
+    lowConfidence: "QuikSol no está completamente seguro del tipo de archivo. Confirma qué contiene.",
+    snapshot: "Consultando la base QuikSol autorizada…"
+  },
+  en: {
+    question: "How do you want to search?",
+    singleTitle: "Search with 1 file",
+    singleDescription: "Upload a demand, inventory, excess, or offer file and QuikSol will search the authorized existing information.",
+    singleButton: "Use one file",
+    twoTitle: "Compare 2 files",
+    twoDescription: "Directly compare a demand file against an availability file.",
+    twoButton: "Compare two files",
+    oneFile: "File to analyze",
+    change: "Change mode",
+    lowConfidence: "QuikSol is not completely sure about the file type. Confirm what it contains.",
+    snapshot: "Querying the authorized QuikSol dataset…"
+  },
+  zh: {
+    question: "您希望如何搜索？",
+    singleTitle: "使用 1 个文件搜索",
+    singleDescription: "上传需求、库存、过剩库存或报价文件，QuikSol 将在您有权访问的现有信息中查找机会。",
+    singleButton: "使用一个文件",
+    twoTitle: "比较 2 个文件",
+    twoDescription: "直接比较需求文件和可用库存文件。",
+    twoButton: "比较两个文件",
+    oneFile: "要分析的文件",
+    change: "更改模式",
+    lowConfidence: "QuikSol 无法完全确定文件类型，请确认文件内容。",
+    snapshot: "正在查询获授权的 QuikSol 数据…"
+  }
+} as const;
+
+const configuredClientMaxFileSizeMb = Number(
+  process.env.NEXT_PUBLIC_OPPORTUNITY_FINDER_MAX_FILE_SIZE_MB
+);
+const CLIENT_MAX_FILE_SIZE_MB = Number.isFinite(configuredClientMaxFileSizeMb) &&
+  configuredClientMaxFileSizeMb > 0
+  ? Math.min(configuredClientMaxFileSizeMb, 64)
+  : 64;
 
 function formatBytes(value: number) {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function profileConfidence(score: number): OpportunityConfidence {
+  const normalized = score > 1 ? score / 100 : score;
+  if (normalized >= 0.8) return "high";
+  if (normalized >= 0.55) return "medium";
+  return normalized > 0 ? "low" : "review";
+}
+
+function displayCode(value: string | null | undefined) {
+  return value ? value.replaceAll("_", " ") : "—";
+}
+
+export function opportunityFileRequiresValidity(
+  file: Pick<ApiFile, "warnings" | "columnMappings">,
+  role: OpportunitySelectedRole | "" | null | undefined
+) {
+  return role === "supplier_offer" ||
+    file.warnings.includes("embedded_offer_columns_mapped") ||
+    file.columnMappings.some((mapping) => mapping.canonicalField.startsWith("embeddedOffer."));
+}
+
+export function futureValidityIso(value: string | null | undefined, now = Date.now()) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) && timestamp > now
+    ? new Date(timestamp).toISOString()
+    : null;
 }
 
 function localFileError(file: File | null) {
@@ -166,29 +302,52 @@ function localFileError(file: File | null) {
     return "FILE_TYPE_BLOCKED";
   }
   if (![".xlsx", ".csv"].includes(extension)) return "FILE_EXTENSION_INVALID";
-  if (file.size > 64 * 1024 * 1024) return "FILE_TOO_LARGE";
+  if (file.size > CLIENT_MAX_FILE_SIZE_MB * 1024 * 1024) return "FILE_TOO_LARGE";
   return null;
 }
 
 function directUpload(
   signedUrl: string,
   file: File,
-  onProgress: (value: number) => void
+  onProgress: (value: number) => void,
+  signal: AbortSignal
 ) {
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abortUpload);
+      callback();
+    };
+    const rejectAbort = () => finish(() => reject(
+      isAbortError(signal.reason)
+        ? signal.reason
+        : requestAbortError("Opportunity Finder upload cancelled.")
+    ));
+    const abortUpload = () => {
+      xhr.abort();
+      rejectAbort();
+    };
+    if (signal.aborted) {
+      rejectAbort();
+      return;
+    }
+    signal.addEventListener("abort", abortUpload, { once: true });
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(99, Math.round(event.loaded / event.total * 100)));
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(100);
-        resolve();
+        finish(resolve);
       } else {
-        reject(new Error("UPLOAD_FAILED"));
+        finish(() => reject(new Error("UPLOAD_FAILED")));
       }
     };
-    xhr.onerror = () => reject(new Error("UPLOAD_FAILED"));
+    xhr.onerror = () => finish(() => reject(new Error("UPLOAD_FAILED")));
+    xhr.onabort = rejectAbort;
     const formData = new FormData();
     formData.append("cacheControl", "3600");
     formData.append("", file);
@@ -220,8 +379,10 @@ async function readPayload<T>(response: Response) {
   return payload;
 }
 
+export { isAbortError };
+
 function suggestedRole(type: OpportunityFileType): OpportunitySelectedRole | "" {
-  return type === "financial" || type === "unknown" || type === "sales_history" ? "" : type;
+  return type === "financial" || type === "unknown" ? "" : type;
 }
 
 function FileDropzone({
@@ -256,7 +417,9 @@ function FileDropzone({
         <UploadCloud className="h-9 w-9 text-brand-600" aria-hidden="true" />
         <h2 className="mt-3 text-base font-bold text-slate-950">{title}</h2>
         <p className="mt-1 text-sm text-slate-500">{text.dropPrompt}</p>
-        <p className="mt-1 text-xs text-slate-400">{text.accepted}</p>
+        <p className="mt-1 text-xs text-slate-400">
+          {text.accepted.replace("64", String(CLIENT_MAX_FILE_SIZE_MB))}
+        </p>
         <input
           ref={inputRef}
           type="file"
@@ -301,18 +464,32 @@ function FileDropzone({
 export default function OpportunityFinder() {
   const { language, locale } = useLanguage();
   const text = opportunityFinderCopy(language);
+  const modeText = MODE_COPY[language];
+  const [comparisonMode, setComparisonMode] = useState<OpportunityComparisonMode | null>(null);
   const [localFiles, setLocalFiles] = useState<[File | null, File | null]>([null, null]);
   const [uploadProgress, setUploadProgress] = useState<[number, number]>([0, 0]);
+  const [clientContext, setClientContext] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [data, setData] = useState<JobResponse | null>(null);
   const [roles, setRoles] = useState<Record<string, OpportunitySelectedRole | "">>({});
+  const [validThroughByFile, setValidThroughByFile] = useState<Record<string, string>>({});
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState("");
   const [compatibilityReason, setCompatibilityReason] = useState("");
   const [reusedComparison, setReusedComparison] = useState<ReusedComparison | null>(null);
-  const uploadAttemptIdRef = useRef("");
+  const [reviewingIds, setReviewingIds] = useState<Set<string>>(new Set());
+  const [reviewNotice, setReviewNotice] = useState("");
+  const [supplementalLoaded, setSupplementalLoaded] = useState({ possible: false, rejected: false });
+  const [supplementalLoading, setSupplementalLoading] = useState<"possible" | "rejected" | null>(null);
+  const snapshotRequestRef = useRef<{ jobId: string; controller: AbortController } | null>(null);
+  const snapshotAttemptRef = useRef<string | null>(null);
+  const snapshotContinuationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const uploadRequestRef = useRef<AbortController | null>(null);
+  const [snapshotRetryNonce, setSnapshotRetryNonce] = useState(0);
+  const [snapshotInFlight, setSnapshotInFlight] = useState(false);
+  const [snapshotFailure, setSnapshotFailure] = useState<{ jobId: string; errorCode: string } | null>(null);
 
   function errorMessage(code: string) {
     const errors = text.errors as Record<string, string>;
@@ -320,7 +497,7 @@ export default function OpportunityFinder() {
   }
 
   function resultQuery(nextFilters: FilterState, offset = 0) {
-    const params = new URLSearchParams({ limit: "48", offset: String(offset) });
+    const params = new URLSearchParams({ limit: "48", offset: String(offset), includeSupplemental: "false" });
     if (nextFilters.q.trim()) params.set("q", nextFilters.q.trim());
     if (nextFilters.manufacturer.trim()) params.set("manufacturer", nextFilters.manufacturer.trim());
     if (nextFilters.context.trim()) params.set("context", nextFilters.context.trim());
@@ -332,52 +509,303 @@ export default function OpportunityFinder() {
     return params.toString();
   }
 
-  async function loadJob(nextFilters = appliedFilters, offset = 0, append = false) {
-    if (!jobId) return;
-    const response = await fetch(`/api/opportunity-finder/jobs/${jobId}?${resultQuery(nextFilters, offset)}`, { cache: "no-store" });
+  async function loadJob(
+    nextFilters = appliedFilters,
+    offset = 0,
+    append = false,
+    preserveLoaded = false,
+    targetJobId = jobId,
+    signal?: AbortSignal
+  ) {
+    if (!targetJobId) return;
+    const response = await fetch(`/api/opportunity-finder/jobs/${targetJobId}?${resultQuery(nextFilters, offset)}`, {
+      cache: "no-store",
+      signal
+    });
     const payload = await readPayload<JobResponse>(response);
-    setData((current) => append && current ? {
+    const normalized: JobResponse = {
       ...payload,
-      results: [...current.results, ...payload.results]
-    } : payload);
+      results: payload.results ?? [],
+      possibleMatches: payload.possibleMatches ?? [],
+      rejectedRows: payload.rejectedRows ?? [],
+      capabilities: payload.capabilities ?? { canViewPricing: false, canViewFinancials: false }
+    };
+    setData((current) => {
+      if (!current || (!append && !preserveLoaded)) return normalized;
+      const candidates = append
+        ? [...current.results, ...normalized.results]
+        : [...normalized.results, ...current.results];
+      const seen = new Set<string>();
+      const results = candidates.filter((result, index) => {
+        const key = result.id ?? `${result.opportunityType}:${result.normalizedMpn}:${index}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const sameJob = current.job.id === normalized.job.id;
+      return {
+        ...normalized,
+        results,
+        possibleMatches: sameJob ? current.possibleMatches : normalized.possibleMatches,
+        rejectedRows: sameJob ? current.rejectedRows : normalized.rejectedRows
+      };
+    });
     if (payload.job.errorCode) setErrorCode(payload.job.errorCode);
   }
 
+  async function loadSupplemental(kind: "possible" | "rejected") {
+    if (!jobId || supplementalLoading) return;
+    setSupplementalLoading(kind);
+    try {
+      const endpoint = kind === "possible" ? "possible-matches" : "rejected-rows";
+      const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/${endpoint}?limit=100`, { cache: "no-store" });
+      const payload = await readPayload<{
+        possibleMatches?: JobResponse["possibleMatches"];
+        rejectedRows?: JobResponse["rejectedRows"];
+      }>(response);
+      setData((current) => current ? {
+        ...current,
+        possibleMatches: kind === "possible" ? payload.possibleMatches ?? [] : current.possibleMatches,
+        rejectedRows: kind === "rejected" ? payload.rejectedRows ?? [] : current.rejectedRows
+      } : current);
+      setSupplementalLoaded((current) => ({ ...current, [kind]: true }));
+    } catch (error) {
+      setErrorCode(error instanceof Error ? error.message : "default");
+    } finally {
+      setSupplementalLoading(null);
+    }
+  }
+
+  useEffect(() => {
+    setSupplementalLoaded({ possible: false, rejected: false });
+    setSupplementalLoading(null);
+  }, [jobId]);
+
   useEffect(() => {
     if (!jobId) return;
-    void loadJob().catch((error) => setErrorCode(error instanceof Error ? error.message : "default"));
-    const timer = window.setInterval(() => {
-      void loadJob().catch(() => undefined);
-    }, 2500);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    void loadJob(appliedFilters, 0, false, false, jobId, controller.signal).catch((error) => {
+      if (!isExpectedAbort(error, controller.signal)) {
+        setErrorCode(error instanceof Error ? error.message : "default");
+      }
+    });
+    return () => abortRequest(controller, "Opportunity Finder job load superseded.");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, appliedFilters]);
+
+  const shouldPoll = Boolean(jobId && (!data || !TERMINAL_STATUSES.includes(data.job.status)));
+
+  useEffect(() => {
+    if (!jobId || !shouldPoll) return;
+    let stopped = false;
+    let timer: number | null = null;
+    let failures = 0;
+    let inFlight = false;
+    const controller = new AbortController();
+
+    const schedule = (delay: number) => {
+      if (stopped) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void poll();
+      }, delay);
+    };
+    const poll = async () => {
+      if (stopped || inFlight) return;
+      if (document.visibilityState === "hidden") {
+        schedule(5000);
+        return;
+      }
+      inFlight = true;
+      try {
+        const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/status`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error("status_poll_failed");
+        const status = await response.json() as Partial<ApiJob> & { updatedAt?: string | null };
+        failures = 0;
+        setData((current) => current ? { ...current, job: { ...current.job, ...status } } : current);
+        if (status.status && TERMINAL_STATUSES.includes(status.status)) {
+          if (status.status === "completed" || status.status === "completed_with_warnings") {
+            await loadJob(appliedFilters, 0, false, true);
+          }
+          return;
+        }
+        schedule(2500);
+      } catch (error) {
+        if (isExpectedAbort(error, controller.signal)) return;
+        failures += 1;
+        setErrorCode(error instanceof Error ? error.message : "status_poll_failed");
+        schedule(Math.min(2500 * 2 ** failures, 15000));
+      } finally {
+        inFlight = false;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && !inFlight) {
+        schedule(0);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    schedule(2500);
+    return () => {
+      stopped = true;
+      if (timer !== null) window.clearTimeout(timer);
+      abortRequest(controller, "Opportunity Finder polling stopped.");
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, shouldPoll, appliedFilters]);
+
+  useEffect(() => () => {
+    abortRequest(uploadRequestRef.current, "Opportunity Finder was closed.");
+    uploadRequestRef.current = null;
+    abortRequest(snapshotRequestRef.current?.controller ?? null, "Opportunity Finder snapshot request stopped.");
+    snapshotRequestRef.current = null;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (data?.job.status !== "awaiting_roles") return;
     setRoles((current) => {
       const next = { ...current };
-      for (const file of data.files) {
+      for (const file of data.files.filter((item) => item.sourceKind !== "platform_snapshot")) {
         if (next[file.id] === undefined) next[file.id] = file.selectedRole ?? suggestedRole(file.detectedType);
       }
       return next;
     });
   }, [data?.job.status, data?.files]);
 
+  useEffect(() => {
+    if (
+      !jobId
+      || data?.job.id !== jobId
+      || data?.job.comparisonMode !== "single_file"
+      || data.job.status !== "awaiting_roles"
+      || data.job.snapshotStatus !== "pending"
+      || data.job.currentStage !== "finding_matches"
+      || snapshotRequestRef.current
+    ) return;
+    const attemptKey = `${jobId}:${snapshotRetryNonce}`;
+    if (snapshotAttemptRef.current === attemptKey) return;
+    snapshotAttemptRef.current = attemptKey;
+    const controller = new AbortController();
+    snapshotRequestRef.current = { jobId, controller };
+    setSnapshotInFlight(true);
+    setSnapshotFailure(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/snapshot`, {
+          method: "POST"
+        });
+        const payload = await readPayload<{ jobId: string }>(response);
+        if (snapshotRequestRef.current?.jobId !== jobId) return;
+        if (payload.jobId !== jobId) {
+          setData(null);
+          setRoles({});
+          setValidThroughByFile({});
+          setSupplementalLoaded({ possible: false, rejected: false });
+          setSupplementalLoading(null);
+          setJobId(payload.jobId);
+          return;
+        }
+        if (response.status === 202) {
+          await loadJob(appliedFilters, 0, false, false, jobId);
+          const retryAfter = Number(response.headers.get("Retry-After"));
+          const delayMs = Math.min(Math.max(
+            Number.isFinite(retryAfter) ? retryAfter * 1000 : 2_000,
+            1_000
+          ), 10_000);
+          if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+          snapshotContinuationTimerRef.current = setTimeout(() => {
+            snapshotContinuationTimerRef.current = null;
+            setSnapshotRetryNonce((value) => value + 1);
+          }, delayMs);
+          return;
+        }
+        if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+        snapshotContinuationTimerRef.current = null;
+        setSnapshotFailure(null);
+        setErrorCode("");
+        await loadJob(appliedFilters, 0, false, false, jobId);
+      } catch (error) {
+        if (isExpectedAbort(error, controller.signal)) return;
+        const apiError = error as OpportunityApiError;
+        if (
+          apiError.message === "COMPARISON_ALREADY_EXISTS"
+          && apiError.reusedExistingJob
+          && apiError.jobId
+        ) {
+          setData(null);
+          setRoles({});
+          setValidThroughByFile({});
+          setCompatibilityReason("");
+          setReviewingIds(new Set());
+          setReviewNotice("");
+          setSupplementalLoaded({ possible: false, rejected: false });
+          setSupplementalLoading(null);
+          setJobId(apiError.jobId);
+          setErrorCode("");
+          return;
+        }
+        if (apiError.jobId && apiError.jobId !== jobId) {
+          setData(null);
+          setJobId(apiError.jobId);
+        }
+        const nextErrorCode = apiError.message || "DATASET_SNAPSHOT_FAILED";
+        setSnapshotFailure({ jobId, errorCode: nextErrorCode });
+        setErrorCode(nextErrorCode);
+      } finally {
+        if (snapshotRequestRef.current?.jobId === jobId) {
+          snapshotRequestRef.current = null;
+          setSnapshotInFlight(false);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, data?.job.status, data?.job.currentStage, data?.job.snapshotStatus, data?.job.comparisonMode, snapshotRetryNonce]);
+
+  function retrySnapshot() {
+    if (!jobId || snapshotRequestRef.current) return;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
+    setErrorCode("");
+    setSnapshotFailure(null);
+    setSnapshotRetryNonce((value) => value + 1);
+  }
+
   const roleCompatibility = useMemo(() => {
-    const fileA = data?.files.find((file) => file.side === "A");
-    const fileB = data?.files.find((file) => file.side === "B");
+    const uploadedFiles = data?.files.filter((file) => file.sourceKind !== "platform_snapshot") ?? [];
+    const fileA = uploadedFiles.find((file) => file.side === "A");
+    const fileB = uploadedFiles.find((file) => file.side === "B");
+    if (data?.job.comparisonMode === "single_file" && fileA) {
+      const role = roles[fileA.id] || null;
+      return {
+        compatible: Boolean(role && role !== "ignore" && fileA.detectedType !== "financial"),
+        reasonCode: fileA.detectedType === "financial" ? "financial_file" as const : role ? "compatible" as const : "unknown_role" as const
+      };
+    }
     if (!fileA || !fileB) return null;
     if (fileA.detectedType === "financial" || fileB.detectedType === "financial") {
       return { compatible: false, reasonCode: "financial_file" as const };
     }
     return evaluateOpportunityCompatibility(roles[fileA.id] || null, roles[fileB.id] || null);
-  }, [data?.files, roles]);
+  }, [data?.files, data?.job.comparisonMode, roles]);
+
+  const offerValidityMissing = useMemo(() => (
+    data?.files.filter((file) => file.sourceKind !== "platform_snapshot").some((file) =>
+      opportunityFileRequiresValidity(file, roles[file.id]) &&
+      !futureValidityIso(validThroughByFile[file.id])
+    ) ?? false
+  ), [data?.files, roles, validThroughByFile]);
 
   const activeStep = useMemo(() => {
     if (!data) return 0;
     if (
-      data.job.status === "awaiting_roles" ||
+      (data.job.status === "awaiting_roles" && data.job.currentStage === "confirming_roles") ||
       ["uploading", "inspecting_sheets", "detecting_headers", "confirming_roles"].includes(data.job.currentStage)
     ) return 1;
     if (["completed", "completed_with_warnings"].includes(data.job.status)) return 3;
@@ -385,7 +813,9 @@ export default function OpportunityFinder() {
   }, [data]);
 
   async function uploadAndProfile() {
-    const errors = localFiles.map(localFileError);
+    if (!comparisonMode) return;
+    const selectedFiles = comparisonMode === "single_file" ? [localFiles[0]] : localFiles;
+    const errors = selectedFiles.map(localFileError);
     if (errors.some(Boolean)) {
       setErrorCode(errors.find(Boolean) ?? "EXACTLY_TWO_FILES_REQUIRED");
       return;
@@ -393,19 +823,26 @@ export default function OpportunityFinder() {
     setLoading(true);
     setErrorCode("");
     setUploadProgress([0, 0]);
+    abortRequest(uploadRequestRef.current, "A newer Opportunity Finder upload started.");
+    const requestController = new AbortController();
+    uploadRequestRef.current = requestController;
     try {
-      if (!uploadAttemptIdRef.current) uploadAttemptIdRef.current = crypto.randomUUID();
+      const contentHashes = await Promise.all(selectedFiles.map((file) => sha256OpportunityFileContents(file!)));
+      throwIfRequestAborted(requestController.signal);
       const initiateResponse = await fetch("/api/opportunity-finder/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: requestController.signal,
         body: JSON.stringify({
-          files: localFiles.map((file, index) => ({
+          comparisonMode,
+          files: selectedFiles.map((file, index) => ({
             side: index === 0 ? "A" : "B",
             fileName: file!.name,
             fileSize: file!.size,
-            fileType: file!.type || null
+            fileType: file!.type || null,
+            contentSha256: contentHashes[index]
           })),
-          idempotencyKey: uploadAttemptIdRef.current
+          clientContext: clientContext.trim() || undefined
         })
       });
       const initiate = await readPayload<{ jobId: string; files: SignedFile[] }>(initiateResponse);
@@ -419,12 +856,16 @@ export default function OpportunityFinder() {
             next[index] = progress;
             return next;
           });
-        });
+        }, requestController.signal);
       }));
-      const profileResponse = await fetch(`/api/opportunity-finder/jobs/${initiate.jobId}/profile`, { method: "POST" });
+      const profileResponse = await fetch(`/api/opportunity-finder/jobs/${initiate.jobId}/profile`, {
+        method: "POST",
+        signal: requestController.signal
+      });
       await readPayload(profileResponse);
-      await loadJob();
+      await loadJob(appliedFilters, 0, false, false, initiate.jobId, requestController.signal);
     } catch (error) {
+      if (isExpectedAbort(error, requestController.signal)) return;
       const apiError = error as OpportunityApiError;
       if (apiError.reusedExistingJob && apiError.jobId && apiError.status) {
         setReusedComparison({
@@ -440,6 +881,7 @@ export default function OpportunityFinder() {
       if (apiError.jobId) setJobId(apiError.jobId);
       setErrorCode(apiError.message || "default");
     } finally {
+      if (uploadRequestRef.current === requestController) uploadRequestRef.current = null;
       setLoading(false);
     }
   }
@@ -449,6 +891,10 @@ export default function OpportunityFinder() {
       setCompatibilityReason(roleCompatibility?.reasonCode ?? "unknown_role");
       return;
     }
+    if (offerValidityMissing) {
+      setErrorCode("OFFER_VALIDITY_REQUIRED");
+      return;
+    }
     setLoading(true);
     setErrorCode("");
     try {
@@ -456,7 +902,13 @@ export default function OpportunityFinder() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          files: data.files.map((file) => ({ id: file.id, role: roles[file.id] }))
+          files: data.files.filter((file) => file.sourceKind !== "platform_snapshot").map((file) => ({
+            id: file.id,
+            role: roles[file.id],
+            validThrough: opportunityFileRequiresValidity(file, roles[file.id])
+              ? futureValidityIso(validThroughByFile[file.id])
+              : null
+          }))
         })
       });
       await readPayload(response);
@@ -473,8 +925,15 @@ export default function OpportunityFinder() {
 
   async function cancelJob() {
     if (!jobId) return;
-    await fetch(`/api/opportunity-finder/jobs/${jobId}/cancel`, { method: "POST" });
-    await loadJob();
+    abortRequest(uploadRequestRef.current, "Opportunity Finder cancelled by the user.");
+    uploadRequestRef.current = null;
+    try {
+      const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/cancel`, { method: "POST" });
+      await readPayload(response);
+      await loadJob();
+    } catch (error) {
+      setErrorCode(error instanceof Error ? error.message : "default");
+    }
   }
 
   async function retryJob() {
@@ -493,17 +952,34 @@ export default function OpportunityFinder() {
   }
 
   function reset() {
+    abortRequest(uploadRequestRef.current, "A new Opportunity Finder search was started.");
+    uploadRequestRef.current = null;
+    setLoading(false);
+    setComparisonMode(null);
     setLocalFiles([null, null]);
     setUploadProgress([0, 0]);
+    setClientContext("");
     setJobId(null);
     setData(null);
     setRoles({});
+    setValidThroughByFile({});
     setFilters(EMPTY_FILTERS);
     setAppliedFilters(EMPTY_FILTERS);
     setErrorCode("");
     setCompatibilityReason("");
     setReusedComparison(null);
-    uploadAttemptIdRef.current = "";
+    setReviewingIds(new Set());
+    setReviewNotice("");
+    setSupplementalLoaded({ possible: false, rejected: false });
+    setSupplementalLoading(null);
+    abortRequest(snapshotRequestRef.current?.controller ?? null, "A new Opportunity Finder search was started.");
+    snapshotRequestRef.current = null;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
+    snapshotAttemptRef.current = null;
+    setSnapshotRetryNonce(0);
+    setSnapshotInFlight(false);
+    setSnapshotFailure(null);
   }
 
   async function deleteJob() {
@@ -531,8 +1007,64 @@ export default function OpportunityFinder() {
     setAppliedFilters({ ...filters });
   }
 
+  async function decideReview(
+    entityType: "result" | "possible_match",
+    entityId: string,
+    decision: "approved" | "rejected"
+  ) {
+    if (!jobId) return;
+    setReviewNotice("");
+    setReviewingIds((current) => new Set(current).add(entityId));
+    try {
+      const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entityType, entityId, decision })
+      });
+      const payload = await readPayload<{ reviewStatus: "approved" | "rejected" }>(response);
+      setData((current) => {
+        if (!current) return current;
+        if (entityType === "result") {
+          return {
+            ...current,
+            results: current.results.map((result) => result.id === entityId
+              ? { ...result, reviewStatus: payload.reviewStatus }
+              : result)
+          };
+        }
+        return {
+          ...current,
+          possibleMatches: current.possibleMatches.map((match) => match.id === entityId
+            ? { ...match, reviewStatus: payload.reviewStatus }
+            : match)
+        };
+      });
+      setReviewNotice(text.review.saved);
+    } catch (error) {
+      setErrorCode(error instanceof Error ? error.message : "default");
+      setReviewNotice(text.review.failed);
+    } finally {
+      setReviewingIds((current) => {
+        const next = new Set(current);
+        next.delete(entityId);
+        return next;
+      });
+    }
+  }
+
   const currentCompatibilityReason = compatibilityReason || (!roleCompatibility?.compatible ? roleCompatibility?.reasonCode : "");
   const summary = data?.job.summary ?? {};
+  const resultGroups = data ? [
+    { key: "full", title: text.categories.full, results: data.results.filter((result) => result.opportunityType === "full_sale") },
+    { key: "partial", title: text.categories.partial, results: data.results.filter((result) => result.opportunityType === "partial_sale") },
+    { key: "sourcing", title: text.categories.sourcing, results: data.results.filter((result) => result.opportunityType === "sourcing_needed") },
+    { key: "supplyOnly", title: text.categories.supplyOnly, results: data.results.filter((result) => result.opportunityType === "supply_without_demand") },
+    {
+      key: "other",
+      title: text.categories.other,
+      results: data.results.filter((result) => !["full_sale", "partial_sale", "sourcing_needed", "supply_without_demand"].includes(result.opportunityType))
+    }
+  ] : [];
 
   return (
     <div className="min-w-0 space-y-6 overflow-x-hidden">
@@ -575,52 +1107,169 @@ export default function OpportunityFinder() {
 
       {!jobId ? (
         <section className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <FileDropzone
-              title={text.needsFile}
-              file={localFiles[0]}
-              progress={uploadProgress[0]}
+          {!comparisonMode ? (
+            <div>
+              <h2 className="text-lg font-bold text-slate-950">{modeText.question}</h2>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <article className="flex flex-col rounded-2xl border-2 border-brand-200 bg-white p-6 shadow-sm">
+                  <FileSpreadsheet className="h-9 w-9 text-brand-600" aria-hidden="true" />
+                  <h3 className="mt-4 text-xl font-bold text-slate-950">{modeText.singleTitle}</h3>
+                  <p className="mt-2 flex-1 text-sm leading-6 text-slate-600">{modeText.singleDescription}</p>
+                  <button type="button" onClick={() => setComparisonMode("single_file")} className="focus-ring mt-5 min-h-12 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700">
+                    {modeText.singleButton}
+                  </button>
+                </article>
+                <article className="flex flex-col rounded-2xl border-2 border-slate-200 bg-white p-6 shadow-sm">
+                  <ArrowLeftRight className="h-9 w-9 text-brand-600" aria-hidden="true" />
+                  <h3 className="mt-4 text-xl font-bold text-slate-950">{modeText.twoTitle}</h3>
+                  <p className="mt-2 flex-1 text-sm leading-6 text-slate-600">{modeText.twoDescription}</p>
+                  <button type="button" onClick={() => setComparisonMode("two_files")} className="focus-ring mt-5 min-h-12 rounded-lg border border-brand-300 px-5 text-sm font-bold text-brand-700 hover:bg-brand-50">
+                    {modeText.twoButton}
+                  </button>
+                </article>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className={`grid gap-4 ${comparisonMode === "two_files" ? "md:grid-cols-2" : "max-w-2xl"}`}>
+                <FileDropzone
+                  title={comparisonMode === "single_file" ? modeText.oneFile : text.needsFile}
+                  file={localFiles[0]}
+                  progress={uploadProgress[0]}
+                  disabled={loading}
+                  onFile={(file) => setLocalFiles((current) => [file, current[1]])}
+                />
+                {comparisonMode === "two_files" ? (
+                  <FileDropzone
+                    title={text.supplyFile}
+                    file={localFiles[1]}
+                    progress={uploadProgress[1]}
+                    disabled={loading}
+                    onFile={(file) => setLocalFiles((current) => [current[0], file])}
+                  />
+                ) : null}
+              </div>
+              <button type="button" disabled={loading} onClick={() => {
+                setComparisonMode(null);
+                setLocalFiles([null, null]);
+                setUploadProgress([0, 0]);
+              }} className="focus-ring min-h-11 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                {modeText.change}
+              </button>
+            </>
+          )}
+          {comparisonMode ? (
+          <>
+          <div className="max-w-2xl rounded-xl border border-slate-200 bg-white p-4">
+            <label htmlFor="opportunity-client-context" className="block text-sm font-semibold text-slate-800">
+              {text.clientContext}
+            </label>
+            <input
+              id="opportunity-client-context"
+              value={clientContext}
+              maxLength={160}
               disabled={loading}
-              onFile={(file) => {
-                uploadAttemptIdRef.current = "";
-                setLocalFiles((current) => [file, current[1]]);
-              }}
+              onChange={(event) => setClientContext(event.target.value)}
+              placeholder={text.clientContextPlaceholder}
+              className="focus-ring mt-2 min-h-11 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-950"
             />
-            <FileDropzone
-              title={text.supplyFile}
-              file={localFiles[1]}
-              progress={uploadProgress[1]}
-              disabled={loading}
-              onFile={(file) => {
-                uploadAttemptIdRef.current = "";
-                setLocalFiles((current) => [current[0], file]);
-              }}
-            />
+            <p className="mt-1 text-xs leading-5 text-slate-500">{text.clientContextHelp}</p>
           </div>
           <button
             type="button"
-            disabled={loading || localFiles.some((file) => !file)}
+            disabled={loading || !localFiles[0] || (comparisonMode === "two_files" && !localFiles[1])}
             onClick={() => void uploadAndProfile()}
             className="focus-ring inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
           >
             {loading ? <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /> : <UploadCloud className="h-5 w-5" aria-hidden="true" />}
             {loading ? text.uploading : text.uploadFiles}
           </button>
+          </>
+          ) : null}
         </section>
       ) : null}
 
-      {data?.job.status === "awaiting_roles" ? (
+      {data?.job.status === "awaiting_roles" && data.job.currentStage === "confirming_roles" ? (
         <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <div className="grid gap-4 md:grid-cols-2">
-            {data.files.map((file) => (
+            {data.files.filter((file) => file.sourceKind !== "platform_snapshot").map((file) => (
               <div key={file.id} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="break-words text-base font-bold text-slate-950">{file.originalFileName}</p>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-sm lg:grid-cols-3">
                   <div><dt className="text-xs font-semibold text-slate-500">{text.detectedType}</dt><dd className="mt-1 font-medium text-slate-900">{FILE_TYPE_LABELS[language][file.detectedType]}</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.sheets}</dt><dd className="mt-1 font-medium text-slate-900">{file.sheetCount}</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.rows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.rowCount)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.usefulSheets}</dt><dd className="mt-1 font-medium text-slate-900">{(file.sheets ?? []).filter((sheet) => Number(sheet.usefulRowCount ?? sheet.rowCount) > 0).length}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.usefulRows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.usefulRowCount ?? file.rowCount)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.hiddenRows}</dt><dd className="mt-1 font-medium text-slate-900">{new Intl.NumberFormat(locale).format(file.hiddenRowCount ?? 0)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.template}</dt><dd className="mt-1 break-words font-medium capitalize text-slate-900">{displayCode(file.templateType)}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.mappingVersion}</dt><dd className="mt-1 break-words font-medium text-slate-900">{file.mappingVersion ?? "—"}</dd></div>
+                  <div><dt className="text-xs font-semibold text-slate-500">{text.profile.confidence}</dt><dd className="mt-1 font-medium capitalize text-slate-900">{profileConfidence(file.classificationScore)} · {file.classificationScore > 1 ? Math.round(file.classificationScore) : Math.round(file.classificationScore * 100)}%</dd></div>
                   <div><dt className="text-xs font-semibold text-slate-500">{text.validation}</dt><dd className="mt-1 inline-flex items-center gap-1 font-medium text-emerald-700"><Check className="h-4 w-4" />{text.valid}</dd></div>
                 </dl>
+                {file.classificationReasons?.length ? (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.reasons}</p>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-700">
+                      {file.classificationReasons.map((reason, index) => <li key={`${reason}-${index}`} className="break-words">{displayCode(reason)}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                {profileConfidence(file.classificationScore) === "low" || profileConfidence(file.classificationScore) === "review" ? (
+                  <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">{modeText.lowConfidence}</p>
+                ) : null}
+                {file.warnings?.length || file.errors?.length ? (
+                  <div className="mt-4 space-y-2" role={file.errors?.length ? "alert" : "status"}>
+                    {file.warnings?.length ? <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900"><span className="font-bold">{text.profile.warnings}:</span> {file.warnings.map(displayCode).join(" · ")}</p> : null}
+                    {file.errors?.length ? <p className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-900"><span className="font-bold">{text.profile.errors}:</span> {file.errors.map(displayCode).join(" · ")}</p> : null}
+                  </div>
+                ) : null}
+                <div className="mt-4 space-y-2">
+                  {(file.sheets ?? []).map((sheet) => {
+                    const mappings = sheet.headerRows?.flatMap((header) => header.columnMappings ?? []) ?? [];
+                    const previewRows = sheet.previewRows ?? [];
+                    const previewHeaders = Array.from(new Set(previewRows.flatMap((row) => Object.keys(row.values)))).slice(0, 6);
+                    return (
+                      <details key={sheet.sheetName} className="rounded-lg border border-slate-200 bg-white p-3">
+                        <summary className="focus-ring cursor-pointer rounded text-sm font-semibold text-slate-900">
+                          {sheet.sheetName} · {new Intl.NumberFormat(locale).format(sheet.usefulRowCount ?? sheet.rowCount)} {text.profile.usefulRows.toLowerCase()}
+                        </summary>
+                        <dl className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                          <div><dt className="font-semibold text-slate-500">{text.profile.visibleRows}</dt><dd className="mt-0.5 text-slate-900">{Math.max(0, (sheet.usefulRowCount ?? sheet.rowCount ?? 0) - (sheet.hiddenRowCount ?? 0))}</dd></div>
+                          <div><dt className="font-semibold text-slate-500">{text.profile.hiddenRows}</dt><dd className="mt-0.5 text-slate-900">{sheet.hiddenRowCount ?? 0}</dd></div>
+                          <div className="col-span-2"><dt className="font-semibold text-slate-500">{text.profile.headerRow}</dt><dd className="mt-0.5 break-words text-slate-900">{(sheet.headerRows ?? []).map((header) => `${header.rowNumber}: ${header.headers.join(" · ")}`).join(" | ") || "—"}</dd></div>
+                        </dl>
+                        <div className="mt-3">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.mappings}</p>
+                          {(mappings.length ? mappings : file.columnMappings ?? []).length ? (
+                            <ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                              {(mappings.length ? mappings : file.columnMappings ?? []).map((mapping, index) => (
+                                <li key={`${mapping.canonicalField}-${mapping.sourceColumn}-${index}`} className="break-words rounded bg-slate-50 px-2 py-1.5 text-slate-700">
+                                  <span className="font-semibold">{mapping.canonicalField}</span> ← {mapping.sourceHeader} ({mapping.sourceColumn}) · {mapping.confidence}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : <p className="mt-1 text-xs text-slate-500">{text.profile.noMappings}</p>}
+                        </div>
+                        {previewRows.length ? (
+                          <div className="mt-3">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{text.profile.preview}</p>
+                            <div className="mt-2 overflow-x-auto rounded border border-slate-200">
+                              <table className="min-w-full text-left text-xs">
+                                <thead className="bg-slate-50 text-slate-600"><tr><th className="px-2 py-1.5">#</th>{previewHeaders.map((header) => <th key={header} className="whitespace-nowrap px-2 py-1.5">{header}</th>)}</tr></thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {previewRows.slice(0, 5).map((row) => <tr key={row.rowNumber}><td className="whitespace-nowrap px-2 py-1.5 font-semibold">{row.rowNumber}{row.hidden ? "*" : ""}</td>{previewHeaders.map((header) => <td key={header} className="max-w-48 break-words px-2 py-1.5 text-slate-700">{row.values[header] ?? ""}</td>)}</tr>)}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : null}
+                        {sheet.warnings?.length ? <p className="mt-3 text-xs text-amber-800"><span className="font-bold">{text.profile.warnings}:</span> {sheet.warnings.map(displayCode).join(" · ")}</p> : null}
+                        {sheet.errors?.length ? <p className="mt-2 text-xs text-red-800"><span className="font-bold">{text.profile.errors}:</span> {sheet.errors.map(displayCode).join(" · ")}</p> : null}
+                      </details>
+                    );
+                  })}
+                </div>
                 <label className="mt-4 grid gap-1 text-sm font-semibold text-slate-700">
                   {text.selectedRole}
                   <select
@@ -632,6 +1281,29 @@ export default function OpportunityFinder() {
                     {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{ROLE_LABELS[language][role]}</option>)}
                   </select>
                 </label>
+                {opportunityFileRequiresValidity(file, roles[file.id]) ? (
+                  <label className="mt-4 grid gap-1 text-sm font-semibold text-slate-700">
+                    {text.offerValidity}
+                    <input
+                      type="datetime-local"
+                      value={validThroughByFile[file.id] ?? ""}
+                      onChange={(event) => setValidThroughByFile((current) => ({
+                        ...current,
+                        [file.id]: event.target.value
+                      }))}
+                      aria-invalid={!futureValidityIso(validThroughByFile[file.id])}
+                      required
+                      className="focus-ring min-h-11 rounded-lg border border-slate-300 bg-white px-3 font-normal text-slate-950"
+                    />
+                    <span className={`text-xs font-normal ${
+                      futureValidityIso(validThroughByFile[file.id]) ? "text-slate-500" : "text-amber-700"
+                    }`}>
+                      {futureValidityIso(validThroughByFile[file.id])
+                        ? text.offerValidityHelp
+                        : text.offerValidityRequired}
+                    </span>
+                  </label>
+                ) : null}
               </div>
             ))}
           </div>
@@ -642,13 +1314,31 @@ export default function OpportunityFinder() {
             </div>
           ) : null}
           <div className="grid gap-2 sm:flex sm:justify-end">
-            <button type="button" onClick={swapRoles} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            {data.job.comparisonMode !== "single_file" ? <button type="button" onClick={swapRoles} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />{text.swapRoles}
-            </button>
-            <button type="button" disabled={loading || !roleCompatibility?.compatible} onClick={() => void confirmRoles()} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">
+            </button> : null}
+            <button type="button" disabled={loading || !roleCompatibility?.compatible || offerValidityMissing} onClick={() => void confirmRoles()} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-5 text-sm font-bold text-white hover:bg-brand-700 disabled:opacity-50">
               <Search className="h-4 w-4" aria-hidden="true" />{text.find}
             </button>
           </div>
+        </section>
+      ) : null}
+
+      {data?.job.comparisonMode === "single_file" && data.job.status === "awaiting_roles" && data.job.currentStage === "finding_matches" ? (
+        <section className={`rounded-xl border p-5 ${snapshotFailure?.jobId === jobId ? "border-red-200 bg-red-50 text-red-900" : "border-brand-200 bg-brand-50 text-brand-900"}`} role={snapshotFailure?.jobId === jobId ? "alert" : "status"}>
+          {snapshotFailure?.jobId === jobId ? (
+            <div>
+              <p className="font-semibold">{errorMessage(snapshotFailure.errorCode)}</p>
+              <button type="button" disabled={snapshotInFlight} onClick={retrySnapshot} className="focus-ring mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />{text.retry}
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <LoaderCircle className={`h-5 w-5 ${snapshotInFlight ? "animate-spin" : ""}`} aria-hidden="true" />
+              <p className="font-semibold">{modeText.snapshot}</p>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -743,9 +1433,30 @@ export default function OpportunityFinder() {
                 <a href={`/api/opportunity-finder/jobs/${jobId}/export?format=xlsx&lang=${language}`} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-brand-600 px-3 text-sm font-semibold text-white"><Download className="h-4 w-4" />{text.exportXlsx}</a>
               </div>
             </div>
+            {reviewNotice ? <p role="status" className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm font-medium text-blue-900">{reviewNotice}</p> : null}
             {data.results.length ? (
-              <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-                {data.results.map((result) => <OpportunityCard key={result.id} result={result} jobId={jobId!} />)}
+              <div className="mt-4 space-y-6">
+                {resultGroups.filter((group) => group.results.length).map((group) => (
+                  <section key={group.key} aria-labelledby={`opportunity-group-${group.key}`}>
+                    <div className="flex items-center gap-2">
+                      <h3 id={`opportunity-group-${group.key}`} className="text-base font-bold text-slate-900">{group.title}</h3>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{group.results.length}</span>
+                    </div>
+                    <div className="mt-3 grid min-w-0 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                      {group.results.map((result) => (
+                        <OpportunityCard
+                          key={result.id}
+                          result={result}
+                          jobId={jobId!}
+                          canViewPricing={data.capabilities.canViewPricing}
+                          canViewFinancials={data.capabilities.canViewFinancials}
+                          reviewing={Boolean(result.id && reviewingIds.has(result.id))}
+                          onReview={result.id ? (decision) => decideReview("result", result.id!, decision) : undefined}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
               </div>
             ) : (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{text.noResults}</div>
@@ -755,21 +1466,82 @@ export default function OpportunityFinder() {
             ) : null}
           </section>
 
-          {data.possibleMatches.length ? (
+          {!supplementalLoaded.possible ? (
+            <button
+              type="button"
+              disabled={supplementalLoading !== null}
+              onClick={() => void loadSupplemental("possible")}
+              className="focus-ring min-h-11 w-full rounded-xl border border-amber-300 bg-amber-50 px-4 text-sm font-semibold text-amber-900 disabled:opacity-50"
+            >
+              {supplementalLoading === "possible" ? text.uploading : text.possibleTitle}
+            </button>
+          ) : data.possibleMatches.length ? (
             <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 sm:p-5">
               <h2 className="font-bold text-amber-950">{text.possibleTitle}</h2>
               <p className="mt-1 text-sm text-amber-800">{text.possibleDescription}</p>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {data.possibleMatches.map((match) => (
                   <div key={match.id} className="rounded-lg border border-amber-200 bg-white p-3 text-sm text-slate-700">
-                    <span className="font-bold">{match.demandDisplayMpn}</span>
-                    <span className="mx-2 text-amber-600">↔</span>
-                    <span className="font-bold">{match.supplyDisplayMpn}</span>
+                    <p><span className="font-bold">{match.demandDisplayMpn}</span><span className="mx-2 text-amber-600">↔</span><span className="font-bold">{match.supplyDisplayMpn}</span></p>
+                    <p className="mt-1 text-xs capitalize text-slate-500">{displayCode(match.matchTier)} · {displayCode(match.confidence)} · {displayCode(match.reviewStatus ?? "pending")}</p>
+                    {match.explanation ? <p className="mt-2 text-xs leading-5 text-slate-600">{match.explanation}</p> : null}
+                    {match.demandTrace || match.supplyTrace ? (
+                      <div className="mt-2 space-y-1 rounded-md bg-slate-50 p-2 text-xs text-slate-600">
+                        {match.demandTrace ? (
+                          <p><span className="font-semibold text-slate-700">{text.card.demandSource}:</span> {[match.demandTrace.fileName, match.demandTrace.sheetName, `${text.card.row} ${match.demandTrace.sourceRow}`].filter(Boolean).join(" · ")}</p>
+                        ) : null}
+                        {match.supplyTrace ? (
+                          <p><span className="font-semibold text-slate-700">{text.card.supplySource}:</span> {[match.supplyTrace.fileName, match.supplyTrace.sheetName, `${text.card.row} ${match.supplyTrace.sourceRow}`].filter(Boolean).join(" · ")}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="mt-3 grid grid-cols-2 gap-2" aria-label={text.review.title}>
+                      <button type="button" disabled={reviewingIds.has(match.id)} onClick={() => void decideReview("possible_match", match.id, "approved")} className="focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-emerald-300 px-2 text-xs font-semibold text-emerald-800 disabled:opacity-50"><Check className="h-3.5 w-3.5" aria-hidden="true" />{text.review.approve}</button>
+                      <button type="button" disabled={reviewingIds.has(match.id)} onClick={() => void decideReview("possible_match", match.id, "rejected")} className="focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-red-300 px-2 text-xs font-semibold text-red-800 disabled:opacity-50"><CircleX className="h-3.5 w-3.5" aria-hidden="true" />{text.review.reject}</button>
+                    </div>
                   </div>
                 ))}
               </div>
             </section>
-          ) : null}
+          ) : (
+            <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-500">{text.noResults}</p>
+          )}
+
+          {!supplementalLoaded.rejected ? (
+            <button
+              type="button"
+              disabled={supplementalLoading !== null}
+              onClick={() => void loadSupplemental("rejected")}
+              className="focus-ring min-h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 disabled:opacity-50"
+            >
+              {supplementalLoading === "rejected" ? text.uploading : text.rejectedTitle}
+            </button>
+          ) : (
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <h2 className="font-bold text-slate-950">{text.rejectedTitle}</h2>
+            <p className="mt-1 text-sm text-slate-600">{text.rejectedDescription}</p>
+            {data.rejectedRows.length ? (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr><th className="px-3 py-2">{text.filters.file}</th><th className="px-3 py-2">{text.sheets}</th><th className="px-3 py-2">{text.card.row}</th><th className="px-3 py-2">{text.card.reason}</th><th className="px-3 py-2">{text.profile.source}</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {data.rejectedRows.map((row) => (
+                      <tr key={row.id}>
+                        <td className="max-w-56 break-words px-3 py-2 font-medium text-slate-800">{row.fileName}</td>
+                        <td className="max-w-44 break-words px-3 py-2 text-slate-700">{row.sheetName}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-slate-700">{row.sourceRow}{row.hidden ? "*" : ""}</td>
+                        <td className="max-w-56 break-words px-3 py-2 text-slate-700">{displayCode(row.reasonCode)}</td>
+                        <td className="max-w-56 break-words px-3 py-2 text-slate-600">{[row.sourceColumn, row.fieldName, row.safeRawValue].filter(Boolean).join(" · ") || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="mt-3 text-sm text-slate-500">{text.noRejectedRows}</p>}
+          </section>
+          )}
 
           <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
             <button type="button" onClick={reset} className="focus-ring inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-700"><RotateCcw className="h-4 w-4" />{text.startAnother}</button>

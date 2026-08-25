@@ -34,6 +34,7 @@ loadEnvFile(".env");
 
 const runOnce = process.argv.includes("--once");
 const workerId = `${os.hostname()}-${process.pid}`;
+const workerStartedAt = new Date().toISOString();
 let shuttingDown = false;
 
 process.on("SIGINT", () => {
@@ -66,9 +67,8 @@ async function runWorkerSlot(supabase: SupabaseClient) {
     action: "job_claim_completed",
     message: "Worker claimed an import job.",
     status: "completed",
-    uploadBatchId: job.upload_batch_id,
-    fileName: job.original_file_name,
-    metadata: { workerId, jobId: job.id, attempts: job.attempts, maxAttempts: job.max_attempts }
+    uploadBatchId: job.upload_batch_id.slice(0, 8),
+    metadata: { workerId, jobRef: job.id.slice(0, 8), attempt: job.attempts, maxAttempts: job.max_attempts, stage: "claimed" }
   });
 
   try {
@@ -83,10 +83,9 @@ async function runWorkerSlot(supabase: SupabaseClient) {
       action: "worker_job_failed",
       message: "Import worker job failed.",
       status: "failed",
-      uploadBatchId: job.upload_batch_id,
-      fileName: job.original_file_name,
-      metadata: { jobId: job.id, workerId },
-      error
+      uploadBatchId: job.upload_batch_id.slice(0, 8),
+      metadata: { jobRef: job.id.slice(0, 8), workerId, stage: "failed" },
+      error: { name: error instanceof Error ? error.name : "ImportWorkerError", message: "Import worker job failed." }
     });
   }
 
@@ -99,6 +98,26 @@ async function main() {
   if (!serviceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY for import worker.");
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, serverSupabaseClientOptions());
+  let runtimeHeartbeatBusy = false;
+  const recordRuntimeHeartbeat = async () => {
+    if (runtimeHeartbeatBusy) return;
+    runtimeHeartbeatBusy = true;
+    try {
+      const { error } = await supabase.rpc("record_worker_runtime_heartbeat_v2", {
+        input_worker_name: "import-worker",
+        input_worker_id: workerId,
+        input_started_at: workerStartedAt,
+        input_metadata: { concurrency: SECURITY_LIMITS.workerConcurrency }
+      });
+      if (error) throw new Error("Import worker runtime heartbeat was rejected.");
+    } finally {
+      runtimeHeartbeatBusy = false;
+    }
+  };
+  await recordRuntimeHeartbeat();
+  const runtimeHeartbeatTimer = setInterval(() => {
+    void recordRuntimeHeartbeat().catch(() => undefined);
+  }, Math.max(30_000, SECURITY_LIMITS.workerHeartbeatIntervalMs));
   await logger.info({
     traceId: crypto.randomUUID(),
     requestId: crypto.randomUUID(),
@@ -137,55 +156,60 @@ async function main() {
     }
   });
 
-  while (!shuttingDown) {
-    try {
-      await logger.info({
-        traceId: crypto.randomUUID(),
-        requestId: crypto.randomUUID(),
-        route: "import-worker",
-        method: "WORKER",
-        module: "upload",
-        action: "worker_poll_started",
-        message: "Worker poll started.",
-        status: "started",
-        metadata: { workerId }
-      });
-      await recoverStaleImportJobs(supabase, workerId);
-      const { count: queuedCount } = await supabase
-        .from("import_jobs")
-        .select("id", { count: "exact", head: true })
-        .in("status", ["queued", "retrying"]);
-      await logger.info({
-        traceId: crypto.randomUUID(),
-        requestId: crypto.randomUUID(),
-        route: "import-worker",
-        method: "WORKER",
-        module: "upload",
-        action: "queued_jobs_found",
-        message: "Worker checked queued import jobs.",
-        status: "completed",
-        metadata: { workerId, queuedJobs: queuedCount ?? 0 }
-      });
-      const slots = Array.from({ length: SECURITY_LIMITS.workerConcurrency }, () => runWorkerSlot(supabase));
-      const results = await Promise.all(slots);
-      if (runOnce) break;
-      if (!results.some(Boolean)) await sleep(SECURITY_LIMITS.workerPollIntervalMs);
-    } catch (error) {
-      await logger.error({
-        traceId: crypto.randomUUID(),
-        requestId: crypto.randomUUID(),
-        route: "import-worker",
-        method: "WORKER",
-        module: "upload",
-        action: "worker_loop_failed",
-        message: "Import worker loop failed; retrying after poll interval.",
-        status: "failed",
-        metadata: { workerId },
-        error
-      });
-      if (runOnce) break;
-      await sleep(SECURITY_LIMITS.workerPollIntervalMs);
+  try {
+    while (!shuttingDown) {
+      try {
+        await logger.info({
+          traceId: crypto.randomUUID(),
+          requestId: crypto.randomUUID(),
+          route: "import-worker",
+          method: "WORKER",
+          module: "upload",
+          action: "worker_poll_started",
+          message: "Worker poll started.",
+          status: "started",
+          metadata: { workerId }
+        });
+        await recordRuntimeHeartbeat();
+        await recoverStaleImportJobs(supabase, workerId);
+        const { count: queuedCount } = await supabase
+          .from("import_jobs")
+          .select("id", { count: "exact", head: true })
+          .in("status", ["queued", "retrying"]);
+        await logger.info({
+          traceId: crypto.randomUUID(),
+          requestId: crypto.randomUUID(),
+          route: "import-worker",
+          method: "WORKER",
+          module: "upload",
+          action: "queued_jobs_found",
+          message: "Worker checked queued import jobs.",
+          status: "completed",
+          metadata: { workerId, queuedJobs: queuedCount ?? 0 }
+        });
+        const slots = Array.from({ length: SECURITY_LIMITS.workerConcurrency }, () => runWorkerSlot(supabase));
+        const results = await Promise.all(slots);
+        if (runOnce) break;
+        if (!results.some(Boolean)) await sleep(SECURITY_LIMITS.workerPollIntervalMs);
+      } catch (error) {
+        await logger.error({
+          traceId: crypto.randomUUID(),
+          requestId: crypto.randomUUID(),
+          route: "import-worker",
+          method: "WORKER",
+          module: "upload",
+          action: "worker_loop_failed",
+          message: "Import worker loop failed; retrying after poll interval.",
+          status: "failed",
+          metadata: { workerId },
+          error: { name: error instanceof Error ? error.name : "ImportWorkerError", message: "Import worker loop failed." }
+        });
+        if (runOnce) break;
+        await sleep(SECURITY_LIMITS.workerPollIntervalMs);
+      }
     }
+  } finally {
+    clearInterval(runtimeHeartbeatTimer);
   }
 
   await logger.info({
@@ -202,6 +226,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error(`Import worker failed to start (${error instanceof Error ? error.name : "Error"}).`);
   process.exit(1);
 });

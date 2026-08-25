@@ -45,6 +45,36 @@ function shouldLog(event: PersistableLogEvent) {
   return LOG_LEVEL_PRIORITY[event.level] >= LOG_LEVEL_PRIORITY[configuredLogLevel()];
 }
 
+function systemLogRow(event: PersistableLogEvent) {
+  return {
+    trace_id: event.traceId,
+    request_id: event.requestId ?? null,
+    level: event.level,
+    module: event.module,
+    action: event.action,
+    message: event.message,
+    user_id: event.userId ?? null,
+    user_email: event.userEmail ?? null,
+    user_role: event.userRole ?? null,
+    route: event.route ?? null,
+    method: event.method ?? null,
+    status: event.status ?? null,
+    status_code: event.statusCode ?? (typeof event.metadata?.statusCode === "number" ? event.metadata.statusCode : null),
+    ip_address: event.ipAddress ?? (typeof event.metadata?.ipAddress === "string" ? event.metadata.ipAddress : null),
+    user_agent: event.userAgent ?? (typeof event.metadata?.userAgent === "string" ? event.metadata.userAgent : null),
+    event_type: event.action,
+    duration_ms: event.durationMs ?? null,
+    upload_batch_id: event.uploadBatchId ?? null,
+    file_name: event.fileName ?? null,
+    sheet_name: event.sheetName ?? null,
+    row_index: event.rowIndex ?? null,
+    column_name: event.columnName ?? null,
+    category: event.category ?? null,
+    metadata: event.metadata ?? null,
+    error: event.error ?? null
+  };
+}
+
 async function persistSystemLog(event: PersistableLogEvent) {
   if (typeof window !== "undefined") return;
   if ("EdgeRuntime" in globalThis) return;
@@ -59,33 +89,13 @@ async function persistSystemLog(event: PersistableLogEvent) {
       serverSupabaseClientOptions()
     );
 
-    await service.from("system_logs").insert({
-      trace_id: event.traceId,
-      request_id: event.requestId ?? null,
-      level: event.level,
-      module: event.module,
-      action: event.action,
-      message: event.message,
-      user_id: event.userId ?? null,
-      user_email: event.userEmail ?? null,
-      user_role: event.userRole ?? null,
-      route: event.route ?? null,
-      method: event.method ?? null,
-      status: event.status ?? null,
-      status_code: event.statusCode ?? (typeof event.metadata?.statusCode === "number" ? event.metadata.statusCode : null),
-      ip_address: event.ipAddress ?? (typeof event.metadata?.ipAddress === "string" ? event.metadata.ipAddress : null),
-      user_agent: event.userAgent ?? (typeof event.metadata?.userAgent === "string" ? event.metadata.userAgent : null),
-      event_type: event.action,
-      duration_ms: event.durationMs ?? null,
-      upload_batch_id: event.uploadBatchId ?? null,
-      file_name: event.fileName ?? null,
-      sheet_name: event.sheetName ?? null,
-      row_index: event.rowIndex ?? null,
-      column_name: event.columnName ?? null,
-      category: event.category ?? null,
-      metadata: event.metadata ?? null,
-      error: event.error ?? null
-    });
+    const row = systemLogRow(event);
+    if (event.level === "audit" || event.level === "security") {
+      await service.from("system_logs").insert(row);
+    } else {
+      const eventKey = `${event.traceId}:${event.action}:${event.timestamp}`;
+      await service.from("observability_log_outbox").upsert({ event_key: eventKey, payload: row }, { onConflict: "event_key", ignoreDuplicates: true });
+    }
   } catch {
     // Logging must never break the user flow.
   }
@@ -104,7 +114,10 @@ export async function logEvent(event: LogEvent) {
     console.log(line);
   }
 
-  if (["warn", "error", "fatal", "security", "audit"].includes(normalized.level)) {
+  if (
+    ["warn", "error", "fatal", "security", "audit"].includes(normalized.level) ||
+    (normalized.module === "ai" && normalized.level === "info")
+  ) {
     await persistSystemLog(normalized);
   }
 

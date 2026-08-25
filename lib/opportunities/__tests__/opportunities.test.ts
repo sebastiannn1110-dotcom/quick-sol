@@ -187,6 +187,22 @@ describe("sales opportunities engine", () => {
     expect(detectDemandRecords({ records, profiles })).toHaveLength(1);
   });
 
+  it("preserves the mixed-manufacturer flag while grouping in one pass", () => {
+    const result = buildSalesOpportunitiesResult({
+      records: [
+        { upload_batch_id: "stock", raw_data: { MPN: "MIX-1", "STOCK QTY": 8, MFG: "Maker A" }, upload_batches: inventoryUpload },
+        { upload_batch_id: "need", raw_data: { Item: "MIX-1", Quantity: 3, Customer: "Customer", MFG: "Maker B" }, upload_batches: demandUpload }
+      ],
+      profiles: [
+        { upload_batch_id: "stock", detected_template: "inventario" },
+        { upload_batch_id: "need", detected_template: "pricing/logistica" }
+      ]
+    });
+
+    expect(result.items[0]?.dataQualityFlags).toContain("manufacturer_context_mixed");
+    expect(result.items[0]?.manufacturerName).toBe("Maker A");
+  });
+
   it("summarizes opportunities without customer, price, cost or GP values", () => {
     const result = buildSalesOpportunitiesResult({
       records: [

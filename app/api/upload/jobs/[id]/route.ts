@@ -31,7 +31,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     action: "job_status_polled",
     message: "Import job status polled.",
     status: "started" as const,
-    metadata: { jobId: id }
+    metadata: { jobRef: id.slice(0, 8) }
   };
 
   await logger.debug(logContext);

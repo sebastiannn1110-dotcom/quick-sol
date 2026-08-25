@@ -4,6 +4,7 @@ import { canRequestCompanyWideData, mustForceOwnerScope, questionRequestsCompany
 describe("AI database permissions", () => {
   it("only grants company-wide intent to admins", () => {
     expect(canRequestCompanyWideData("admin")).toBe(true);
+    expect(canRequestCompanyWideData("super_admin_dev")).toBe(true);
     expect(canRequestCompanyWideData("manager")).toBe(false);
     expect(canRequestCompanyWideData("employee")).toBe(false);
   });
@@ -11,6 +12,7 @@ describe("AI database permissions", () => {
   it("forces employees to their own rows", () => {
     expect(mustForceOwnerScope("employee")).toBe(true);
     expect(mustForceOwnerScope("manager")).toBe(false);
+    expect(mustForceOwnerScope("super_admin_dev")).toBe(false);
   });
 
   it("detects explicit global questions", () => {

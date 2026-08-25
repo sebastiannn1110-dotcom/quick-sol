@@ -1,5 +1,6 @@
 import type { AuthContext } from "@/lib/auth/context";
 import type { UserRole } from "@/lib/types";
+import { isAdmin } from "@/lib/auth/roles";
 
 export interface AiPermissionScope {
   role: UserRole;
@@ -16,12 +17,12 @@ export function getAiPermissionScope(context: AuthContext): AiPermissionScope {
     userId: context.profile.id,
     department: context.profile.department,
     region: context.profile.region,
-    mode: role === "admin" ? "company" : role === "manager" ? "team" : "own"
+    mode: isAdmin(role) ? "company" : role === "manager" ? "team" : "own"
   };
 }
 
 export function canRequestCompanyWideData(role: UserRole) {
-  return role === "admin";
+  return isAdmin(role);
 }
 
 export function mustForceOwnerScope(role: UserRole) {

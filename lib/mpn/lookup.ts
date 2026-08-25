@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MpnOffer } from "@/lib/mpn/recommendation";
+import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import { normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
+import { businessRecordReadContract, BUSINESS_RECORDS_SAFE_VIEW } from "@/lib/security/business-records";
+import type { UserRole } from "@/lib/types";
 
 export const MPN_COMPARATOR_LIMIT = 120;
 export const MPN_SUGGESTION_MIN_LENGTH = 3;
@@ -36,7 +39,7 @@ export const MPN_COMPARATOR_SELECT = [
   "has_errors",
   "created_at",
   "profiles(full_name,department,region,role)",
-  "upload_batches(id,original_file_name,detected_category,status,created_at)"
+  `${BUSINESS_RECORD_UPLOAD_RELATION}(id,original_file_name,detected_category,status,created_at)`
 ].join(",");
 
 const MPN_SUGGESTION_SELECT = "mpn,mpn_quoted";
@@ -121,14 +124,16 @@ function sortByNewest<T extends { created_at?: string | null }>(rows: T[]) {
 
 async function queryExactColumn(
   supabase: SupabaseClient,
+  role: UserRole,
   column: "mpn" | "mpn_quoted",
   candidates: string[],
   limit: number,
   stage: MpnLookupStage
 ) {
+  const contract = businessRecordReadContract(role);
   const { data, error } = await supabase
-    .from("business_records")
-    .select(MPN_COMPARATOR_SELECT)
+    .from(contract.table)
+    .select(contract.select)
     .is("archived_at", null)
     .in(column, candidates)
     .order("created_at", { ascending: false })
@@ -138,20 +143,25 @@ async function queryExactColumn(
   return (data ?? []) as unknown as MpnLookupOffer[];
 }
 
-export async function loadMpnComparatorOffers(supabase: SupabaseClient, mpnInput: string, limit = MPN_COMPARATOR_LIMIT) {
+export async function loadMpnComparatorOffers(
+  supabase: SupabaseClient,
+  mpnInput: string,
+  limit = MPN_COMPARATOR_LIMIT,
+  role: UserRole = "employee"
+) {
   const candidates = mpnLookupCandidates(mpnInput);
   if (!candidates.length) return [];
 
-  const primary = await queryExactColumn(supabase, "mpn", candidates, limit, "mpn_exact");
+  const primary = await queryExactColumn(supabase, role, "mpn", candidates, limit, "mpn_exact");
   if (primary.length > 0) return sortByNewest(uniqueById(primary)).slice(0, limit).map(cleanMpnOfferForOutput);
 
-  const quoted = await queryExactColumn(supabase, "mpn_quoted", candidates, Math.min(limit, 50), "mpn_quoted_exact");
+  const quoted = await queryExactColumn(supabase, role, "mpn_quoted", candidates, Math.min(limit, 50), "mpn_quoted_exact");
   return sortByNewest(uniqueById(quoted)).slice(0, limit).map(cleanMpnOfferForOutput);
 }
 
 async function querySuggestionExact(supabase: SupabaseClient, candidates: string[]) {
   const { data, error } = await supabase
-    .from("business_records")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
     .select(MPN_SUGGESTION_SELECT)
     .is("archived_at", null)
     .in("mpn", candidates)
@@ -164,7 +174,7 @@ async function querySuggestionExact(supabase: SupabaseClient, candidates: string
 
 async function querySuggestionPrefix(supabase: SupabaseClient, q: string, upperBound: string) {
   const { data, error } = await supabase
-    .from("business_records")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
     .select(MPN_SUGGESTION_SELECT)
     .is("archived_at", null)
     .gte("mpn", q)

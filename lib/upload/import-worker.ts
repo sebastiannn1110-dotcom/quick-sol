@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import ExcelJS from "exceljs";
 import { parse as parseCsv } from "csv-parse";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -10,11 +11,11 @@ import { detectCategory, detectDominantCategory } from "@/lib/excel/category-det
 import { detectRowQualityIssues } from "@/lib/excel/data-quality";
 import { detectHeaderRow } from "@/lib/excel/header-detector";
 import { buildSearchableText, normalizeRow, sanitizeScalar } from "@/lib/excel/normalizer";
-import { getFileExtension, sanitizeFileName } from "@/lib/excel/validators";
+import { getFileExtension } from "@/lib/excel/validators";
 import { evaluateEmailAlertRules } from "@/lib/email/evaluate-alert-rules";
 import { logger } from "@/lib/logger/logger";
 import { SECURITY_LIMITS } from "@/lib/security/env";
-import { finalizeImportJobSafely, redactDiagnosticText } from "@/lib/upload/job-diagnostics";
+import { redactDiagnosticText } from "@/lib/upload/job-diagnostics";
 import type { HeaderDetectionResult, ImportIssue, RawCell } from "@/lib/excel/types";
 import type { JsonRecord } from "@/lib/types";
 
@@ -45,6 +46,21 @@ export interface ImportJobRow {
   last_error: string | null;
   worker_id: string | null;
   cancel_requested: boolean;
+  backend_issued: boolean;
+  provenance_status: "legacy" | "awaiting_upload" | "verified" | "rejected";
+  source: string;
+  dataset_key: string;
+  import_mode: "replace_upload";
+  replacement_scope_key: string;
+  expected_size_bytes: number | null;
+  expected_sha256: string | null;
+  storage_object_id: string | null;
+  generation: number;
+  lease_token: number;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  publication_state: "pending" | "staging" | "validated" | "published" | "failed" | "cancelled";
+  error_code: string | null;
 }
 
 interface WorkerContext {
@@ -52,12 +68,8 @@ interface WorkerContext {
   requestId: string;
   route: string;
   method: string;
-  userId: string;
-  userEmail?: string;
-  userRole?: string;
-  fileName: string;
   uploadBatchId: string;
-  jobId: string;
+  jobRef: string;
 }
 
 interface SheetState {
@@ -108,10 +120,6 @@ class ImportCancelledError extends Error {
   }
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function selectedCategory(selected: string | null | undefined, detected: string) {
   if (!selected || selected === "Auto Detect") return detected;
   if (selected === "Supplier Offer") return "Supplier Offers";
@@ -123,6 +131,24 @@ function finalImportStatus(state: ProcessState) {
   return state.warningCount > 0 || state.technicalErrorCount > 0 || state.suppressedErrorCount > 0 || state.invalidRows > 0
     ? "completed_with_warnings"
     : "completed";
+}
+
+class ImportWorkerError extends Error {
+  constructor(
+    readonly code: string,
+    readonly retryable: boolean,
+    message = code
+  ) {
+    super(message);
+    this.name = "ImportWorkerError";
+  }
+}
+
+class ImportWorkerFencedError extends ImportWorkerError {
+  constructor() {
+    super("IMPORT_WORKER_FENCED", false, "Import worker lease is no longer authoritative.");
+    this.name = "ImportWorkerFencedError";
+  }
 }
 
 function isTechnicalIssue(issue: ImportIssue) {
@@ -139,12 +165,23 @@ function redactedRowSample(rawData: JsonRecord): JsonRecord {
 }
 
 function classifyThrownError(error: unknown) {
+  if (error instanceof ImportWorkerError) {
+    return { code: error.code, retryable: error.retryable, safeMessage: error.message };
+  }
   const message = error instanceof Error ? error.message : String(error);
-  if (/storage|download|signed url|fetch/i.test(message)) return { retryable: true, safeMessage: "Storage download failed during import." };
-  if (/57014|statement timeout|timeout|connection|network|fetch failed|ECONN/i.test(message)) return { retryable: true, safeMessage: "Database or network timeout during import." };
-  if (/parser|workbook|csv|xlsx|zip|corrupt/i.test(message)) return { retryable: false, safeMessage: "The file could not be parsed reliably." };
-  if (/schema|column|relation|constraint|violates|23505|PGRST/i.test(message)) return { retryable: false, safeMessage: "Database schema or constraint error during import." };
-  return { retryable: true, safeMessage: "Import worker failed unexpectedly." };
+  if (/storage|download|signed url|fetch/i.test(message)) return { code: "IMPORT_STORAGE_TRANSIENT", retryable: true, safeMessage: "Storage download failed during import." };
+  if (/57014|statement timeout|timeout|connection|network|fetch failed|ECONN/i.test(message)) return { code: "IMPORT_TRANSIENT_INFRASTRUCTURE", retryable: true, safeMessage: "Database or network timeout during import." };
+  if (/parser|workbook|csv|xlsx|zip|corrupt/i.test(message)) return { code: "IMPORT_FILE_CORRUPT", retryable: false, safeMessage: "The file could not be parsed reliably." };
+  if (/schema|column|relation|constraint|violates|23505|PGRST/i.test(message)) return { code: "IMPORT_DATABASE_CONTRACT_INVALID", retryable: false, safeMessage: "Database schema or constraint error during import." };
+  return { code: "IMPORT_WORKER_FAILED", retryable: true, safeMessage: "Import worker failed unexpectedly." };
+}
+
+function safeJobRef(jobId: string) {
+  return jobId.slice(0, 8);
+}
+
+function stagingKey(prefix: string, payload: unknown, index: number) {
+  return `${prefix}:${createHash("sha256").update(JSON.stringify([payload, index])).digest("hex")}`;
 }
 
 function issueKey(issue: ImportIssue) {
@@ -234,150 +271,110 @@ async function tempDiskUsageMb(filePath: string | null) {
   return stat ? Math.round(stat.size / 1024 / 1024) : 0;
 }
 
+function throwRpcError(error: { message?: string; code?: string } | null) {
+  if (!error) return;
+  const diagnostic = `${error.code ?? ""} ${error.message ?? ""}`;
+  if (/IMPORT_CANCEL_REQUESTED/.test(diagnostic)) throw new ImportCancelledError();
+  if (/IMPORT_WORKER_FENCED|IMPORT_JOB_SUPERSEDED/.test(diagnostic)) throw new ImportWorkerFencedError();
+  const contractCode = diagnostic.match(/IMPORT_[A-Z0-9_]+/)?.[0];
+  if (contractCode) {
+    const retryable = /PUBLISH_INJECTED_FAILURE|STORAGE_TRANSIENT|DATABASE_TRANSIENT/.test(contractCode);
+    throw new ImportWorkerError(contractCode, retryable, "Import backend rejected the operation safely.");
+  }
+  throw new ImportWorkerError("IMPORT_DATABASE_CONTRACT_INVALID", false, "Import backend contract failed.");
+}
+
 async function updateHeartbeat(supabase: SupabaseClient, job: ImportJobRow, workerId: string) {
-  const heartbeatAt = nowIso();
-  await Promise.all([
-    supabase.from("import_jobs").update({
-      heartbeat_at: heartbeatAt,
-      worker_id: workerId,
-      updated_at: heartbeatAt
-    }).eq("id", job.id).eq("status", "processing"),
-    supabase.from("upload_batches").update({
-      worker_last_heartbeat_at: heartbeatAt
-    }).eq("id", job.upload_batch_id)
-  ]);
-  await logger.info({
-    traceId: crypto.randomUUID(),
-    requestId: crypto.randomUUID(),
-    route: "import-worker",
-    method: "WORKER",
-    module: "upload",
-    action: "heartbeat_updated",
-    message: "Import worker heartbeat updated.",
-    status: "completed",
-    uploadBatchId: job.upload_batch_id,
-    fileName: job.original_file_name,
-    metadata: { jobId: job.id, workerId, memoryUsage: memoryUsageMb() }
+  const { data, error } = await supabase.rpc("renew_import_job_lease_v2", {
+    input_job_id: job.id,
+    input_worker_id: workerId,
+    input_generation: job.generation,
+    input_lease_token: job.lease_token,
+    input_lease_seconds: Math.max(30, Math.ceil(SECURITY_LIMITS.workerHeartbeatIntervalMs / 1000) * 4)
   });
+  throwRpcError(error);
+  const result = data as { renewed?: boolean; cancelRequested?: boolean } | null;
+  if (result?.cancelRequested) throw new ImportCancelledError();
+  if (!result?.renewed) throw new ImportWorkerFencedError();
 }
 
-async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, status = "processing") {
-  const estimatedProgress = status === "completed" || status === "completed_with_warnings" ? 100 : Math.min(95, Math.max(5, Math.round(state.totalRows / Math.max(state.totalRows + 2000, 1) * 100)));
-  await Promise.all([
-    supabase.from("import_jobs").update({
-      status,
-      total_rows: state.totalRows,
-      processed_rows: state.totalRows,
-      successful_rows: state.validRows,
-      failed_rows: state.invalidRows,
-      warning_count: state.warningCount,
-      rows_with_warnings: state.rowsWithWarnings,
-      technical_error_count: state.technicalErrorCount,
-      suppressed_error_count: state.suppressedErrorCount,
-      progress_percent: estimatedProgress,
-      heartbeat_at: nowIso(),
-      updated_at: nowIso()
-    }).eq("id", job.id),
-    supabase.from("upload_batches").update({
-      status,
-      total_rows: state.totalRows,
-      processed_rows: state.totalRows,
-      valid_rows: state.validRows,
-      invalid_rows: state.invalidRows,
-      successful_rows: state.validRows,
-      failed_rows: state.invalidRows,
-      error_count: state.errorCount,
-      warning_count: state.warningCount,
-      rows_with_warnings: state.rowsWithWarnings,
-      technical_error_count: state.technicalErrorCount,
-      suppressed_error_count: state.suppressedErrorCount,
-      processing_progress_percent: estimatedProgress
-    }).eq("id", job.upload_batch_id)
-  ]);
+async function updateProgress(supabase: SupabaseClient, job: ImportJobRow, workerId: string, state: ProcessState) {
+  const estimatedProgress = Math.min(95, Math.max(5, Math.round(state.totalRows / Math.max(state.totalRows + 2000, 1) * 100)));
+  const { error } = await supabase.rpc("update_import_job_progress_v2", {
+    input_job_id: job.id,
+    input_worker_id: workerId,
+    input_generation: job.generation,
+    input_lease_token: job.lease_token,
+    input_metrics: {
+      totalRows: state.totalRows,
+      validRows: state.validRows,
+      invalidRows: state.invalidRows,
+      warningCount: state.warningCount,
+      rowsWithWarnings: state.rowsWithWarnings,
+      technicalErrorCount: state.technicalErrorCount,
+      suppressedErrorCount: state.suppressedErrorCount,
+      progressPercent: estimatedProgress
+    }
+  });
+  throwRpcError(error);
 }
 
-async function ensureJobNotCancelled(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, force = false) {
+async function ensureJobNotCancelled(supabase: SupabaseClient, job: ImportJobRow, workerId: string, state: ProcessState, force = false) {
   if (!force && state.totalRows % SECURITY_LIMITS.importBatchSize !== 0) return;
-
-  const { data, error } = await supabase
-    .from("import_jobs")
-    .select("status,cancel_requested")
-    .eq("id", job.id)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (data?.status === "cancelled" || data?.cancel_requested) throw new ImportCancelledError();
+  await updateHeartbeat(supabase, job, workerId);
 }
 
-async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState, context: WorkerContext, force = false) {
+async function stageRows(
+  supabase: SupabaseClient,
+  job: ImportJobRow,
+  workerId: string,
+  entityKind: "sheet" | "business_record" | "import_error" | "job_error" | "error_summary",
+  rows: Array<{ rowKey: string; payload: Record<string, unknown> }>
+) {
+  if (!rows.length) return;
+  const { error } = await supabase.rpc("stage_import_job_rows_v2", {
+    input_job_id: job.id,
+    input_worker_id: workerId,
+    input_generation: job.generation,
+    input_lease_token: job.lease_token,
+    input_entity_kind: entityKind,
+    input_rows: rows
+  });
+  throwRpcError(error);
+}
+
+async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, workerId: string, state: ProcessState, context: WorkerContext, force = false) {
   if (!force && state.batch.length < SECURITY_LIMITS.importBatchSize) return;
   if (!state.batch.length && !state.importErrors.length) return;
-  await ensureJobNotCancelled(supabase, job, state, true);
+  await ensureJobNotCancelled(supabase, job, workerId, state, true);
   const records = state.batch.splice(0, state.batch.length);
   const errors = state.importErrors.splice(0, state.importErrors.length);
   const flushIndex = state.flushCount;
   state.flushCount += 1;
 
-  async function insertRecordChunk(chunk: Array<Record<string, unknown>>, flushIndexValue: number, chunkIndex: number, depth = 0): Promise<void> {
-    const minAdaptiveChunk = 50;
-    try {
-      await logger.info({
-        ...context,
-        module: "upload",
-        action: "batch_insert_started",
-        message: "Import batch insert started.",
-        status: "started",
-        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, insertChunkSize: SECURITY_LIMITS.uploadChunkSize, depth, memory: memoryUsageMb() }
-      });
-      const { error } = await supabase.from("business_records").insert(chunk);
-      if (error) throw error;
-      await logger.info({
-        ...context,
-        module: "upload",
-        action: "batch_insert_completed",
-        message: "Import batch inserted.",
-        status: "completed",
-        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, insertChunkSize: SECURITY_LIMITS.uploadChunkSize, depth, memory: memoryUsageMb() }
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : JSON.stringify(error);
-      if (chunk.length <= minAdaptiveChunk || !/57014|statement timeout/i.test(message)) throw error;
-      const middle = Math.ceil(chunk.length / 2);
-      await logger.warn({
-        ...context,
-        module: "upload",
-        action: "batch_insert_adaptive_split",
-        message: "Import batch insert timed out; splitting chunk.",
-        status: "started",
-        metadata: { flushIndex: flushIndexValue, chunkIndex, rowCount: chunk.length, nextChunkSize: middle, depth },
-        error
-      });
-      await insertRecordChunk(chunk.slice(0, middle), flushIndexValue, chunkIndex * 2, depth + 1);
-      await insertRecordChunk(chunk.slice(middle), flushIndexValue, chunkIndex * 2 + 1, depth + 1);
-    }
-  }
-
   if (records.length) {
-    const insertChunkSize = Math.max(1, SECURITY_LIMITS.uploadChunkSize);
-    for (let index = 0; index < records.length; index += insertChunkSize) {
-      const chunk = records.slice(index, index + insertChunkSize);
-      await insertRecordChunk(chunk, flushIndex, index / insertChunkSize);
-    }
-  }
-
-  if (errors.length) {
-    const { error } = await supabase.from("import_errors").insert(errors.map(toImportErrorRow));
-    if (error) throw error;
-    await supabase.from("import_job_errors").insert(errors.map((item) => ({
-      job_id: job.id,
-      upload_batch_id: job.upload_batch_id,
-      row_number: item.row_index,
-      error_message: item.message,
-      raw_data: item.raw_data ?? {}
+    await stageRows(supabase, job, workerId, "business_record", records.map((payload, index) => ({
+      rowKey: stagingKey(`record:${flushIndex}`, payload.id, index),
+      payload
     })));
   }
 
-  await updateProgress(supabase, job, state);
+  if (errors.length) {
+    await stageRows(supabase, job, workerId, "import_error", errors.map((item, index) => ({
+      rowKey: stagingKey(`error:${flushIndex}`, [item.row_index, item.column_name, item.error_type], index),
+      payload: toImportErrorRow(item)
+    })));
+    await stageRows(supabase, job, workerId, "job_error", errors.map((item, index) => ({
+      rowKey: stagingKey(`job-error:${flushIndex}`, [item.row_index, item.error_type], index),
+      payload: {
+        row_number: item.row_index,
+        error_message: item.message,
+        raw_data: item.raw_data ?? {}
+      }
+    })));
+  }
+
+  await updateProgress(supabase, job, workerId, state);
   await logger.info({
     ...context,
     module: "upload",
@@ -393,91 +390,25 @@ async function flushBatches(supabase: SupabaseClient, job: ImportJobRow, state: 
       technicalErrorCount: state.technicalErrorCount,
       suppressedErrorCount: state.suppressedErrorCount,
       errorCount: state.errorCount,
-      memory: memoryUsageMb()
+      memory: memoryUsageMb(),
+      jobRef: context.jobRef,
+      stage: "staging"
     }
   });
 }
 
 export async function recoverStaleImportJobs(supabase: SupabaseClient, workerId: string) {
-  const staleCutoff = new Date(Date.now() - SECURITY_LIMITS.workerStaleAfterMinutes * 60 * 1000).toISOString();
-  const { data: staleJobs, error } = await supabase
-    .from("import_jobs")
-    .select("id,upload_batch_id,attempts,max_attempts,error_message")
-    .eq("status", "processing")
-    .lt("heartbeat_at", staleCutoff)
-    .limit(25);
-  if (error) throw error;
-
-  for (const stale of staleJobs ?? []) {
-    const safeFinalize = await finalizeImportJobSafely(supabase, stale.id, {
-      reason: "Stale worker heartbeat recovered after all rows were already imported."
-    });
-    if (safeFinalize.finalized) {
-      await logger.warn({
-        traceId: crypto.randomUUID(),
-        requestId: crypto.randomUUID(),
-        route: "import-worker",
-        method: "WORKER",
-        module: "upload",
-        action: "stale_job_safe_finalized",
-        message: "Stale import job was safe-finalized instead of retried.",
-        status: "completed",
-        uploadBatchId: stale.upload_batch_id,
-        metadata: { jobId: stale.id, workerId, counts: safeFinalize.diagnostics?.counts }
-      });
-      continue;
-    }
-
-    const attempts = Number(stale.attempts ?? 0);
-    const maxAttempts = Number(stale.max_attempts ?? SECURITY_LIMITS.workerMaxAttempts);
-    const nextStatus = attempts >= maxAttempts ? "failed" : "retrying";
-    const message = "Worker heartbeat expired; job recovered by worker.";
-    await Promise.all([
-      supabase.from("import_jobs").update({
-        status: nextStatus,
-        locked_at: null,
-        locked_by: null,
-        worker_id: null,
-        next_retry_at: nextStatus === "retrying" ? nowIso() : null,
-        last_error: stale.error_message ?? message,
-        error_message: nextStatus === "failed" ? message : null,
-        finished_at: nextStatus === "failed" ? nowIso() : null,
-        updated_at: nowIso()
-      }).eq("id", stale.id).eq("status", "processing"),
-      supabase.from("upload_batches").update({
-        status: nextStatus,
-        error_message: nextStatus === "failed" ? message : null
-      }).eq("id", stale.upload_batch_id)
-    ]);
-    await logger.warn({
-      traceId: crypto.randomUUID(),
-      requestId: crypto.randomUUID(),
-      route: "import-worker",
-      method: "WORKER",
-      module: "upload",
-      action: "stale_job_recovered",
-      message,
-      status: "completed",
-      uploadBatchId: stale.upload_batch_id,
-      metadata: { jobId: stale.id, workerId, nextStatus }
-    });
-  }
+  const { error } = await supabase.rpc("recover_stale_import_jobs_v2", {
+    input_worker_id: workerId,
+    input_limit: 25
+  });
+  throwRpcError(error);
 }
 
-async function createSheetState(supabase: SupabaseClient, job: ImportJobRow, sheetIndex: number, sheetName: string, bufferedRows: RawCell[][], context: WorkerContext) {
+async function createSheetState(job: ImportJobRow, sheetIndex: number, sheetName: string, bufferedRows: RawCell[][], context: WorkerContext) {
   const header = detectHeaderRow(bufferedRows, 30, context);
-  const { data, error } = await supabase.from("upload_sheets").insert({
-    upload_batch_id: job.upload_batch_id,
-    sheet_name: sheetName,
-    detected_header_row: header.headerRowIndex + 1,
-    total_rows: 0,
-    valid_rows: 0,
-    invalid_rows: 0,
-    detected_category: "Generic"
-  }).select("id").single();
-  if (error || !data) throw error ?? new Error("Unable to create upload sheet.");
   return {
-    sheetId: data.id,
+    sheetId: crypto.randomUUID(),
     sheetIndex,
     sheetName,
     header,
@@ -491,6 +422,7 @@ async function createSheetState(supabase: SupabaseClient, job: ImportJobRow, she
 async function processDataRow(
   supabase: SupabaseClient,
   job: ImportJobRow,
+  workerId: string,
   state: ProcessState,
   sheet: SheetState,
   row: RawCell[],
@@ -529,7 +461,7 @@ async function processDataRow(
   if (!normalized.columns.mpn) state.missingMpnCount += 1;
   const gpRate = Number(normalized.columns.gp_rate);
   if (Number.isFinite(gpRate)) state.lowGpRate = state.lowGpRate === null ? gpRate : Math.min(state.lowGpRate, gpRate);
-  await ensureJobNotCancelled(supabase, job, state);
+  await ensureJobNotCancelled(supabase, job, workerId, state);
 
   if (importRow) {
     state.batch.push({
@@ -579,29 +511,34 @@ async function processDataRow(
   }
   if (errors.length > rowErrorLimit) state.suppressedErrorCount += errors.length - rowErrorLimit;
 
-  await flushBatches(supabase, job, state, context);
+  await flushBatches(supabase, job, workerId, state, context);
 }
 
-async function finalizeSheets(supabase: SupabaseClient, state: ProcessState) {
-  for (const sheet of state.sheetRows) {
-    await supabase.from("upload_sheets").update({
+async function finalizeSheets(supabase: SupabaseClient, job: ImportJobRow, workerId: string, state: ProcessState) {
+  await stageRows(supabase, job, workerId, "sheet", state.sheetRows.map((sheet) => ({
+    rowKey: `sheet:${sheet.sheetIndex}`,
+    payload: {
+      id: sheet.sheetId,
+      sheet_name: sheet.sheetName,
+      detected_header_row: sheet.header.headerRowIndex + 1,
       total_rows: sheet.totalRows,
       valid_rows: sheet.validRows,
       invalid_rows: sheet.invalidRows,
-      detected_category: detectDominantCategory(sheet.categories)
-    }).eq("id", sheet.sheetId);
-  }
+      detected_category: detectDominantCategory(sheet.categories),
+      recognized_columns: sheet.header.recognizedColumns
+    }
+  })));
 }
 
-async function persistErrorSummary(supabase: SupabaseClient, job: ImportJobRow, state: ProcessState) {
+async function persistErrorSummary(supabase: SupabaseClient, job: ImportJobRow, workerId: string, state: ProcessState) {
   const summaryRows = Array.from(state.errorSummary.values());
-  await supabase.from("import_job_error_summary").delete().eq("job_id", job.id);
-  if (!summaryRows.length) return;
-  const { error } = await supabase.from("import_job_error_summary").insert(summaryRows);
-  if (error) throw error;
+  await stageRows(supabase, job, workerId, "error_summary", summaryRows.map((payload, index) => ({
+    rowKey: stagingKey("summary", [payload.error_type, payload.severity, payload.message], index),
+    payload: { ...payload }
+  })));
 }
 
-async function processXlsxFile(supabase: SupabaseClient, job: ImportJobRow, filePath: string, state: ProcessState, context: WorkerContext) {
+async function processXlsxFile(supabase: SupabaseClient, job: ImportJobRow, workerId: string, filePath: string, state: ProcessState, context: WorkerContext) {
   const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
     entries: "emit",
     sharedStrings: "cache",
@@ -627,30 +564,30 @@ async function processXlsxFile(supabase: SupabaseClient, job: ImportJobRow, file
       }
       if (!sheetState) {
         const sheetName = (worksheet as { name?: string }).name ?? `Sheet ${sheetIndex + 1}`;
-        sheetState = await createSheetState(supabase, job, sheetIndex, sheetName, bufferedRows, context);
+        sheetState = await createSheetState(job, sheetIndex, sheetName, bufferedRows, context);
         state.sheetRows.push(sheetState);
         const dataRows = bufferedRows.slice(sheetState.header.headerRowIndex + 1);
         for (const [offset, buffered] of dataRows.entries()) {
-          await processDataRow(supabase, job, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
+          await processDataRow(supabase, job, workerId, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
         }
       }
-      await processDataRow(supabase, job, state, sheetState, values, rowNumber, context);
+      await processDataRow(supabase, job, workerId, state, sheetState, values, rowNumber, context);
     }
 
     if (!sheetState && bufferedRows.length) {
       const sheetName = (worksheet as { name?: string }).name ?? `Sheet ${sheetIndex + 1}`;
-      sheetState = await createSheetState(supabase, job, sheetIndex, sheetName, bufferedRows, context);
+      sheetState = await createSheetState(job, sheetIndex, sheetName, bufferedRows, context);
       state.sheetRows.push(sheetState);
       const dataRows = bufferedRows.slice(sheetState.header.headerRowIndex + 1);
       for (const [offset, buffered] of dataRows.entries()) {
-        await processDataRow(supabase, job, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
+        await processDataRow(supabase, job, workerId, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
       }
     }
     sheetIndex += 1;
   }
 }
 
-async function processCsvFile(supabase: SupabaseClient, job: ImportJobRow, filePath: string, state: ProcessState, context: WorkerContext) {
+async function processCsvFile(supabase: SupabaseClient, job: ImportJobRow, workerId: string, filePath: string, state: ProcessState, context: WorkerContext) {
   const parser = fs.createReadStream(filePath).pipe(parseCsv({ relax_quotes: true, relax_column_count: true, bom: true }));
   const bufferedRows: RawCell[][] = [];
   let sheetState: SheetState | null = null;
@@ -665,33 +602,52 @@ async function processCsvFile(supabase: SupabaseClient, job: ImportJobRow, fileP
       continue;
     }
     if (!sheetState) {
-      sheetState = await createSheetState(supabase, job, 0, "CSV", bufferedRows, context);
+      sheetState = await createSheetState(job, 0, "CSV", bufferedRows, context);
       state.sheetRows.push(sheetState);
       const dataRows = bufferedRows.slice(sheetState.header.headerRowIndex + 1);
       for (const [offset, buffered] of dataRows.entries()) {
-        await processDataRow(supabase, job, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
+        await processDataRow(supabase, job, workerId, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
       }
     }
-    await processDataRow(supabase, job, state, sheetState, values, rowIndex, context);
+    await processDataRow(supabase, job, workerId, state, sheetState, values, rowIndex, context);
   }
 
   if (!sheetState && bufferedRows.length) {
-    sheetState = await createSheetState(supabase, job, 0, "CSV", bufferedRows, context);
+    sheetState = await createSheetState(job, 0, "CSV", bufferedRows, context);
     state.sheetRows.push(sheetState);
     const dataRows = bufferedRows.slice(sheetState.header.headerRowIndex + 1);
     for (const [offset, buffered] of dataRows.entries()) {
-      await processDataRow(supabase, job, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
+      await processDataRow(supabase, job, workerId, state, sheetState, buffered, sheetState.header.headerRowIndex + offset + 2, context);
     }
   }
 }
 
 async function downloadStorageObjectToTemp(supabase: SupabaseClient, job: ImportJobRow, context: WorkerContext) {
+  const extension = getFileExtension(job.original_file_name);
+  const expectedPath = `${job.uploaded_by}/${job.upload_batch_id}/${job.original_file_name}`;
+  if (!job.backend_issued
+    || job.provenance_status !== "verified"
+    || !["trusted_upload_api", "trusted_retry_api"].includes(job.source)
+    || job.dataset_key !== "business_records"
+    || job.import_mode !== "replace_upload"
+    || job.replacement_scope_key !== job.upload_batch_id
+    || job.storage_bucket !== "excel-uploads"
+    || job.storage_path !== expectedPath
+    || !job.storage_object_id
+    || ![".csv", ".xlsx"].includes(extension)
+    || !job.expected_size_bytes
+    || job.expected_size_bytes <= 0
+    || job.expected_size_bytes > SECURITY_LIMITS.maxUploadSizeBytes) {
+    throw new ImportWorkerError("IMPORT_PROVENANCE_INVALID", false, "Import provenance validation failed.");
+  }
   const tempRoot = process.env.UPLOAD_TEMP_DIR || path.join(os.tmpdir(), "quiksol-imports");
   await fs.promises.mkdir(tempRoot, { recursive: true });
-  const safeName = sanitizeFileName(job.original_file_name);
-  const localPath = path.join(tempRoot, `${job.id}-${safeName}`);
-  const { data, error } = await supabase.storage.from(job.storage_bucket).createSignedUrl(job.storage_path, 60 * 60);
-  if (error || !data?.signedUrl) throw error ?? new Error("Unable to create signed download URL.");
+  const localPath = path.join(tempRoot, `${job.id}${extension}`);
+  const { data, error } = await supabase.storage.from("excel-uploads").createSignedUrl(expectedPath, 60 * 60);
+  if (error || !data?.signedUrl) {
+    const notFound = /not found|does not exist|404/i.test(error?.message ?? "");
+    throw new ImportWorkerError(notFound ? "IMPORT_STORAGE_OBJECT_MISSING" : "IMPORT_STORAGE_TRANSIENT", !notFound, "Storage object could not be opened.");
+  }
 
   await logger.info({
     ...context,
@@ -699,57 +655,52 @@ async function downloadStorageObjectToTemp(supabase: SupabaseClient, job: Import
     action: "worker_storage_download_started",
     message: "Worker storage download started.",
     status: "started",
-    metadata: { bucket: job.storage_bucket, sizeBytes: job.size_bytes }
+    metadata: { jobRef: context.jobRef, stage: "download", expectedSizeBytes: job.expected_size_bytes }
   });
 
-  const response = await fetch(data.signedUrl);
-  if (!response.ok || !response.body) throw new Error(`Storage download failed with status ${response.status}.`);
+  const response = await fetch(data.signedUrl, { redirect: "error", cache: "no-store" });
+  if (!response.ok || !response.body) {
+    const retryable = response.status >= 500 || response.status === 408 || response.status === 429;
+    throw new ImportWorkerError(
+      response.status === 404 ? "IMPORT_STORAGE_OBJECT_MISSING" : "IMPORT_STORAGE_DOWNLOAD_FAILED",
+      retryable,
+      "Storage download failed during import."
+    );
+  }
+  const hash = createHash("sha256");
+  let sizeBytes = 0;
+  const verifier = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      sizeBytes += chunk.length;
+      if (sizeBytes > SECURITY_LIMITS.maxUploadSizeBytes || sizeBytes > Number(job.expected_size_bytes)) {
+        callback(new ImportWorkerError("IMPORT_FILE_SIZE_MISMATCH", false, "Downloaded file size does not match its trusted metadata."));
+        return;
+      }
+      hash.update(chunk);
+      callback(null, chunk);
+    }
+  });
   const webStream = response.body as unknown as Parameters<typeof Readable.fromWeb>[0];
-  await pipeline(Readable.fromWeb(webStream), fs.createWriteStream(localPath));
-  return localPath;
+  await pipeline(Readable.fromWeb(webStream), verifier, fs.createWriteStream(localPath));
+  const sha256 = hash.digest("hex");
+  if (sizeBytes !== Number(job.expected_size_bytes)) {
+    throw new ImportWorkerError("IMPORT_FILE_SIZE_MISMATCH", false, "Downloaded file size does not match its trusted metadata.");
+  }
+  if (job.expected_sha256 && job.expected_sha256 !== sha256) {
+    throw new ImportWorkerError("IMPORT_FILE_HASH_MISMATCH", false, "Downloaded file hash does not match its trusted metadata.");
+  }
+  return { localPath, sizeBytes, sha256 };
 }
 
 export async function claimNextImportJob(supabase: SupabaseClient, workerId: string) {
   const rpcClaim = await supabase
-    .rpc("claim_import_job", {
-      worker_id_input: workerId,
-      stale_after: `${SECURITY_LIMITS.workerStaleAfterMinutes} minutes`
+    .rpc("claim_import_job_v2", {
+      input_worker_id: workerId,
+      input_lease_seconds: Math.max(30, Math.ceil(SECURITY_LIMITS.workerHeartbeatIntervalMs / 1000) * 4)
     })
     .limit(1);
-  if (!rpcClaim.error && rpcClaim.data?.[0]) return rpcClaim.data[0] as ImportJobRow;
-  if (rpcClaim.error && !/claim_import_job|function/i.test(rpcClaim.error.message ?? "")) throw rpcClaim.error;
-
-  await recoverStaleImportJobs(supabase, workerId);
-  const { data: jobs, error } = await supabase
-    .from("import_jobs")
-    .select("*")
-    .in("status", ["queued", "retrying"])
-    .lt("attempts", SECURITY_LIMITS.workerMaxAttempts)
-    .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso()}`)
-    .order("created_at", { ascending: true })
-    .limit(1);
-  if (error) throw error;
-  const job = jobs?.[0] as ImportJobRow | undefined;
-  if (!job) return null;
-
-  const { data: claimed, error: claimError } = await supabase
-    .from("import_jobs")
-    .update({
-      status: "processing",
-      attempts: job.attempts + 1,
-      locked_at: nowIso(),
-      locked_by: workerId,
-      worker_id: workerId,
-      heartbeat_at: nowIso(),
-      started_at: nowIso(),
-      updated_at: nowIso()
-    })
-    .eq("id", job.id)
-    .in("status", ["queued", "retrying"])
-    .select("*")
-    .maybeSingle();
-  if (claimError) throw claimError;
-  return claimed as ImportJobRow | null;
+  throwRpcError(rpcClaim.error);
+  return (rpcClaim.data?.[0] as ImportJobRow | undefined) ?? null;
 }
 
 export async function processImportJob(supabase: SupabaseClient, job: ImportJobRow, workerId = "worker") {
@@ -759,10 +710,8 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
     requestId: crypto.randomUUID(),
     route: "import-worker",
     method: "WORKER",
-    userId: job.uploaded_by,
-    fileName: job.original_file_name,
-    uploadBatchId: job.upload_batch_id,
-    jobId: job.id
+    uploadBatchId: safeJobRef(job.upload_batch_id),
+    jobRef: safeJobRef(job.id)
   };
   const state: ProcessState = {
     batch: [],
@@ -784,97 +733,73 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
   };
 
   let localPath: string | null = null;
+  let leaseFailure: unknown = null;
   const heartbeatTimer = setInterval(() => {
-    void updateHeartbeat(supabase, job, workerId).catch(() => undefined);
+    void updateHeartbeat(supabase, job, workerId).catch((error) => {
+      leaseFailure = error;
+    });
   }, SECURITY_LIMITS.workerHeartbeatIntervalMs);
   try {
     await updateHeartbeat(supabase, job, workerId);
-    const preflightFinalize = await finalizeImportJobSafely(supabase, job.id, {
-      reason: "Worker claimed a job that already had all rows imported."
-    });
-    if (preflightFinalize.finalized) {
-      await logger.audit({
-        ...context,
-        module: "upload",
-        action: "processing_safe_finalized_preflight",
-        message: "Import job was safe-finalized before retry processing.",
-        status: "completed",
-        metadata: { workerId, counts: preflightFinalize.diagnostics?.counts }
-      });
-      return;
-    }
-
-    await Promise.all([
-      supabase.from("upload_batches").update({ status: "processing", processing_started_at: nowIso(), error_message: null }).eq("id", job.upload_batch_id),
-      supabase.from("business_records").delete().eq("upload_batch_id", job.upload_batch_id),
-      supabase.from("import_errors").delete().eq("upload_batch_id", job.upload_batch_id),
-      supabase.from("import_job_errors").delete().eq("job_id", job.id),
-      supabase.from("import_job_error_summary").delete().eq("job_id", job.id),
-      supabase.from("upload_sheets").delete().eq("upload_batch_id", job.upload_batch_id)
-    ]);
 
     await logger.info({
       ...context,
-        module: "upload",
-        action: "processing_started",
+      module: "upload",
+      action: "processing_started",
       message: "Background import processing started.",
       status: "started",
-        metadata: { workerId, sizeBytes: job.size_bytes, memoryUsage: memoryUsageMb() }
-      });
+      metadata: { workerId, jobRef: context.jobRef, attempt: job.attempts, stage: "claimed", expectedSizeBytes: job.expected_size_bytes, memoryUsage: memoryUsageMb() }
+    });
 
-    localPath = await downloadStorageObjectToTemp(supabase, job, context);
+    const downloaded = await downloadStorageObjectToTemp(supabase, job, context);
+    localPath = downloaded.localPath;
     const extension = getFileExtension(job.original_file_name);
-    if (extension === ".csv") await processCsvFile(supabase, job, localPath, state, context);
-    else await processXlsxFile(supabase, job, localPath, state, context);
+    try {
+      if (extension === ".csv") await processCsvFile(supabase, job, workerId, localPath, state, context);
+      else if (extension === ".xlsx") await processXlsxFile(supabase, job, workerId, localPath, state, context);
+      else throw new ImportWorkerError("IMPORT_FILE_EXTENSION_INVALID", false, "File extension is not supported.");
+    } catch (error) {
+      if (error instanceof ImportWorkerError || error instanceof ImportCancelledError) throw error;
+      throw new ImportWorkerError("IMPORT_FILE_CORRUPT", false, "The file could not be parsed reliably.");
+    }
 
-    await flushBatches(supabase, job, state, context, true);
-    await ensureJobNotCancelled(supabase, job, state, true);
-    await finalizeSheets(supabase, state);
-    await persistErrorSummary(supabase, job, state);
+    if (leaseFailure) throw leaseFailure;
+    await flushBatches(supabase, job, workerId, state, context, true);
+    await ensureJobNotCancelled(supabase, job, workerId, state, true);
+    await finalizeSheets(supabase, job, workerId, state);
+    await persistErrorSummary(supabase, job, workerId, state);
+    const validation = await supabase.rpc("validate_import_job_staging_v2", {
+      input_job_id: job.id,
+      input_worker_id: workerId,
+      input_generation: job.generation,
+      input_lease_token: job.lease_token,
+      input_file_size: downloaded.sizeBytes,
+      input_file_sha256: downloaded.sha256
+    });
+    throwRpcError(validation.error);
     const detectedCategory = detectDominantCategory(state.categoryVotes);
     const dataQualityScore = state.totalRows ? Math.round(((state.totalRows - state.rowsWithWarnings) / state.totalRows) * 1000) / 10 : 0;
     const finishedStatus = finalImportStatus(state);
-    const finishedAt = nowIso();
-    await Promise.all([
-      supabase.from("import_jobs").update({
-        status: finishedStatus,
-        total_rows: state.totalRows,
-        processed_rows: state.totalRows,
-        successful_rows: state.validRows,
-        failed_rows: state.invalidRows,
-        warning_count: state.warningCount,
-        rows_with_warnings: state.rowsWithWarnings,
-        technical_error_count: state.technicalErrorCount,
-        suppressed_error_count: state.suppressedErrorCount,
-        progress_percent: 100,
-        error_message: null,
-        finished_at: finishedAt,
-        duration_ms: Math.round(performance.now() - startedAt),
-        locked_at: null,
-        locked_by: null,
-        updated_at: finishedAt
-      }).eq("id", job.id),
-      supabase.from("upload_batches").update({
-        status: finishedStatus,
-        detected_category: detectedCategory,
-        total_sheets: state.sheetRows.length,
-        total_rows: state.totalRows,
-        processed_rows: state.totalRows,
-        valid_rows: state.validRows,
-        invalid_rows: state.invalidRows,
-        successful_rows: state.validRows,
-        failed_rows: state.invalidRows,
-        error_count: state.errorCount,
-        warning_count: state.warningCount,
-        rows_with_warnings: state.rowsWithWarnings,
-        technical_error_count: state.technicalErrorCount,
-        suppressed_error_count: state.suppressedErrorCount,
-        data_quality_score: dataQualityScore,
-        processing_progress_percent: 100,
-        completed_at: finishedAt,
-        error_message: finishedStatus === "completed_with_warnings" ? "Archivo procesado con advertencias de calidad." : null
-      }).eq("id", job.upload_batch_id)
-    ]);
+    const publication = await supabase.rpc("publish_import_job_v2", {
+      input_job_id: job.id,
+      input_worker_id: workerId,
+      input_generation: job.generation,
+      input_lease_token: job.lease_token,
+      input_metrics: {
+        totalRows: state.totalRows,
+        validRows: state.validRows,
+        invalidRows: state.invalidRows,
+        warningCount: state.warningCount,
+        rowsWithWarnings: state.rowsWithWarnings,
+        technicalErrorCount: state.technicalErrorCount,
+        suppressedErrorCount: state.suppressedErrorCount,
+        sheetCount: state.sheetRows.length,
+        detectedCategory,
+        dataQualityScore,
+        durationMs: Math.round(performance.now() - startedAt)
+      }
+    });
+    throwRpcError(publication.error);
 
     await logger.audit({
       ...context,
@@ -884,7 +809,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       status: "completed",
       durationMs: Math.round(performance.now() - startedAt),
       category: detectedCategory,
-      metadata: { totalRows: state.totalRows, validRows: state.validRows, invalidRows: state.invalidRows, warningCount: state.warningCount, rowsWithWarnings: state.rowsWithWarnings, technicalErrorCount: state.technicalErrorCount, suppressedErrorCount: state.suppressedErrorCount, errorCount: state.errorCount, memory: memoryUsageMb() }
+      metadata: { jobRef: context.jobRef, stage: "published", attempt: job.attempts, totalRows: state.totalRows, validRows: state.validRows, invalidRows: state.invalidRows, warningCount: state.warningCount, rowsWithWarnings: state.rowsWithWarnings, technicalErrorCount: state.technicalErrorCount, suppressedErrorCount: state.suppressedErrorCount, errorCount: state.errorCount, memory: memoryUsageMb() }
     });
 
     await Promise.all([
@@ -907,80 +832,21 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       evaluateEmailAlertRules({ eventType: "import_quality_below_threshold", actorName: "Background import worker", actorEmail: null, fileName: job.original_file_name, uploadBatchId: job.upload_batch_id, errorCount: state.errorCount, dataQualityScore, totalRows: state.totalRows, validRows: state.validRows })
     ]);
   } catch (error) {
-    if (error instanceof ImportCancelledError) {
-      const cancelledAt = nowIso();
-      await Promise.all([
-        supabase.from("import_jobs").update({
-          status: "cancelled",
-          error_message: "Cancelled by user.",
-          cancelled_at: cancelledAt,
-          finished_at: cancelledAt,
-          duration_ms: Math.round(performance.now() - startedAt),
-          locked_at: null,
-          locked_by: null,
-          worker_id: null,
-          updated_at: cancelledAt
-        }).eq("id", job.id),
-        supabase.from("upload_batches").update({
-          status: "cancelled",
-          error_message: "Cancelled by user.",
-          cancelled_at: cancelledAt,
-          completed_at: cancelledAt
-        }).eq("id", job.upload_batch_id)
-      ]);
-      await logger.info({
-        ...context,
-        module: "upload",
-        action: "processing_cancelled",
-        message: "Background import processing cancelled.",
-        status: "completed",
-        durationMs: Math.round(performance.now() - startedAt),
-        metadata: { workerId, processedRows: state.totalRows, memory: memoryUsageMb() }
-      });
-      return;
-    }
     const classified = classifyThrownError(error);
-    if (state.totalRows > 0 && state.validRows > 0 && state.technicalErrorCount === 0) {
-      const safeFinalize = await finalizeImportJobSafely(supabase, job.id, {
-        reason: "Final-stage worker error recovered after rows were imported.",
-        durationMs: Math.round(performance.now() - startedAt)
+    const safeMessage = redactDiagnosticText(classified.safeMessage) ?? "Import worker failed unexpectedly.";
+    if (!(error instanceof ImportWorkerFencedError)) {
+      const failure = await supabase.rpc("fail_import_job_v2", {
+        input_job_id: job.id,
+        input_worker_id: workerId,
+        input_generation: job.generation,
+        input_lease_token: job.lease_token,
+        input_error_code: error instanceof ImportCancelledError ? "IMPORT_CANCELLED" : classified.code,
+        input_retryable: error instanceof ImportCancelledError ? false : classified.retryable
       });
-      if (safeFinalize.finalized) {
-        await logger.warn({
-          ...context,
-          module: "upload",
-          action: "processing_safe_finalized_after_error",
-          message: "Import job failed after importing rows and was safe-finalized.",
-          status: "completed",
-          durationMs: Math.round(performance.now() - startedAt),
-          metadata: { workerId, safeErrorMessage: classified.safeMessage, counts: safeFinalize.diagnostics?.counts }
-        });
-        return;
+      if (failure.error && !/IMPORT_WORKER_FENCED/.test(`${failure.error.code ?? ""} ${failure.error.message ?? ""}`)) {
+        throwRpcError(failure.error);
       }
     }
-
-    const canRetry = classified.retryable && job.attempts < job.max_attempts;
-    const nextRetryAt = new Date(Date.now() + Math.min(60_000 * job.attempts, 5 * 60_000)).toISOString();
-    const safeMessage = redactDiagnosticText(classified.safeMessage) ?? "Import worker failed unexpectedly.";
-    await Promise.all([
-      supabase.from("import_jobs").update({
-        status: canRetry ? "retrying" : "failed",
-        error_message: canRetry ? null : safeMessage,
-        last_error: safeMessage,
-        next_retry_at: canRetry ? nextRetryAt : null,
-        finished_at: canRetry ? null : nowIso(),
-        duration_ms: Math.round(performance.now() - startedAt),
-        locked_at: null,
-        locked_by: null,
-        worker_id: null,
-        updated_at: nowIso()
-      }).eq("id", job.id),
-      supabase.from("upload_batches").update({
-        status: canRetry ? "retrying" : "failed",
-        error_message: canRetry ? "Processing failed and will be retried by the worker." : safeMessage,
-        completed_at: canRetry ? null : nowIso()
-      }).eq("id", job.upload_batch_id)
-    ]);
     await logger.error({
       ...context,
       module: "upload",
@@ -988,8 +854,8 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       message: "Background import processing failed.",
       status: "failed",
       durationMs: Math.round(performance.now() - startedAt),
-      metadata: { memoryUsage: memoryUsageMb(), tempDiskUsageMb: await tempDiskUsageMb(localPath), workerId, retryScheduled: canRetry, retryable: classified.retryable, safeErrorMessage: safeMessage, nextRetryAt },
-      error
+      metadata: { jobRef: context.jobRef, stage: "failed", attempt: job.attempts, errorCode: classified.code, memoryUsage: memoryUsageMb(), tempDiskUsageMb: await tempDiskUsageMb(localPath), workerId, retryable: classified.retryable, safeErrorMessage: safeMessage },
+      error: { name: error instanceof Error ? error.name : "ImportWorkerError", message: safeMessage, code: classified.code }
     });
     await evaluateEmailAlertRules({
       eventType: "upload_failed",
@@ -1000,6 +866,7 @@ export async function processImportJob(supabase: SupabaseClient, job: ImportJobR
       errorCount: 1,
       metadata: { message: safeMessage, workerId }
     });
+    if (error instanceof ImportCancelledError) return;
     throw error;
   } finally {
     clearInterval(heartbeatTimer);

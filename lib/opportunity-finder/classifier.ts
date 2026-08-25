@@ -6,6 +6,7 @@ import {
   OPPORTUNITY_STRUCTURAL_HEADER_ALIASES,
   opportunityHeaderHasAlias
 } from "@/lib/opportunity-finder/aliases";
+import { detectOpportunityTemplate } from "@/lib/opportunity-finder/adapters";
 import type {
   OpportunityFileType,
   OpportunitySheetProfile,
@@ -35,7 +36,8 @@ function compactHeader(value: unknown) {
 }
 
 function headerMatchesTerm(header: string, term: string) {
-  return header === term || header.includes(term);
+  const normalizedTerm = normalizeOpportunityHeader(term);
+  return header === normalizedTerm;
 }
 
 export function opportunityHeaderScore(cells: unknown[]) {
@@ -79,15 +81,16 @@ export function classifyOpportunityWorkbook(input: {
   sheets: OpportunitySheetProfile[];
   rowCount: number;
 }): OpportunityWorkbookProfile {
+  const template = detectOpportunityTemplate(input.sheets);
   const headers = allNormalizedHeaders(input.sheets);
-  const sheetNames = input.sheets.map((sheet) => normalizeOpportunityHeader(sheet.sheetName));
-  const fileName = normalizeOpportunityHeader(input.fileName);
   const scores = new Map<OpportunityFileType, number>([
     ["demand", 0],
     ["stock", 0],
     ["excess", 0],
     ["supplier_offer", 0],
     ["received_history", 0],
+    ["purchase_history", 0],
+    ["quote_history", 0],
     ["sales_history", 0],
     ["financial", 0],
     ["unknown", 0]
@@ -97,6 +100,10 @@ export function classifyOpportunityWorkbook(input: {
   function add(type: OpportunityFileType, points: number, reason: string) {
     scores.set(type, (scores.get(type) ?? 0) + points);
     reasons.set(type, [...(reasons.get(type) ?? []), reason]);
+  }
+
+  if (template.forcedRole) {
+    add(template.forcedRole, 60, template.reasons[0] ?? `${template.templateType}_signature`);
   }
 
   if (
@@ -111,16 +118,12 @@ export function classifyOpportunityWorkbook(input: {
   ) {
     add("stock", 6, "stock_manufacturer_columns");
   }
-  if (sheetNames.some((name) => /\bstock|inventory\b/.test(name))) add("stock", 3, "inventory_sheet_name");
-
   const explicitExcessColumns =
     hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn) &&
     has(headers, "maker") &&
-    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.excessQuantity);
-  if (explicitExcessColumns && /\bexcess|surplus|overstock\b/.test(fileName)) {
-    add("excess", 24, "explicit_excess_file_and_columns");
-  } else if (explicitExcessColumns) {
-    add("excess", 6, "possible_excess_columns_without_explicit_context");
+    has(headers, "excess qty", "excess quantity", "surplus qty", "available excess");
+  if (explicitExcessColumns) {
+    add("excess", 24, "explicit_excess_columns");
   }
 
   if (
@@ -133,8 +136,6 @@ export function classifyOpportunityWorkbook(input: {
   if (count(headers, ["sourcecontrol", "source control", "bpname", "requi", "startdate"]) >= 3) {
     add("demand", 10, "planning_context_columns");
   }
-  if (sheetNames.some((name) => /\bplanned|demand|requirements?\b/.test(name))) add("demand", 4, "demand_sheet_name");
-
   const supplierMpn = hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.supplierOfferMpn);
   const supplierQty = hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.supplierQuantity);
   if (supplierMpn && supplierQty && count(headers, ["brand", "pdl", "list", "description", "price"]) >= 2) {
@@ -152,6 +153,27 @@ export function classifyOpportunityWorkbook(input: {
     add("received_history", 7, "actual_spend_context");
   }
 
+  if (
+    has(headers, "company") &&
+    has(headers, "facility") &&
+    has(headers, "global supplier name") &&
+    has(headers, "mfg partno") &&
+    has(headers, "total")
+  ) {
+    add("purchase_history", 30, "purchase_cube_columns");
+  }
+
+  if (
+    hasAliases(headers, OPPORTUNITY_HEADER_ALIASES.primaryMpn) &&
+    has(headers, "mfg") &&
+    has(headers, "qty") &&
+    has(headers, "cost") &&
+    has(headers, "price") &&
+    has(headers, "gp")
+  ) {
+    add("quote_history", 30, "quote_database_columns");
+  }
+
   if (has(headers, "sales person") && has(headers, "item") && count(headers, ["unit price", "unit cost", "sales", "cost", "g p"]) >= 2) {
     add("sales_history", 20, "sales_report_columns");
   }
@@ -160,28 +182,56 @@ export function classifyOpportunityWorkbook(input: {
   if (has(headers, "open balance") && count(headers, ["customer", "credit limit", "due date", "invoice", "total"]) >= 2) {
     add("financial", 24, "aging_financial_columns");
   }
-  if (sheetNames.some((name) => /\baging|financial|receivable\b/.test(name))) add("financial", 6, "financial_sheet_name");
-
   const ranked = Array.from(scores.entries())
     .filter(([type]) => type !== "unknown")
     .sort((left, right) => right[1] - left[1]);
   const [winner, runnerUp] = ranked;
   const detectedType =
-    !winner || winner[1] < 10 || (runnerUp && winner[1] - runnerUp[1] < 3)
+    template.ambiguous || !winner || winner[1] < 10 || (runnerUp && winner[1] - runnerUp[1] < 3)
       ? "unknown"
       : winner[0];
   const classificationScore = detectedType === "unknown" ? winner?.[1] ?? 0 : winner[1];
+  const runnerUpScore = runnerUp?.[1] ?? 0;
+  const classificationConfidence = detectedType === "unknown"
+    ? "review" as const
+    : classificationScore >= 30 && classificationScore - runnerUpScore >= 8
+      ? "high" as const
+      : classificationScore >= 16
+        ? "medium" as const
+        : "low" as const;
+  const hiddenRowCount = input.sheets.reduce((sum, sheet) => sum + (sheet.hiddenRowCount ?? 0), 0);
+  const usefulRowCount = input.sheets.reduce(
+    (sum, sheet) => sum + (sheet.usefulRowCount ?? sheet.rowCount),
+    0
+  );
 
   return {
     fileName: input.fileName,
     sheetCount: input.sheets.length,
     rowCount: input.rowCount,
+    usefulRowCount,
+    hiddenRowCount,
     detectedType,
     classificationScore,
+    classificationConfidence,
     classificationReasons:
       detectedType === "unknown"
-        ? ["insufficient_or_ambiguous_structure"]
+        ? template.ambiguous
+          ? template.reasons.slice(0, 8)
+          : ["insufficient_or_ambiguous_structure"]
         : (reasons.get(detectedType) ?? []).slice(0, 6),
+    templateType: template.templateType,
+    mappingVersion: template.mappingVersion,
+    adapterAmbiguous: template.ambiguous,
+    adapterCandidates: template.candidates,
+    adapterEvidence: template.reasons,
+    warnings: template.ambiguous
+      ? ["adapter_mapping_ambiguous"]
+      : template.templateType === "flex_shortage_shifted_offer"
+      ? ["shifted_column_mapping"]
+      : template.confidence === "medium"
+        ? ["template_mapping_requires_confirmation"]
+        : [],
     sheets: input.sheets
   };
 }

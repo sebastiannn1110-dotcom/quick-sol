@@ -1,7 +1,7 @@
 export type AssistantLanguage = "es" | "en" | "zh";
 
-const SPANISH_HINTS = /\b(el|la|los|las|que|como|ultimo|ultima|subido|archivo|proveedor|cliente|errores|filas|muestrame|busca|precio|costos?|comision|registros?)\b/;
-const ENGLISH_HINTS = /\b(the|last|file|upload|show|find|supplier|customer|errors|rows|how|what|price|cost|commission|records?)\b/;
+const SPANISH_HINTS = /\b(el|la|los|las|que|como|cual|ultimo|ultima|subido|archivo|proveedor|cliente|errores|filas|muestrame|busca|precio|costos?|comision|registros?|stock|inventario|venta|ventas|requiere|disponible|cantidad)\b/g;
+const ENGLISH_HINTS = /\b(the|last|file|upload|show|find|supplier|customer|errors|rows|how|what|which|price|cost|commission|records?|stock|inventory|sale|sales|require|requires|available|quantity|parts?)\b/g;
 
 export function normalizeAssistantLanguage(language: unknown, fallback: AssistantLanguage = "es"): AssistantLanguage {
   if (typeof language !== "string") return fallback;
@@ -14,7 +14,6 @@ export function normalizeAssistantLanguage(language: unknown, fallback: Assistan
 
 export function detectAssistantLanguage(text: string, suggestedLanguage?: unknown): AssistantLanguage {
   const suggested = normalizeAssistantLanguage(suggestedLanguage, "es");
-  if (typeof suggestedLanguage === "string" && suggestedLanguage.trim()) return suggested;
   if (/[\u4e00-\u9fff]/.test(text)) return "zh";
 
   const normalized = text
@@ -25,7 +24,8 @@ export function detectAssistantLanguage(text: string, suggestedLanguage?: unknow
   const spanishScore = (normalized.match(SPANISH_HINTS) ?? []).length;
   const englishScore = (normalized.match(ENGLISH_HINTS) ?? []).length;
   if (englishScore > spanishScore) return "en";
-  return "es";
+  if (spanishScore > englishScore) return "es";
+  return typeof suggestedLanguage === "string" && suggestedLanguage.trim() ? suggested : "es";
 }
 
 export function languageName(language: AssistantLanguage) {

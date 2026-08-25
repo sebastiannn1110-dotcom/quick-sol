@@ -104,6 +104,58 @@ describe("streaming opportunity workbook parser", () => {
     expect(rows.map((row) => row.availableQty)).toEqual([5, 7]);
   });
 
+  it("keeps missing offer validity strictly null unless a file-level expiry is attested", async () => {
+    const filePath = await syntheticCsv([
+      ["List#", "Item#", "MFR#", "Max QTY", "Final Price"],
+      ["1", "I-1", "STRICT-NULL", 5, 100]
+    ]);
+    const withoutOverride: CanonicalOpportunityRow[] = [];
+    await parseOpportunityWorkbook({
+      filePath,
+      fileName: "catalog.csv",
+      fileId: "file-b",
+      jobId: "job",
+      side: "B",
+      role: "supplier_offer",
+      onBatch: async (batch) => withoutOverride.push(...batch)
+    });
+    expect(withoutOverride[0]).toMatchObject({
+      expiresAt: null,
+      qualityFlags: expect.arrayContaining(["offer_validity_unknown"])
+    });
+
+    const withOverride: CanonicalOpportunityRow[] = [];
+    await parseOpportunityWorkbook({
+      filePath,
+      fileName: "catalog.csv",
+      fileId: "file-b",
+      jobId: "job",
+      side: "B",
+      role: "supplier_offer",
+      validityOverrideExpiresAt: "2099-01-02T03:04:00.000Z",
+      onBatch: async (batch) => withOverride.push(...batch)
+    });
+    expect(withOverride[0].expiresAt).toBe("2099-01-02T03:04:00.000Z");
+    expect(withOverride[0].qualityFlags).not.toContain("offer_validity_unknown");
+
+    const stockFilePath = await syntheticCsv([
+      ["MPN", "MFG", "STOCK QTY"],
+      ["STRICT-NULL", "TI", 5]
+    ]);
+    const stockRows: CanonicalOpportunityRow[] = [];
+    await parseOpportunityWorkbook({
+      filePath: stockFilePath,
+      fileName: "stock.csv",
+      fileId: "file-b",
+      jobId: "job",
+      side: "B",
+      role: "stock",
+      validityOverrideExpiresAt: "2099-01-02T03:04:00.000Z",
+      onBatch: async (batch) => stockRows.push(...batch)
+    });
+    expect(stockRows[0].expiresAt).toBeNull();
+  });
+
   it("does not treat Sales Report ITEM# as a reliable MPN", async () => {
     const filePath = await syntheticCsv([
       ["SALES PERSON", "ITEM#", "QTY", "UNIT PRICE($)", "UNIT COST($)", "SALES($)", "G.P.(%)"],

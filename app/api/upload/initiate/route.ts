@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { AppError, FileValidationError, ValidationError } from "@/lib/errors/AppError";
 import { handleRouteError } from "@/lib/errors/errorHandler";
-import { safeStoragePath, sanitizeFileName, uploadFormSchema, validateUploadMetadata } from "@/lib/excel/validators";
+import { sanitizeFileName, uploadFormSchema, validateUploadMetadata } from "@/lib/excel/validators";
 import { getLoggerContextFromRequest } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
@@ -146,108 +146,63 @@ export async function POST(request: Request) {
     await checkUploadSchema(service, logContext);
     await checkStorageBucket(service, diagnostics.storageBucket, logContext);
 
-    if (parsed.data.idempotencyKey) {
-      const { data: existingUpload, error: existingError } = await context.supabase
-        .from("upload_batches")
-        .select("id, status, original_file_name")
-        .eq("uploaded_by", context.profile.id)
-        .eq("idempotency_key", parsed.data.idempotencyKey)
-        .is("archived_at", null)
-        .maybeSingle();
-      if (existingError) throw uploadDatabaseError("Unable to check duplicate upload.", existingError, { ...baseMetadata, table: "upload_batches" });
-      if (existingUpload) {
-        const { data: existingJob } = await context.supabase
-          .from("import_jobs")
-          .select("id, status")
-          .eq("upload_batch_id", existingUpload.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        await logger.warn({
-          ...logContext,
-          module: "upload",
-          action: "duplicate_upload_blocked",
-          message: "Duplicate upload idempotency key blocked.",
-          status: "failed",
-          uploadBatchId: existingUpload.id,
-          metadata: { jobId: existingJob?.id ?? null, status: existingUpload.status }
-        });
-        return NextResponse.json({
-          error: "This file already has an import job. Use retry from the upload history instead of uploading it again.",
-          uploadId: existingUpload.id,
-          jobId: existingJob?.id ?? null,
-          status: existingUpload.status
-        }, { status: 409 });
-      }
-    }
-
     const uploadBatchId = crypto.randomUUID();
     const jobId = crypto.randomUUID();
-    const bucket = diagnostics.storageBucket;
-    const storagePath = safeStoragePath(context.profile.id, uploadBatchId, originalFileName);
+    const uploadStrategy = parsed.data.fileSize >= diagnostics.resumableThresholdMb * 1024 * 1024 ? "resumable" : "standard";
+    const { data: issuedData, error: issuedError } = await service.rpc("create_import_upload_v2", {
+      input_actor_id: context.profile.id,
+      input_upload_id: uploadBatchId,
+      input_job_id: jobId,
+      input_original_file_name: originalFileName,
+      input_mime_type: parsed.data.fileType || originalFileName.split(".").pop() || "application/octet-stream",
+      input_size_bytes: parsed.data.fileSize,
+      input_selected_category: parsed.data.selectedCategory,
+      input_department: parsed.data.department,
+      input_region: parsed.data.region,
+      input_notes: parsed.data.notes || "",
+      input_upload_strategy: uploadStrategy,
+      input_idempotency_key: parsed.data.idempotencyKey || null,
+      input_max_attempts: diagnostics.workerMaxAttempts
+    });
+    if (issuedError || !issuedData) {
+      throw uploadDatabaseError("Unable to issue trusted import job.", issuedError, { ...baseMetadata, rpc: "create_import_upload_v2" });
+    }
+    const issued = issuedData as {
+      duplicate: boolean;
+      uploadId: string;
+      jobId: string;
+      status: string;
+      storageBucket: string;
+      storagePath: string;
+    };
+    if (issued.duplicate) {
+      return NextResponse.json({
+        error: "This file already has an import job. Use retry from the upload history instead of uploading it again.",
+        uploadId: issued.uploadId,
+        jobId: issued.jobId,
+        status: issued.status
+      }, { status: 409 });
+    }
+    const bucket = issued.storageBucket;
+    const storagePath = issued.storagePath;
     const uploadMetadata = {
       ...baseMetadata,
-      uploadBatchId,
-      jobId,
-      storageBucket: bucket,
+      uploadRef: uploadBatchId.slice(0, 8),
+      jobRef: jobId.slice(0, 8),
       maxUploadSizeMb: diagnostics.maxUploadSizeMb,
       maxRowsPerFile: diagnostics.maxRowsPerFile,
       resumableThresholdMb: diagnostics.resumableThresholdMb
     };
-    const uploadStrategy = parsed.data.fileSize >= diagnostics.resumableThresholdMb * 1024 * 1024 ? "resumable" : "standard";
-
-    await logUploadDiagnostic(logContext, "upload_batch_create_started", "Upload batch create started.", "started", uploadMetadata);
-    const { error: batchError } = await context.supabase.from("upload_batches").insert({
-      id: uploadBatchId,
-      uploaded_by: context.profile.id,
-      original_file_name: originalFileName,
-      stored_file_path: storagePath,
-      storage_bucket: bucket,
-      file_type: parsed.data.fileType || originalFileName.split(".").pop(),
-      file_size: parsed.data.fileSize,
-      selected_category: parsed.data.selectedCategory,
-      status: "pending_upload",
-      total_rows: 0,
-      valid_rows: 0,
-      invalid_rows: 0,
-      error_count: 0,
-      upload_progress_percent: 0,
-      processing_progress_percent: 0,
-      upload_strategy: uploadStrategy,
-      idempotency_key: parsed.data.idempotencyKey || null,
-      notes: parsed.data.notes || null
-    });
-    if (batchError) throw uploadDatabaseError("Unable to create upload batch.", batchError, { ...uploadMetadata, table: "upload_batches" });
-    await logUploadDiagnostic(logContext, "upload_batch_create_completed", "Upload batch create completed.", "completed", uploadMetadata);
-
-    await logUploadDiagnostic(logContext, "import_job_create_started", "Import job create started.", "started", uploadMetadata);
-    const { error: jobError } = await context.supabase.from("import_jobs").insert({
-      id: jobId,
-      upload_batch_id: uploadBatchId,
-      uploaded_by: context.profile.id,
-      status: "pending_upload",
-      storage_bucket: bucket,
-      storage_path: storagePath,
-      original_file_name: originalFileName,
-      mime_type: parsed.data.fileType || null,
-      size_bytes: parsed.data.fileSize,
-      selected_category: parsed.data.selectedCategory,
-      department: parsed.data.department,
-      region: parsed.data.region,
-      notes: parsed.data.notes || null,
-      upload_strategy: uploadStrategy,
-      max_attempts: diagnostics.workerMaxAttempts
-    });
-    if (jobError) throw uploadDatabaseError("Unable to create import job.", jobError, { ...uploadMetadata, table: "import_jobs" });
-    await logUploadDiagnostic(logContext, "import_job_create_completed", "Import job create completed.", "completed", uploadMetadata);
 
     await logUploadDiagnostic(logContext, "signed_upload_url_create_started", "Signed upload URL create started.", "started", uploadMetadata);
     const { data: signedUpload, error: signedError } = await service.storage.from(bucket).createSignedUploadUrl(storagePath);
     if (signedError || !signedUpload) {
-      await Promise.all([
-        context.supabase.from("upload_batches").update({ status: "failed", error_message: "Unable to create signed upload URL." }).eq("id", uploadBatchId),
-        context.supabase.from("import_jobs").update({ status: "failed", error_message: "Unable to create signed upload URL.", updated_at: new Date().toISOString() }).eq("id", jobId)
-      ]);
+      await service.rpc("fail_import_upload_initialization_v2", {
+        input_actor_id: context.profile.id,
+        input_upload_id: uploadBatchId,
+        input_job_id: jobId,
+        input_error_code: "IMPORT_SIGNED_UPLOAD_URL_FAILED"
+      });
       throw uploadStorageError("Unable to create signed upload URL.", signedError, uploadMetadata);
     }
     await logUploadDiagnostic(logContext, "signed_upload_url_create_completed", "Signed upload URL create completed.", "completed", uploadMetadata);
@@ -258,9 +213,8 @@ export async function POST(request: Request) {
       action: "upload_started",
       message: "Direct-to-storage upload initialized.",
       status: "completed",
-      uploadBatchId,
-      fileName: originalFileName,
-      metadata: { jobId, bucket, storagePath, sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile, uploadStrategy }
+      uploadBatchId: uploadBatchId.slice(0, 8),
+      metadata: { jobRef: jobId.slice(0, 8), sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile, uploadStrategy }
     });
     await logAuditEvent(context, "upload_initialized", "upload_batch", uploadBatchId, { jobId, fileName: originalFileName });
     await logUploadDiagnostic(logContext, "upload_initiate_completed", "Upload initiate completed.", "completed", uploadMetadata);

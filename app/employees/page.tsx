@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Mail, MessageCircle, Search } from "lucide-react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
+import { useProfile } from "@/components/ProfileProvider";
+import { isAdmin } from "@/lib/auth/roles";
 
 interface EmployeeWithCounts extends Profile {
   uploadCount: number;
@@ -23,7 +25,7 @@ interface EmployeeDetailPayload {
 }
 
 function EmployeesContent() {
-  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  const { profile: currentUser } = useProfile();
   const [employees, setEmployees] = useState<EmployeeWithCounts[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<EmployeeDetailPayload | null>(null);
@@ -35,11 +37,7 @@ function EmployeesContent() {
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
-    const [meResponse, employeesResponse] = await Promise.all([
-      fetch("/api/me", { cache: "no-store" }),
-      fetch("/api/employees", { cache: "no-store" })
-    ]);
-    if (meResponse.ok) setCurrentUser(((await meResponse.json()) as { profile: Profile }).profile);
+    const employeesResponse = await fetch("/api/employees", { cache: "no-store" });
     if (employeesResponse.ok) {
       const payload = (await employeesResponse.json()) as { employees: EmployeeWithCounts[] };
       setEmployees(payload.employees ?? []);
@@ -84,7 +82,7 @@ function EmployeesContent() {
   }
 
   const employee = detail?.employee;
-  const canEmail = currentUser?.role === "admin" && employee?.email;
+  const canEmail = isAdmin(currentUser?.role) && employee?.email;
 
   return (
     <div className="space-y-6">
@@ -104,7 +102,7 @@ function EmployeesContent() {
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, correo, cargo, area o region" className="focus-ring w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm" />
             </label>
           </div>
-          <div className="max-h-[calc(100vh-250px)] divide-y divide-slate-100 overflow-auto">
+          <div className="divide-y divide-slate-100">
             {loading ? <p className="p-4 text-sm text-slate-500">Cargando empleados...</p> : null}
             {!loading && filtered.map((item) => (
               <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className={`flex w-full items-start gap-3 p-3 text-left hover:bg-slate-50 ${selectedId === item.id ? "bg-brand-50" : ""}`}>
@@ -153,9 +151,7 @@ function EmployeesContent() {
                 <p className="mt-2 text-sm text-slate-700">{employee.bio || "Este usuario aun no ha agregado una descripcion."}</p>
               </div>
 
-              {detail?.privateActivity ? (
-                <p className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">La actividad operativa de otros empleados no se muestra en el directorio normal.</p>
-              ) : detail?.summary ? (
+              {!detail?.privateActivity && detail?.summary ? (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-md bg-slate-50 p-3"><p className="text-xs text-slate-500">Cargas</p><p className="text-xl font-semibold text-slate-950">{detail.summary.uploadCount}</p></div>
                   <div className="rounded-md bg-slate-50 p-3"><p className="text-xs text-slate-500">Registros</p><p className="text-xl font-semibold text-slate-950">{detail.summary.recordCount}</p></div>

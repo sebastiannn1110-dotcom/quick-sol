@@ -30,7 +30,7 @@ async function main() {
   if (!url || !key) throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
 
   const supabase = createClient(url, key, serverSupabaseClientOptions());
-  const diagnostics = await getImportJobDiagnostics(supabase, jobId);
+  const diagnostics = await getImportJobDiagnostics(supabase, jobId, { trustedBackend: true });
   if (!diagnostics) throw new Error(`Import job not found: ${jobId}`);
 
   console.log(JSON.stringify({

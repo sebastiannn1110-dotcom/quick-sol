@@ -1,0 +1,34 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`multilingual Opportunity Finder explanation snapshots > keeps exact MPN, usable availability, exact quantity, full sale, partial sale, and comparison copy stable in en 1`] = `
+{
+  "exactMpn": "An exact MPN match means the normalized part number appears in both files. It does not mean quantities are equal or guarantee usable stock.",
+  "exactQuantity": "Exact quantity means usable availability before allocation exactly matched the required quantity, covering demand with no remainder at that moment.",
+  "fullSale": "Exact MPN means the part number matches; usable availability means valid allocatable stock; exact quantity means availability before allocation equals demand. A full sale covers all demand, while a partial sale covers only part.",
+  "fullSaleVsExactQuantity": "A full sale means demand was fully covered. An exact quantity match means usable availability before allocation exactly matched the required quantity. A full sale may still leave remaining stock.",
+  "partialSale": "Exact MPN means the part number matches; usable availability means valid allocatable stock; exact quantity means availability before allocation equals demand. A full sale covers all demand, while a partial sale covers only part.",
+  "usableAvailability": "Exact MPN means the part number matches; usable availability means valid allocatable stock; exact quantity means availability before allocation equals demand. A full sale covers all demand, while a partial sale covers only part.",
+}
+`;
+
+exports[`multilingual Opportunity Finder explanation snapshots > keeps exact MPN, usable availability, exact quantity, full sale, partial sale, and comparison copy stable in es 1`] = `
+{
+  "exactMpn": "Una coincidencia exacta de MPN significa que el número de parte normalizado aparece en ambos archivos. No implica cantidades iguales ni garantiza stock utilizable.",
+  "exactQuantity": "Cantidad exacta significa que, antes de asignar, el saldo utilizable disponible coincide exactamente con la cantidad requerida; la necesidad queda cubierta sin sobrante en ese momento.",
+  "fullSale": "MPN exacto indica que la referencia coincide; disponibilidad utilizable indica inventario válido y asignable; cantidad exacta indica que la disponibilidad antes de asignar es igual a la demanda. Una venta completa cubre toda la demanda y una parcial solo una parte.",
+  "fullSaleVsExactQuantity": "Venta completa significa que la necesidad quedó totalmente cubierta. Cantidad exacta significa que, antes de asignar, el saldo utilizable era igual a la necesidad. Puede quedar inventario sobrante y aun así ser una venta completa.",
+  "partialSale": "MPN exacto indica que la referencia coincide; disponibilidad utilizable indica inventario válido y asignable; cantidad exacta indica que la disponibilidad antes de asignar es igual a la demanda. Una venta completa cubre toda la demanda y una parcial solo una parte.",
+  "usableAvailability": "MPN exacto indica que la referencia coincide; disponibilidad utilizable indica inventario válido y asignable; cantidad exacta indica que la disponibilidad antes de asignar es igual a la demanda. Una venta completa cubre toda la demanda y una parcial solo una parte.",
+}
+`;
+
+exports[`multilingual Opportunity Finder explanation snapshots > keeps exact MPN, usable availability, exact quantity, full sale, partial sale, and comparison copy stable in zh 1`] = `
+{
+  "exactMpn": "精确 MPN 匹配表示标准化后的料号出现在两个文件中；它不表示数量相同，也不保证存在可用库存。",
+  "exactQuantity": "精确数量表示分配前的可用数量与需求数量完全相同，因此当时需求被满足且没有剩余。",
+  "fullSale": "精确 MPN 表示料号匹配；可用库存表示有效且可分配的库存；精确数量表示分配前的可用数量等于需求。完整销售覆盖全部需求，部分销售只覆盖一部分。",
+  "fullSaleVsExactQuantity": "完整销售表示需求已被完全满足。精确数量表示分配前的可用数量与需求数量完全相同。完整销售后仍可能有剩余库存。",
+  "partialSale": "精确 MPN 表示料号匹配；可用库存表示有效且可分配的库存；精确数量表示分配前的可用数量等于需求。完整销售覆盖全部需求，部分销售只覆盖一部分。",
+  "usableAvailability": "精确 MPN 表示料号匹配；可用库存表示有效且可分配的库存；精确数量表示分配前的可用数量等于需求。完整销售覆盖全部需求，部分销售只覆盖一部分。",
+}
+`;

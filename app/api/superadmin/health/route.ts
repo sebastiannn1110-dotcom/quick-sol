@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSuperadmin, superadminConfigStatus } from "@/lib/superadmin/auth";
+import { requireSuperadmin, superadminConfigStatus, superadminJson } from "@/lib/superadmin/auth";
 import { buildSuperadminHealth } from "@/lib/superadmin/metrics";
 
 export const runtime = "nodejs";
@@ -9,5 +9,5 @@ export async function GET(request: Request) {
   const context = await requireSuperadmin(request);
   if (context instanceof NextResponse) return context;
   const health = await buildSuperadminHealth(context.service);
-  return NextResponse.json({ health, superadmin: superadminConfigStatus() });
+  return superadminJson({ health, superadmin: superadminConfigStatus() });
 }

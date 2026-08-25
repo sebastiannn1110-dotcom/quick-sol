@@ -64,18 +64,20 @@ describe("GET /api/admin/opportunities", () => {
     expect(payload.totals.totalOpportunities).toBe(0);
   });
 
-  it("keeps records active-only through the shared loader and never returns raw rows directly", () => {
+  it("uses only the versioned summary path and never returns raw rows directly", () => {
     const source = readFileSync(path.join(process.cwd(), "app/api/admin/opportunities/route.ts"), "utf8");
     const service = readFileSync(path.join(process.cwd(), "lib/opportunities/service.ts"), "utf8");
-    const loader = readFileSync(path.join(process.cwd(), "lib/stock-needs/data-source.ts"), "utf8");
 
     expect(source).toContain("loadSalesOpportunities");
-    expect(service).toContain("loadStockNeedsInput");
-    expect(loader).toContain('.from("business_records")');
-    expect(loader).toContain('.is("archived_at", null)');
-    expect(service).toContain("buildSalesOpportunitiesResult");
+    expect(service).toContain("requireBusinessSummaryReady");
+    expect(service).toContain('rpc("get_sales_opportunities_page_v1"');
+    expect(service).not.toContain("loadStockNeedsInput");
+    expect(service).not.toContain("complete: true");
+    expect(service).not.toContain("buildSalesOpportunitiesResult");
     expect(source).toContain("redactSensitiveFieldsForRole");
     expect(source).not.toContain("return NextResponse.json({ records");
+    expect(source).not.toContain("raw_data");
+    expect(source).not.toContain("normalized_data");
   });
 
   it("does not expose cost, price or GP fields from the opportunities endpoint source", () => {

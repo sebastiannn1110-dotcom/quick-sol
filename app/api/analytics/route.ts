@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/auth/context";
+import { requireAdmin } from "@/lib/auth/context";
 import type { LogContext } from "@/lib/logger/types";
 import { logger } from "@/lib/logger/logger";
 import { measureAsync } from "@/lib/logger/performance";
@@ -7,13 +7,17 @@ import { buildPlatformAnalytics } from "@/lib/platform/analytics";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
-import { ANALYTICS_PROFILE_SELECT, ANALYTICS_RECORD_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
+import { ANALYTICS_PROFILE_SELECT, ANALYTICS_UPLOAD_SELECT } from "@/lib/platform/query-columns";
+import { businessRecordReadContract } from "@/lib/security/business-records";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const RECORD_SAMPLE_LIMIT = 5000;
+const UPLOAD_SAMPLE_LIMIT = 1000;
+
 export async function GET(request: Request) {
-  const context = await getAuthContext(request);
+  const context = await requireAdmin(request);
   if (context instanceof NextResponse) return context;
   const logContext: LogContext = {
     traceId: context.requestMeta.traceId,
@@ -26,7 +30,7 @@ export async function GET(request: Request) {
   };
 
   try {
-    const analytics = await measureAsync(
+    const result = await measureAsync(
       "analytics_query",
       "analytics",
       logContext,
@@ -43,21 +47,22 @@ export async function GET(request: Request) {
               metadata: { source: "demo" }
             });
           }
-          return buildPlatformAnalytics(data);
+          return { analytics: buildPlatformAnalytics(data), recordCount: data.records.length, uploadCount: data.uploads.length, demo: true };
         }
 
+        const recordContract = businessRecordReadContract(context.profile.role);
         const [recordsResult, uploadsResult, profilesResult] = await Promise.all([
           safeQuery<PlatformRecord[]>(
             "business_records",
             logContext,
             () =>
               context.supabase!
-                .from("business_records")
-                .select(ANALYTICS_RECORD_SELECT)
+                .from(recordContract.table)
+                .select(recordContract.select)
                 .is("archived_at", null)
-                .limit(5000)
+                .limit(RECORD_SAMPLE_LIMIT)
                 .overrideTypes<PlatformRecord[]>(),
-            { filters: { archived_at: null }, limit: 5000, scope: "employee_analytics" }
+            { filters: { archived_at: null }, limit: RECORD_SAMPLE_LIMIT, scope: "admin_analytics" }
           ),
           safeQuery<UploadBatch[]>(
             "upload_batches",
@@ -67,9 +72,9 @@ export async function GET(request: Request) {
                 .from("upload_batches")
                 .select(ANALYTICS_UPLOAD_SELECT)
                 .order("created_at", { ascending: false })
-                .limit(1000)
+                .limit(UPLOAD_SAMPLE_LIMIT)
                 .overrideTypes<UploadBatch[]>(),
-            { orderBy: "created_at_desc", limit: 1000, scope: "employee_analytics" }
+            { orderBy: "created_at_desc", limit: UPLOAD_SAMPLE_LIMIT, scope: "admin_analytics" }
           ),
           safeQuery<Profile[]>(
             "profiles",
@@ -92,25 +97,25 @@ export async function GET(request: Request) {
           });
         }
 
-        return buildPlatformAnalytics({
+        return { analytics: buildPlatformAnalytics({
           records,
           uploads: (uploadsResult.data ?? []) as UploadBatch[],
           profiles: (profilesResult.data ?? []) as Profile[]
-        });
+        }), recordCount: records.length, uploadCount: (uploadsResult.data ?? []).length, demo: false };
       },
-      { scope: "employee_analytics" },
+      { scope: "admin_analytics" },
       { slowAction: "slow_query_detected" }
     );
 
     await logger.info({
       ...logContext,
       module: "analytics",
-      action: "employee_analytics_loaded",
-      message: "Employee analytics loaded.",
+      action: "admin_analytics_loaded",
+      message: "Admin analytics loaded.",
       status: "completed",
       metadata: {
-        totalRecords: analytics.totals.totalRecords,
-        totalUploads: analytics.totals.totalUploads
+        totalRecords: result.analytics.totals.totalRecords,
+        totalUploads: result.analytics.totals.totalUploads
       }
     });
     await logger.info({
@@ -119,17 +124,25 @@ export async function GET(request: Request) {
       action: "category_analytics_loaded",
       message: "Category analytics loaded.",
       status: "completed",
-      metadata: { categoriesDetected: analytics.totals.categoriesDetected }
+      metadata: { categoriesDetected: result.analytics.totals.categoriesDetected }
     });
 
-    return NextResponse.json({ analytics });
+    const partial = !result.demo && (result.recordCount >= RECORD_SAMPLE_LIMIT || result.uploadCount >= UPLOAD_SAMPLE_LIMIT);
+    return NextResponse.json({
+      analytics: result.analytics,
+      meta: {
+        partial,
+        sampled: partial,
+        sampleLimit: { records: RECORD_SAMPLE_LIMIT, uploads: UPLOAD_SAMPLE_LIMIT }
+      }
+    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await logger.error({
       ...logContext,
       module: "analytics",
       action: "analytics_failed",
-      message: "Unable to load analytics; returning degraded analytics payload.",
+      message: "Unable to load analytics.",
       status: "failed",
       metadata: {
         errorMessage,
@@ -137,11 +150,9 @@ export async function GET(request: Request) {
       },
       error
     });
-    const analytics = buildPlatformAnalytics({ records: [], uploads: [], profiles: [] });
-    return NextResponse.json({
-      analytics,
-      warning: "Analytics could not be loaded. Uploads are not affected.",
-      error: "Unable to load analytics."
-    });
+    return NextResponse.json(
+      { error: "Unable to load analytics.", code: "ANALYTICS_UNAVAILABLE" },
+      { status: 500, headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
   }
 }

@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/types";
+import { isAdmin } from "@/lib/auth/roles";
 
 export interface ConversationMemberLike {
   user_id: string;
@@ -27,5 +28,5 @@ export function messageSide(senderId: string | null | undefined, currentUserId: 
 }
 
 export function canOpenChatAudit(role: UserRole) {
-  return role === "admin";
+  return isAdmin(role);
 }

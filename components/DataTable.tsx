@@ -5,10 +5,12 @@ import CategoryBadge from "@/components/CategoryBadge";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { BusinessCategory, BusinessRecord, PlatformRecord } from "@/lib/types";
 
-type RecordLike = BusinessRecord | PlatformRecord;
+type PlatformListRecord = Omit<PlatformRecord, "raw_data" | "normalized_data" | "errors" | "searchable_text"> &
+  Partial<Pick<PlatformRecord, "raw_data" | "normalized_data" | "errors" | "searchable_text">>;
+type RecordLike = BusinessRecord | PlatformListRecord;
 
-function isPlatformRecord(record: RecordLike): record is PlatformRecord {
-  return "normalized_data" in record;
+function isPlatformRecord(record: RecordLike): record is PlatformListRecord {
+  return "upload_batch_id" in record;
 }
 
 function categoryOf(record: RecordLike) {
@@ -116,6 +118,8 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
 export default function DataTable({ records }: { records: RecordLike[] }) {
   const { t } = useLanguage();
   const [selectedRecord, setSelectedRecord] = useState<RecordLike | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const visibleRecords = useMemo(() => records.slice(0, 500), [records]);
   const translatedStatus = (status: string) => {
     if (status === "Has errors") return t("table.hasErrors");
@@ -123,6 +127,23 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
     if (status === "Unspecified") return t("table.unspecified");
     return status;
   };
+
+  async function openRecord(record: RecordLike) {
+    setSelectedRecord(record);
+    setDetailError("");
+    if (!isPlatformRecord(record) || (record.raw_data !== undefined && record.normalized_data !== undefined)) return;
+    setDetailLoading(true);
+    try {
+      const response = await fetch(`/api/records/${encodeURIComponent(record.id)}`, { cache: "no-store" });
+      const payload = await response.json() as { record?: Partial<PlatformRecord>; error?: string };
+      if (!response.ok || !payload.record) throw new Error(payload.error ?? "Unable to load detail.");
+      setSelectedRecord({ ...record, ...payload.record } as PlatformRecord);
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : "Unable to load detail.");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
 
   return (
     <section className="rounded-md border border-slate-200 bg-white shadow-sm">
@@ -172,7 +193,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <button
                       type="button"
-                      onClick={() => setSelectedRecord(record)}
+                      onClick={() => void openRecord(record)}
                       className="focus-ring rounded-md bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
                     >
                       {t("table.view")}
@@ -209,8 +230,16 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
               </button>
             </div>
             <div className="grid gap-4 p-4 lg:grid-cols-2">
-              <JsonBlock title={t("table.normalized")} value={normalizedDataOf(selectedRecord)} />
-              <JsonBlock title={t("table.raw")} value={rawDataOf(selectedRecord)} />
+              {detailLoading ? (
+                <p className="text-sm text-slate-500">{t("records.loading")}</p>
+              ) : detailError ? (
+                <p className="text-sm text-red-700">{detailError}</p>
+              ) : (
+                <>
+                  <JsonBlock title={t("table.normalized")} value={normalizedDataOf(selectedRecord)} />
+                  <JsonBlock title={t("table.raw")} value={rawDataOf(selectedRecord)} />
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -57,7 +57,7 @@ describe("GET /api/mpn-comparator", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(loadMpnComparatorOffers).toHaveBeenCalledWith(expect.any(Object), "1748917");
+    expect(loadMpnComparatorOffers).toHaveBeenCalledWith(expect.any(Object), "1748917", 120, "admin");
     expect(payload.mpn).toBe("1748917");
     expect(payload.mpn).not.toBe("1,748,917");
     expect(payload.offers[0].mpn).toBe("1748917");

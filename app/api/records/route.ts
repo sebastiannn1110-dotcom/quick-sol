@@ -8,10 +8,39 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { canViewCosts, canViewCustomerDetails, canViewGp, canViewSensitivePricing, canViewSupplierDetails, getRolePermissions, redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { safeQuery } from "@/lib/supabase/supabase-safe";
 import { recordsFilterSchema } from "@/lib/excel/validators";
+import { businessRecordReadContract, ilikeAny, permittedRecordSearchColumns } from "@/lib/security/business-records";
 import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type RecordCursor = { createdAt: string; id: string };
+
+function decodeCursor(value?: string): RecordCursor | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as RecordCursor;
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(parsed.createdAt) || !/^[0-9a-f-]{36}$/i.test(parsed.id)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function encodeCursor(row: Record<string, unknown> | undefined) {
+  if (!row?.created_at || !row.id) return null;
+  return Buffer.from(JSON.stringify({ createdAt: row.created_at, id: row.id }), "utf8").toString("base64url");
+}
+
+function hasArbitraryFilters(filters: ReturnType<typeof recordsFilterSchema.parse>) {
+  return [
+    filters.query, filters.category, filters.uploadedBy, filters.uploadBatchId, filters.customer,
+    filters.supplier, filters.mpn, filters.manufacturer, filters.lineId, filters.po, filters.status,
+    filters.country, filters.department, filters.region, filters.hasErrors, filters.gpRateMin,
+    filters.gpRateMax, filters.costMin, filters.costMax, filters.priceMin, filters.priceMax,
+    filters.qtyMin, filters.qtyMax, filters.uploadDateFrom, filters.uploadDateTo
+  ].some((value) => value !== undefined && value !== "" && value !== null);
+}
 
 function applyDemoFilters(records: Awaited<ReturnType<typeof getDemoPlatformData>>["records"], filters: ReturnType<typeof recordsFilterSchema.parse>) {
   return records.filter((record) => {
@@ -61,7 +90,10 @@ function applyDemoFilters(records: Awaited<ReturnType<typeof getDemoPlatformData
 function permissionScopedFilters(filters: ReturnType<typeof recordsFilterSchema.parse>, role: UserRole) {
   const scoped = { ...filters };
   const permissions = getRolePermissions(role);
-  if (!canViewSupplierDetails(role)) scoped.supplier = undefined;
+  if (!canViewSupplierDetails(role)) {
+    scoped.supplier = undefined;
+    scoped.manufacturer = undefined;
+  }
   if (!canViewCustomerDetails(role)) scoped.customer = undefined;
   if (!permissions.canViewPurchaseOrders) scoped.po = undefined;
   if (!canViewCosts(role)) {
@@ -123,8 +155,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid record filters." }, { status: 400 });
   }
   const filters = permissionScopedFilters(parsedFilters.data, context.profile.role);
-  const from = (filters.page - 1) * filters.pageSize;
-  const to = from + filters.pageSize - 1;
+  const cursor = decodeCursor(filters.cursor);
+  if (filters.cursor && !cursor) {
+    return NextResponse.json({ error: "Invalid pagination cursor." }, { status: 400 });
+  }
+  const dynamicCount = filters.includeCount && hasArbitraryFilters(filters);
   const filterMetadata = {
     page: filters.page,
     pageSize: filters.pageSize,
@@ -142,9 +177,9 @@ export async function GET(request: Request) {
         const data = await getDemoPlatformData();
         const filtered = applyDemoFilters(data.records, filters);
         return {
-          records: redactSensitiveFieldsForRole(filtered.slice(from, to + 1), context.profile.role),
+          records: redactSensitiveFieldsForRole(filtered.slice(0, filters.pageSize), context.profile.role),
           employees: data.profiles,
-          count: filtered.length,
+          count: filters.includeCount ? filtered.length : null,
           page: filters.page,
           pageSize: filters.pageSize
         };
@@ -152,21 +187,21 @@ export async function GET(request: Request) {
       { ...filterMetadata, source: "demo" },
       { slowAction: "slow_query_detected" }
     );
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   }
 
+  const recordContract = businessRecordReadContract(context.profile.role);
   let query = context.supabase!
-    .from("business_records")
-    .select("*, profiles(full_name,email,department,region,role), upload_batches(original_file_name,detected_category,status)", {
-      count: "exact"
-    })
+    .from(recordContract.table)
+    .select(recordContract.select, dynamicCount ? { count: "exact" } : undefined)
     .is("archived_at", null)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false });
 
-  if (filters.query) query = query.textSearch("searchable_text", filters.query, { type: "websearch" });
+  if (filters.query) query = query.or(ilikeAny(permittedRecordSearchColumns(context.profile.role), filters.query));
   if (filters.category) query = query.eq("category", filters.category);
   if (filters.uploadedBy) query = query.eq("uploaded_by", filters.uploadedBy);
-  if (filters.customer) query = query.ilike("customer", `%${filters.customer}%`);
+  if (filters.customer) query = query.or(`customer.ilike.%${filters.customer}%,client.ilike.%${filters.customer}%`);
   if (filters.supplier) query = query.or(`supplier.ilike.%${filters.supplier}%,supplier_name.ilike.%${filters.supplier}%`);
   if (filters.mpn) query = query.or(`mpn.ilike.%${filters.mpn}%,mpn_quoted.ilike.%${filters.mpn}%`);
   if (filters.manufacturer) query = query.or(`manufacturer.ilike.%${filters.manufacturer}%,clean_mfg.ilike.%${filters.manufacturer}%`);
@@ -184,38 +219,38 @@ export async function GET(request: Request) {
   if (filters.qtyMax !== undefined) query = query.lte("qty", filters.qtyMax);
   if (filters.uploadDateFrom) query = query.gte("created_at", filters.uploadDateFrom);
   if (filters.uploadDateTo) query = query.lte("created_at", `${filters.uploadDateTo}T23:59:59.999Z`);
+  if (cursor) {
+    query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  }
 
-  query = query.range(from, to);
+  query = query.limit(filters.pageSize);
 
   try {
-    const [{ data: records, error, count }, { data: employees, error: employeesError }] = await measureAsync(
+    const [{ data: records, error, count }, counterResult] = await measureAsync(
       "records_query",
       "records",
       logContext,
       async () => {
-        const [recordsResult, employeesResult] = await Promise.all([
+        const counterPromise = !filters.includeCount || dynamicCount
+          ? Promise.resolve({ data: null, error: null })
+          : context.supabase!.rpc("get_business_record_counter_v1");
+        const [recordsResult, versionedCounterResult] = await Promise.all([
           safeQuery<unknown[]>(
             "business_records",
             logContext,
             () => query,
-            { ...filterMetadata, range: { from, to } }
+            { ...filterMetadata, cursor: Boolean(cursor) }
           ),
-          safeQuery<unknown[]>(
-            "profiles",
-            logContext,
-            () => context.supabase!.from("profiles").select("*").order("full_name"),
-            { orderBy: "full_name", scope: "record_filters" }
-          )
+          counterPromise
         ]);
         if (recordsResult.error) throw recordsResult.error;
-        if (employeesResult.error) throw employeesResult.error;
-        return [recordsResult, employeesResult] as const;
+        return [recordsResult, versionedCounterResult] as const;
       },
       filterMetadata,
       { slowAction: "slow_query_detected" }
     );
 
-    if (error || employeesError) throw error ?? employeesError;
+    if (error) throw error;
 
     await logger.info({
       ...logContext,
@@ -226,13 +261,31 @@ export async function GET(request: Request) {
       metadata: { ...filterMetadata, count: count ?? 0 }
     });
 
+    const recordRows = (records ?? []) as unknown as Record<string, unknown>[];
+    const counterData = Array.isArray(counterResult.data) ? counterResult.data[0] : counterResult.data;
+    const versionedCount = counterData && typeof counterData === "object"
+      ? Number((counterData as Record<string, unknown>).record_count ?? 0)
+      : null;
+    let exactCount = filters.includeCount ? (dynamicCount ? count ?? 0 : versionedCount ?? 0) : null;
+    let countSource = filters.includeCount ? (dynamicCount ? "dynamic_exact" : "versioned_exact") : "omitted";
+    if (filters.includeCount && !dynamicCount && counterResult.error) {
+      const fallbackCounter = await context.supabase!
+        .from(recordContract.table)
+        .select("id", { count: "exact", head: true })
+        .is("archived_at", null);
+      if (fallbackCounter.error) throw fallbackCounter.error;
+      exactCount = fallbackCounter.count ?? 0;
+      countSource = "dynamic_exact";
+    }
     return NextResponse.json({
-      records: redactSensitiveFieldsForRole(records ?? [], context.profile.role),
-      employees: employees ?? [],
-      count: count ?? 0,
+      records: redactSensitiveFieldsForRole(recordRows, context.profile.role),
+      count: exactCount,
       page: filters.page,
-      pageSize: filters.pageSize
-    });
+      pageSize: filters.pageSize,
+      nextCursor: recordRows.length === filters.pageSize ? encodeCursor(recordRows.at(-1)) : null,
+      pagination: "keyset",
+      countSource
+    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
     await logger.error({
       ...logContext,

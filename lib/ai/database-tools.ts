@@ -1,12 +1,11 @@
 import type { AuthContext } from "@/lib/auth/context";
+import type { SafeHistoryMessage } from "@/lib/ai/conversation-memory";
 import { getAiPermissionScope, mustForceOwnerScope } from "@/lib/ai/ai-permissions";
-import { buildSupplierRanking, summarizeMpnOffers, type MpnOffer } from "@/lib/mpn/recommendation";
-import { logger } from "@/lib/logger/logger";
 import { redactSensitiveFieldsForRole, SENSITIVE_DATA_DENIED_MESSAGE } from "@/lib/security/permissions";
 import {
-  ensureUploadStructureProfile,
   formatColumnsAnswer,
   formatDetectedFields,
+  uploadStructureProfileFromDb,
   type UploadStructureProfile
 } from "@/lib/upload/structure-profile";
 import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
@@ -21,11 +20,37 @@ import {
   enrichOpportunitiesWithConfidence,
   summarizeOpportunityConfidence
 } from "@/lib/opportunities/quality";
+import { logSafeAiEvent } from "@/lib/ai/safe-logging";
+import {
+  getOpportunityFinderAiSummary,
+  getOpportunityFinderAiItemDetail,
+  type OpportunityFinderAiLanguage,
+  type OpportunityFinderAiMode
+} from "@/lib/ai/opportunity-finder-tool";
+import { allowlistedStructuralColumnNames } from "@/lib/ai/safe-structure-columns";
+import {
+  BUSINESS_RECORDS_SAFE_VIEW,
+  IMPORT_ERRORS_SAFE_VIEW,
+  ilikeAny,
+  permittedRecordSearchColumns
+} from "@/lib/security/business-records";
 
 export type AiDatabaseToolName =
+  | "policySafetyBoundary"
+  | "clarificationRequired"
   | "sensitiveDataPermissionDenied"
+  | "getAssistantHelp"
+  | "getAssistantSourceHelp"
+  | "conversationMemorySet"
+  | "conversationMemoryRecall"
+  | "getOpportunityFinderHelp"
+  | "getOpportunityFinderSummary"
+  | "getOpportunityFinderItemDetail"
   | "getUploadPresentationSummary"
   | "getStockNeedsSummary"
+  | "getStockShortageSummary"
+  | "getZeroStockSummary"
+  | "getStockConceptHelp"
   | "getOpportunitiesSummary"
   | "getLatestUpload"
   | "searchBusinessRecords"
@@ -37,6 +62,17 @@ export type AiDatabaseToolName =
   | "getEmployeeSummary"
   | "getLowGpRecords"
   | "getMissingMpnRecords";
+
+export class AssistantToolRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: 404 | 422,
+    public readonly code: "JOB_NOT_FOUND" | "INCOMPATIBLE_PIPELINE"
+  ) {
+    super(message);
+    this.name = "AssistantToolRequestError";
+  }
+}
 
 export interface AiToolResult {
   ok: boolean;
@@ -69,6 +105,8 @@ function rowsFromData(data: unknown): unknown[] | undefined {
     if (Array.isArray(record.records)) return record.records;
     if (Array.isArray(record.uploads)) return record.uploads;
     if (Array.isArray(record.offers)) return record.offers;
+    if (Array.isArray(record.items)) return record.items;
+    if (record.item && typeof record.item === "object") return [record.item];
   }
   return undefined;
 }
@@ -111,6 +149,148 @@ export function getSensitiveDataPermissionDenied(context: AuthContext): AiToolRe
   );
 }
 
+export function getPolicySafetyBoundary(
+  context: AuthContext,
+  reasonCode = "server_policy_enforced"
+): AiToolResult {
+  return result(
+    context,
+    "policySafetyBoundary",
+    { reasonCode },
+    "Las instrucciones de seguridad, permisos y herramientas son controladas por el servidor y no pueden modificarse desde una pregunta o un archivo.",
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getClarificationRequired(
+  context: AuthContext,
+  summary: string
+): AiToolResult {
+  return result(
+    context,
+    "clarificationRequired",
+    { reasonCode: "ambiguous_intent" },
+    summary,
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getAssistantHelp(
+  context: AuthContext,
+  reasonCode = "assistant_help"
+): AiToolResult {
+  return result(
+    context,
+    "getAssistantHelp",
+    { reasonCode },
+    "Puedo consultar stock y faltantes, cargas autorizadas, errores de importación y resultados persistidos del Buscador de oportunidades. No puedo mostrar información financiera, ejecutar SQL ni cambiar permisos.",
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getAssistantSourceHelp(context: AuthContext): AiToolResult {
+  return result(
+    context,
+    "getAssistantSourceHelp",
+    {
+      sourceType: "stock_needs",
+      sourceLabel: "Stock Needs",
+      basedOnAuthorizedData: true,
+      deterministicOrLlm: "deterministic"
+    },
+    "La fuente lógica de una respuesta de stock es Stock Needs, dentro del alcance autorizado del usuario.",
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getOpportunityFinderHelp(
+  context: AuthContext,
+  reasonCode = "opportunity_finder_indicators"
+): AiToolResult {
+  return result(
+    context,
+    "getOpportunityFinderHelp",
+    { reasonCode },
+    "MPN exacto confirma la misma referencia textual. Disponibilidad utilizable confirma inventario asignable. Cantidad exacta confirma que la cantidad disponible coincide con la requerida. Una venta completa cubre toda la demanda; una venta parcial solo cubre una parte.",
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getStockConceptHelp(context: AuthContext): AiToolResult {
+  return result(
+    context,
+    "getStockConceptHelp",
+    { reasonCode: "stock_total_vs_usable_availability" },
+    "El stock total es la existencia registrada antes de considerar validez o asignaciones. La disponibilidad utilizable es la cantidad válida y positiva que puede asignarse.",
+    false,
+    false,
+    { deterministic: true }
+  );
+}
+
+function safeMemoryMpn(value: unknown) {
+  const normalized = normalizePartNumberForMatch(value);
+  return normalized && /^[A-Z0-9][A-Z0-9._/-]{2,79}$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+export function getConversationMemorySet(
+  context: AuthContext,
+  mpnInput: string
+): AiToolResult {
+  const mpn = safeMemoryMpn(mpnInput);
+  return result(
+    context,
+    "conversationMemorySet",
+    { mpn },
+    mpn
+      ? `Recordaré ${mpn} como MPN de interés durante esta conversación.`
+      : "No encontré un MPN válido para recordar.",
+    !mpn,
+    false,
+    { deterministic: true }
+  );
+}
+
+export function getConversationMemoryRecall(
+  context: AuthContext,
+  history: SafeHistoryMessage[]
+): AiToolResult {
+  let remembered: string | null = null;
+  for (const message of [...history].reverse()) {
+    if (message.role !== "user") continue;
+    const text = message.content.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (!/(mpn|part number|料号)/i.test(text)) continue;
+    const candidates = text.match(/\b[A-Z0-9][A-Z0-9._/-]{2,79}\b/gi) ?? [];
+    remembered = candidates
+      .map(safeMemoryMpn)
+      .find((candidate) => Boolean(candidate && /\d/.test(candidate))) ?? null;
+    if (remembered) break;
+  }
+  return result(
+    context,
+    "conversationMemoryRecall",
+    { mpn: remembered },
+    remembered
+      ? `El MPN de interés indicado anteriormente es ${remembered}.`
+      : "No encontré un MPN de interés en la ventana segura de esta conversación.",
+    !remembered,
+    false,
+    { deterministic: true }
+  );
+}
+
 function normalizedText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
@@ -122,18 +302,15 @@ function timeoutLike(error: unknown) {
 }
 
 async function logAiFallback(context: AuthContext, action: string, metadata?: Record<string, unknown>, error?: unknown) {
-  await logger.warn({
-    traceId: context.requestMeta.traceId,
-    requestId: context.requestMeta.requestId,
-    userId: context.profile.id,
-    userEmail: context.profile.email,
-    userRole: context.profile.role,
-    route: context.requestMeta.route,
-    module: "ai",
+  await logSafeAiEvent(context, {
     action,
-    message: "AI deterministic fallback event.",
     status: error ? "failed" : "completed",
-    metadata,
+    metadata: {
+      state: typeof metadata?.label === "string" ? metadata.label : undefined,
+      rowCount: typeof metadata?.uploadCount === "number" ? metadata.uploadCount : undefined,
+      errorCode: error ? "TOOL_CONTEXT_UNAVAILABLE" : undefined,
+      fallbackUsed: true
+    },
     error
   });
 }
@@ -151,7 +328,6 @@ type UploadPresentationKind =
 type UploadOverview = {
   id: string;
   uploaded_by: string;
-  original_file_name: string | null;
   file_type: string | null;
   detected_category: string | null;
   selected_category: string | null;
@@ -167,10 +343,6 @@ type UploadOverview = {
   created_at: string;
   profiles?: {
     full_name?: string | null;
-    email?: string | null;
-    department?: string | null;
-    region?: string | null;
-    role?: string | null;
   } | null;
 };
 
@@ -425,7 +597,7 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
 
   let uploadQuery = supabase
     .from("upload_batches")
-    .select("id, uploaded_by, original_file_name, file_type, detected_category, selected_category, status, total_rows, valid_rows, successful_rows, failed_rows, warning_count, rows_with_warnings, technical_error_count, data_quality_score, created_at, profiles(full_name,email,department,region,role)")
+    .select("id, uploaded_by, file_type, detected_category, selected_category, status, total_rows, valid_rows, successful_rows, failed_rows, warning_count, rows_with_warnings, technical_error_count, data_quality_score, created_at, profiles(full_name)")
     .neq("status", "archived")
     .order("created_at", { ascending: false })
     .limit(kind === "latest_files" ? 3 : 1);
@@ -451,24 +623,20 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
     .limit(20);
   const summariesPromise = supabase
     .from("import_job_error_summary")
-    .select("upload_batch_id, error_type, severity, message, occurrence_count, sample_raw_data")
+    .select("upload_batch_id, error_type, severity, message, occurrence_count")
     .in("upload_batch_id", uploadIds)
     .order("occurrence_count", { ascending: false })
     .limit(50);
-  const profilePromises = uploadIds.map(async (uploadId) => {
-    try {
-      return await ensureUploadStructureProfile(supabase, uploadId);
-    } catch (error) {
-      void logAiFallback(context, "ai_missing_file_profile", { kind, uploadId }, error);
-      return null;
-    }
-  });
+  const profilesPromise = supabase
+    .from("file_schema_profiles")
+    .select("id,upload_batch_id,file_type,sheet_count,row_count,column_count,columns_json,detected_template,detected_mappings_json,data_quality_summary_json,warnings_json,confidence_score,created_at,updated_at")
+    .in("upload_batch_id", uploadIds);
 
   const [jobsResult, sheetsResult, summariesResult, profilesResult] = await Promise.allSettled([
     jobsPromise,
     sheetsPromise,
     summariesPromise,
-    Promise.all(profilePromises)
+    profilesPromise
   ]);
 
   const optionalErrors: string[] = [];
@@ -489,13 +657,15 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
   const jobs = pickData<ImportJobOverview[]>(jobsResult, "import_jobs") ?? [];
   const sheets = pickData<SheetOverview[]>(sheetsResult, "upload_sheets") ?? [];
   const summaries = pickData<ErrorSummaryOverview[]>(summariesResult, "import_job_error_summary") ?? [];
-  const profilesList = profilesResult.status === "fulfilled" ? profilesResult.value : [];
-  if (profilesResult.status === "rejected") {
-    optionalErrors.push("file_schema_profiles");
-    void logAiFallback(context, timeoutLike(profilesResult.reason) ? "ai_timeout" : "ai_context_limited", { label: "file_schema_profiles" }, profilesResult.reason);
-  }
+  const profileRows = pickData<Record<string, unknown>[]>(profilesResult, "file_schema_profiles") ?? [];
+  const storedProfiles = profileRows.map(uploadStructureProfileFromDb);
+  const storedByUpload = new Map(storedProfiles.map((profile) => [profile.uploadBatchId, profile]));
+  const profilesList = uploadIds.map((uploadId) => storedByUpload.get(uploadId) ?? null);
   const profiles = new Map<string, UploadStructureProfile | null>();
   for (let index = 0; index < uploadIds.length; index += 1) profiles.set(uploadIds[index], profilesList[index] ?? null);
+  const safeColumns = allowlistedStructuralColumnNames(
+    profilesList[0]?.columns.map((column) => column.name) ?? []
+  );
   const summary = buildUploadPresentationSummary({ kind, uploads: safeUploads, sheets, summaries, profiles });
 
   if (!profilesList.some((profile) => profile?.columns.length) && !summaries.length) {
@@ -520,7 +690,8 @@ export async function getUploadPresentationSummary(context: AuthContext, questio
             detectedTemplate: profile.detectedTemplate,
             confidenceScore: profile.confidenceScore
           }
-        : null)
+        : null),
+      safeColumns
     },
     summary,
     false,
@@ -546,8 +717,11 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
   const mpn = normalizePartNumberForMatch(mpnInput || null);
   const input = await loadStockNeedsInput(supabase, {
     ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
-    maxUploads: 20,
-    recordsPerUploadLimit: 5000
+    maxUploads: 12,
+    recordsPerUploadLimit: 2500,
+    includeRawData: false,
+    singleQueryLimit: 2500,
+    mpn
   });
 
   const resultData = buildStockNeedsResult({
@@ -571,7 +745,143 @@ export async function getStockNeedsSummary(context: AuthContext, question: strin
     },
     summary,
     resultData.items.length === 0,
-    input.uploadIds.length >= 20 || resultData.meta.scannedRecords >= 100000,
+    input.uploadIds.length >= 12 || resultData.meta.scannedRecords >= 2500,
+    { deterministic: true }
+  );
+}
+
+async function getFilteredStockSummary(
+  context: AuthContext,
+  input: {
+    tool: "getStockShortageSummary" | "getZeroStockSummary";
+    statuses: Array<"no_stock" | "partial_stock">;
+  }
+) {
+  const supabase = requireSupabase(context);
+  const loaded = await loadStockNeedsInput(supabase, {
+    ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
+    maxUploads: 12,
+    recordsPerUploadLimit: 2500,
+    includeRawData: false,
+    singleQueryLimit: 2500
+  });
+  const stock = buildStockNeedsResult({
+    records: loaded.records,
+    profiles: loaded.profiles,
+    importJobs: loaded.importJobs,
+    filters: { limit: 200 }
+  });
+  const matchingAll = stock.items
+    .filter((item) => input.statuses.includes(item.coverageStatus as "no_stock" | "partial_stock"));
+  const matching = matchingAll.slice(0, 20);
+  const label = input.tool === "getZeroStockSummary" ? "stock cero" : "faltante de stock";
+  return result(
+    context,
+    input.tool,
+    {
+      items: matching,
+      totals: {
+        totalItems: matching.length,
+        noStock: matching.filter((item) => item.coverageStatus === "no_stock").length,
+        partialStock: matching.filter((item) => item.coverageStatus === "partial_stock").length
+      },
+      meta: {
+        returnedItems: matching.length,
+        scannedRecords: stock.meta.scannedRecords
+      }
+    },
+    `Se encontraron ${matching.length} MPN autorizados con ${label}.`,
+    matching.length === 0,
+    matchingAll.length > matching.length,
+    { deterministic: true }
+  );
+}
+
+export function getStockShortageSummary(context: AuthContext) {
+  return getFilteredStockSummary(context, {
+    tool: "getStockShortageSummary",
+    statuses: ["no_stock", "partial_stock"]
+  });
+}
+
+export function getZeroStockSummary(context: AuthContext) {
+  return getFilteredStockSummary(context, {
+    tool: "getZeroStockSummary",
+    statuses: ["no_stock"]
+  });
+}
+
+export async function getOpportunityFinderSummary(
+  context: AuthContext,
+  options: {
+    language: OpportunityFinderAiLanguage;
+    mode: OpportunityFinderAiMode;
+    jobId?: string | null;
+  }
+) {
+  const supabase = requireSupabase(context);
+  const opportunity = await getOpportunityFinderAiSummary({
+    supabase,
+    userId: context.profile.id,
+    language: options.language,
+    mode: options.mode,
+    jobId: options.jobId ?? null,
+    limit: 20
+  });
+  if (opportunity.status === "job_not_found") {
+    throw new AssistantToolRequestError(opportunity.summary, 404, "JOB_NOT_FOUND");
+  }
+  if (opportunity.status === "incompatible_pipeline") {
+    throw new AssistantToolRequestError(opportunity.summary, 422, "INCOMPATIBLE_PIPELINE");
+  }
+  return result(
+    context,
+    "getOpportunityFinderSummary",
+    {
+      items: opportunity.items,
+      totals: opportunity.metrics,
+      meta: {
+        returnedItems: opportunity.items.length,
+        totalBeforePagination: opportunity.page.total,
+        pipelineCompatible: opportunity.status === "ok"
+      }
+    },
+    opportunity.summary,
+    !opportunity.ok,
+    opportunity.page.truncated,
+    { deterministic: true }
+  );
+}
+
+export async function getOpportunityFinderItemDetail(
+  context: AuthContext,
+  options: {
+    language: OpportunityFinderAiLanguage;
+    mpn: string;
+    jobId?: string | null;
+  }
+) {
+  const supabase = requireSupabase(context);
+  const detail = await getOpportunityFinderAiItemDetail({
+    supabase,
+    userId: context.profile.id,
+    language: options.language,
+    mpn: options.mpn,
+    jobId: options.jobId ?? null
+  });
+  if (detail.status === "job_not_found") {
+    throw new AssistantToolRequestError(detail.summary, 404, "JOB_NOT_FOUND");
+  }
+  if (detail.status === "incompatible_pipeline") {
+    throw new AssistantToolRequestError(detail.summary, 422, "INCOMPATIBLE_PIPELINE");
+  }
+  return result(
+    context,
+    "getOpportunityFinderItemDetail",
+    { item: detail.item, mpn: detail.mpn },
+    detail.summary,
+    !detail.ok,
+    false,
     { deterministic: true }
   );
 }
@@ -584,8 +894,10 @@ export async function getOpportunitiesSummary(context: AuthContext, question: st
     mode && mode !== "approved" && mode !== "received" ? mode : null;
   const input = await loadStockNeedsInput(supabase, {
     ownerId: mustForceOwnerScope(context.profile.role) ? context.profile.id : null,
-    maxUploads: 30,
-    recordsPerUploadLimit: 5000
+    maxUploads: 12,
+    recordsPerUploadLimit: 2500,
+    includeRawData: false,
+    singleQueryLimit: 2500
   });
 
   const baseResult = buildSalesOpportunitiesResult({
@@ -611,7 +923,7 @@ export async function getOpportunitiesSummary(context: AuthContext, question: st
     },
     summary,
     baseResult.totals.totalOpportunities === 0,
-    input.uploadIds.length >= 30 || baseResult.meta.scannedRecords >= 150000,
+    input.uploadIds.length >= 12 || baseResult.meta.scannedRecords >= 2500,
     { deterministic: true }
   );
 }
@@ -620,7 +932,7 @@ export async function getLatestUpload(context: AuthContext) {
   const supabase = requireSupabase(context);
   let query = supabase
     .from("upload_batches")
-    .select("id, uploaded_by, original_file_name, detected_category, status, total_rows, valid_rows, invalid_rows, successful_rows, failed_rows, error_count, warning_count, rows_with_warnings, technical_error_count, suppressed_error_count, data_quality_score, created_at, profiles(full_name,email,department,region,role)")
+    .select("detected_category, status, total_rows, valid_rows, invalid_rows, successful_rows, failed_rows, error_count, warning_count, rows_with_warnings, technical_error_count, suppressed_error_count, data_quality_score, created_at")
     .order("created_at", { ascending: false })
     .limit(1);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
@@ -628,8 +940,8 @@ export async function getLatestUpload(context: AuthContext) {
   if (error) throw error;
   const summary = data
     ? data.status === "completed_with_warnings"
-      ? `Ultima carga: ${data.original_file_name}. Se importaron ${data.successful_rows ?? data.valid_rows ?? 0} de ${data.total_rows ?? 0} filas. Termino con ${data.rows_with_warnings ?? 0} filas con advertencias de datos y ${data.technical_error_count ?? 0} errores tecnicos.`
-      : `Ultima carga: ${data.original_file_name}, estado ${data.status}, ${data.total_rows} filas y ${data.error_count} incidencias.`
+      ? `Última carga autorizada: se importaron ${data.successful_rows ?? data.valid_rows ?? 0} de ${data.total_rows ?? 0} filas. Terminó con ${data.rows_with_warnings ?? 0} filas con advertencias de datos y ${data.technical_error_count ?? 0} errores técnicos.`
+      : `Última carga autorizada: estado ${data.status}, ${data.total_rows} filas y ${data.error_count} incidencias.`
     : "No hay cargas visibles.";
   return result(context, "getLatestUpload", data, summary, !data);
 }
@@ -638,12 +950,11 @@ export async function searchBusinessRecords(context: AuthContext, searchTerm: st
   const supabase = requireSupabase(context);
   const term = cleanSearchTerm(searchTerm);
   if (term.length < 2) return result(context, "searchBusinessRecords", [], "La busqueda necesita al menos dos caracteres.", true);
-  const pattern = `%${term}%`;
   let query = supabase
-    .from("business_records")
-    .select("id, upload_batch_id, uploaded_by, category, customer, client, supplier, supplier_name, mpn, mpn_quoted, description, qty, cost, price, total_price, gp_rate, gp, commission, has_errors, created_at, profiles(full_name,email,department,region,role), upload_batches(original_file_name)")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
+    .select("category, mpn, mpn_quoted, qty, has_errors, created_at")
     .is("archived_at", null)
-    .or(`searchable_text.ilike.${pattern},mpn.ilike.${pattern},mpn_quoted.ilike.${pattern},supplier.ilike.${pattern},supplier_name.ilike.${pattern},customer.ilike.${pattern},client.ilike.${pattern}`)
+    .or(ilikeAny(permittedRecordSearchColumns(context.profile.role, { aiSafe: true }), term))
     .order("created_at", { ascending: false })
     .limit(50);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
@@ -656,8 +967,8 @@ export async function getRecordsByMpn(context: AuthContext, mpnInput: string) {
   const supabase = requireSupabase(context);
   const mpn = cleanSearchTerm(mpnInput, 80);
   let query = supabase
-    .from("business_records")
-    .select("id, upload_batch_id, uploaded_by, category, customer, supplier, supplier_name, mpn, mpn_quoted, manufacturer, qty, cost, price, total_price, gp_rate, gp, commission, created_at, profiles(full_name,email,department,region,role), upload_batches(original_file_name)")
+    .from(BUSINESS_RECORDS_SAFE_VIEW)
+    .select("category, mpn, mpn_quoted, qty, has_errors, created_at")
     .is("archived_at", null)
     .or(`mpn.ilike.%${mpn}%,mpn_quoted.ilike.%${mpn}%`)
     .order("created_at", { ascending: false })
@@ -671,7 +982,7 @@ export async function getRecordsByMpn(context: AuthContext, mpnInput: string) {
 export async function getUploadsByUser(context: AuthContext, userSearch: string) {
   const supabase = requireSupabase(context);
   if (mustForceOwnerScope(context.profile.role)) {
-    const own = await supabase.from("upload_batches").select("id, original_file_name, status, total_rows, error_count, data_quality_score, created_at").eq("uploaded_by", context.profile.id).order("created_at", { ascending: false }).limit(30);
+    const own = await supabase.from("upload_batches").select("status, total_rows, error_count, data_quality_score, created_at").eq("uploaded_by", context.profile.id).order("created_at", { ascending: false }).limit(30);
     if (own.error) throw own.error;
     return result(context, "getUploadsByUser", own.data ?? [], `Tienes ${own.data?.length ?? 0} cargas recientes.`, !own.data?.length, (own.data?.length ?? 0) === 30);
   }
@@ -681,14 +992,14 @@ export async function getUploadsByUser(context: AuthContext, userSearch: string)
   if (profileError) throw profileError;
   const ids = (profiles ?? []).map((profile) => profile.id);
   if (!ids.length) return result(context, "getUploadsByUser", { profiles: [], uploads: [] }, "No se encontro un usuario visible con ese nombre.", true);
-  const { data: uploads, error } = await supabase.from("upload_batches").select("id, uploaded_by, original_file_name, status, total_rows, error_count, data_quality_score, created_at").in("uploaded_by", ids).order("created_at", { ascending: false }).limit(50);
+  const { data: uploads, error } = await supabase.from("upload_batches").select("status, total_rows, error_count, data_quality_score, created_at").in("uploaded_by", ids).order("created_at", { ascending: false }).limit(50);
   if (error) throw error;
   return result(context, "getUploadsByUser", { profiles, uploads: uploads ?? [] }, `Se encontraron ${uploads?.length ?? 0} cargas para ${profiles?.map((item) => item.full_name).join(", ")}.`, !uploads?.length, (uploads?.length ?? 0) === 50);
 }
 
 export async function getImportErrors(context: AuthContext, uploadId?: string) {
   const supabase = requireSupabase(context);
-  let query = supabase.from("import_errors").select("id, upload_batch_id, row_index, column_name, error_type, message, raw_value, severity, created_at, upload_batches(original_file_name,uploaded_by)").order("created_at", { ascending: false }).limit(50);
+  let query = supabase.from(IMPORT_ERRORS_SAFE_VIEW).select("row_index, column_name, error_type, severity, created_at").order("created_at", { ascending: false }).limit(50);
   if (uploadId) query = query.eq("upload_batch_id", uploadId);
   const { data, error } = await query;
   if (error) throw error;
@@ -697,29 +1008,52 @@ export async function getImportErrors(context: AuthContext, uploadId?: string) {
 
 export async function getDashboardSummary(context: AuthContext) {
   const supabase = requireSupabase(context);
+  const [counter, latest] = await Promise.all([
+    supabase.rpc("get_dashboard_summary_v1"),
+    getLatestUpload(context)
+  ]);
+  const versioned = Array.isArray(counter.data) ? counter.data[0] : counter.data;
+  if (!counter.error && versioned) {
+    const row = versioned as Record<string, unknown>;
+    const data = {
+      totalRecords: Number(row.total_records ?? 0),
+      totalUploads: Number(row.total_uploads ?? 0),
+      recordsWithErrors: Number(row.records_with_errors ?? 0),
+      recordsMissingMpn: Number(row.records_missing_mpn ?? 0),
+      latestUpload: latest.data,
+      dataVersion: Number(row.data_version ?? 0),
+      scope: getAiPermissionScope(context).mode
+    };
+    return result(context, "getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
+  }
+  if (counter.error && !["PGRST202", "42883"].includes(counter.error.code ?? "")) throw counter.error;
   const ownerId = mustForceOwnerScope(context.profile.role) ? context.profile.id : null;
-  let recordsCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null);
+  let recordsCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null);
   let uploadsCount = supabase.from("upload_batches").select("id", { count: "exact", head: true }).neq("status", "archived");
-  let errorCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null).eq("has_errors", true);
-  let missingMpnCount = supabase.from("business_records").select("id", { count: "exact", head: true }).is("archived_at", null).is("mpn", null);
+  let errorCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null).eq("has_errors", true);
+  let missingMpnCount = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("id", { count: "exact", head: true }).is("archived_at", null).is("mpn", null);
   if (ownerId) {
     recordsCount = recordsCount.eq("uploaded_by", ownerId);
     uploadsCount = uploadsCount.eq("uploaded_by", ownerId);
     errorCount = errorCount.eq("uploaded_by", ownerId);
     missingMpnCount = missingMpnCount.eq("uploaded_by", ownerId);
   }
-  const [records, uploads, errors, missingMpn, latest] = await Promise.all([recordsCount, uploadsCount, errorCount, missingMpnCount, getLatestUpload(context)]);
+  const [records, uploads, errors, missingMpn] = await Promise.all([recordsCount, uploadsCount, errorCount, missingMpnCount]);
   const data = { totalRecords: records.count ?? 0, totalUploads: uploads.count ?? 0, recordsWithErrors: errors.count ?? 0, recordsMissingMpn: missingMpn.count ?? 0, latestUpload: latest.data, scope: getAiPermissionScope(context).mode };
   return result(context, "getDashboardSummary", data, `Resumen: ${data.totalRecords} registros, ${data.totalUploads} cargas, ${data.recordsWithErrors} registros con errores y ${data.recordsMissingMpn} sin MPN.`, data.totalRecords === 0);
 }
 
 export async function getMpnPriceComparison(context: AuthContext, mpn: string) {
-  const records = await getRecordsByMpn(context, mpn);
-  const rows = (Array.isArray(records.data) ? records.data : []) as MpnOffer[];
-  const summary = summarizeMpnOffers(rows);
-  const ranking = buildSupplierRanking(rows).slice(0, 10);
-  const data = { mpn, summary, ranking, offers: rows.slice(0, 25) };
-  return result(context, "getMpnPriceComparison", data, summary.recommendedSupplier ? `Mejor opcion para ${mpn}: ${summary.recommendedSupplier}. ${summary.recommendationReason}` : `No hay ofertas comparables para ${mpn}.`, !summary.recommendedSupplier, rows.length > 25, { deterministic: true });
+  void mpn;
+  return result(
+    context,
+    "getMpnPriceComparison",
+    { reasonCode: "sensitive_fields_restricted" },
+    SENSITIVE_DATA_DENIED_MESSAGE,
+    false,
+    false,
+    { deterministic: true }
+  );
 }
 
 export async function getEmployeeSummary(context: AuthContext, userSearch: string) {
@@ -729,18 +1063,21 @@ export async function getEmployeeSummary(context: AuthContext, userSearch: strin
 }
 
 export async function getLowGpRecords(context: AuthContext, threshold = 0.15) {
-  const supabase = requireSupabase(context);
-  const safeThreshold = Math.min(Math.max(Number(threshold) || 0.15, 0), 1);
-  let query = supabase.from("business_records").select("id, upload_batch_id, uploaded_by, mpn, customer, supplier, price, cost, gp_rate, gp, commission, created_at, profiles(full_name,email,department,region,role), upload_batches(original_file_name)").is("archived_at", null).not("gp_rate", "is", null).lt("gp_rate", safeThreshold).order("gp_rate", { ascending: true }).limit(50);
-  if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
-  const { data, error } = await query;
-  if (error) throw error;
-  return result(context, "getLowGpRecords", { threshold: safeThreshold, records: data ?? [] }, `Hay ${data?.length ?? 0} registros visibles con GP rate menor a ${(safeThreshold * 100).toFixed(1)}%.`, !data?.length, (data?.length ?? 0) === 50, { deterministic: true });
+  void threshold;
+  return result(
+    context,
+    "getLowGpRecords",
+    { reasonCode: "sensitive_fields_restricted" },
+    SENSITIVE_DATA_DENIED_MESSAGE,
+    false,
+    false,
+    { deterministic: true }
+  );
 }
 
 export async function getMissingMpnRecords(context: AuthContext) {
   const supabase = requireSupabase(context);
-  let query = supabase.from("business_records").select("id, upload_batch_id, uploaded_by, category, customer, supplier, description, created_at, profiles(full_name,email,department,region,role), upload_batches(original_file_name)").is("archived_at", null).is("mpn", null).order("created_at", { ascending: false }).limit(50);
+  let query = supabase.from(BUSINESS_RECORDS_SAFE_VIEW).select("category, has_errors, created_at").is("archived_at", null).is("mpn", null).order("created_at", { ascending: false }).limit(50);
   if (mustForceOwnerScope(context.profile.role)) query = query.eq("uploaded_by", context.profile.id);
   const { data, error } = await query;
   if (error) throw error;

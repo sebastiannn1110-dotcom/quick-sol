@@ -44,6 +44,8 @@ export const recordsFilterSchema = z.object({
   qtyMax: z.coerce.number().optional(),
   uploadDateFrom: z.string().optional(),
   uploadDateTo: z.string().optional(),
+  cursor: z.string().max(400).optional(),
+  includeCount: z.enum(["true", "false"]).transform((value) => value === "true").default(true),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25)
 });

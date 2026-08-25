@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/auth/context";
+import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { cleanUuid, loadOwnedOpportunityJob } from "@/lib/opportunity-finder/api";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export async function POST(
   request: Request,
@@ -19,19 +20,29 @@ export async function POST(
   if (["completed", "completed_with_warnings", "failed", "cancelled"].includes(jobStatus)) {
     return NextResponse.json({ jobId, status: jobStatus });
   }
-  const workerActive = ["profiling", "parsing", "matching"].includes(jobStatus);
-  const { error } = await context.supabase
-    .from("opportunity_finder_jobs")
-    .update({
-      cancel_requested: true,
-      ...(workerActive ? {} : {
-        status: "cancelled",
-        cancelled_at: new Date().toISOString(),
-        error_code: "JOB_CANCELLED"
-      })
-    })
-    .eq("id", jobId)
-    .eq("created_by", context.profile.id);
-  if (error) return NextResponse.json({ errorCode: "JOB_CANCEL_FAILED" }, { status: 500 });
-  return NextResponse.json({ jobId, status: workerActive ? jobStatus : "cancelled", cancelRequested: true });
+  const service = createSupabaseServiceRoleClient();
+  if (!service) return NextResponse.json({ errorCode: "STORAGE_NOT_CONFIGURED" }, { status: 503 });
+  const { data: cancelledJob, error } = await service.rpc("cancel_opportunity_finder_job", {
+    job_id: jobId,
+    actor_id: context.profile.id
+  });
+  if (error) {
+    if (error.code === "P0002") {
+      return NextResponse.json({ errorCode: "JOB_NOT_FOUND" }, { status: 404 });
+    }
+    return NextResponse.json({ errorCode: "JOB_CANCEL_FAILED" }, { status: 500 });
+  }
+  const committedJob = (Array.isArray(cancelledJob) ? cancelledJob[0] : cancelledJob) as
+    | Record<string, unknown>
+    | null;
+  const committedStatus = String(committedJob?.status ?? jobStatus);
+  const workerActive = ["profiling", "parsing", "matching"].includes(committedStatus);
+  await logAuditEvent(context, "opportunity_finder_job_cancelled", "opportunity_finder_job", jobId, {
+    workerActive
+  });
+  return NextResponse.json({
+    jobId,
+    status: committedStatus,
+    cancelRequested: Boolean(committedJob?.cancel_requested ?? true)
+  });
 }

@@ -1,11 +1,24 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
-import { logger } from "@/lib/logger/logger";
-import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
-import { transcribeAudio, VoiceConfigError, VoiceInputError } from "@/lib/voice/transcription";
+import { logSafeAiEvent } from "@/lib/ai/safe-logging";
+import { checkRateLimit } from "@/lib/security/rateLimit";
+import { transcribeAudio } from "@/lib/voice/transcription";
+import {
+  languageFromRequest,
+  noStore,
+  requireContentType,
+  validateContentLength,
+  voiceMessage,
+  voiceRateLimitResponse,
+  VoiceRequestError
+} from "@/lib/voice/safety";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function json(payload: unknown, status = 200) {
+  return noStore(NextResponse.json(payload, { status }));
+}
 
 function audioFromFormData(formData: FormData) {
   const audio = formData.get("audio");
@@ -13,11 +26,12 @@ function audioFromFormData(formData: FormData) {
 }
 
 export async function POST(request: Request) {
+  const language = languageFromRequest(request);
   const context = await getAuthContext(request);
-  if (context instanceof NextResponse) return context;
+  if (context instanceof NextResponse) return noStore(context);
 
   if (process.env.ENABLE_VOICE_ASSISTANT === "false") {
-    return NextResponse.json({ error: "Voice assistant is disabled." }, { status: 503 });
+    return json({ error: voiceMessage(language, "voice_disabled"), code: "voice_disabled" }, 503);
   }
 
   const rate = checkRateLimit({
@@ -26,75 +40,54 @@ export async function POST(request: Request) {
     windowMs: 10 * 60 * 1000
   });
   if (!rate.allowed) {
-    await logger.warn({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
+    await logSafeAiEvent(context, {
       action: "voice_rate_limit_exceeded",
-      message: "Voice rate limit exceeded.",
-      status: "failed"
+      status: "failed",
+      metadata: { language, channel: "voice", errorCode: "RATE_LIMITED" }
     });
-    return rateLimitResponse(rate.resetAt);
+    return voiceRateLimitResponse(language, rate.resetAt);
   }
 
   try {
-    const formData = await request.formData();
+    validateContentLength(request);
+    requireContentType(request, ["multipart/form-data"]);
+    const formData = await request.formData().catch(() => {
+      throw new VoiceRequestError("invalid_body", 400);
+    });
     const audio = audioFromFormData(formData);
-    if (!audio) return NextResponse.json({ error: "Audio file is required." }, { status: 400 });
+    if (!audio) return json({ error: voiceMessage(language, "audio_required"), code: "audio_required" }, 400);
 
-    await logger.info({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
+    await logSafeAiEvent(context, {
       action: "ai_voice_transcription_started",
-      message: "Voice transcription started.",
       status: "started",
-      metadata: { fileSize: audio.size, fileType: audio.type }
+      metadata: { language, channel: "voice", provider: "openai" }
     });
 
-    const result = await transcribeAudio(audio);
+    const result = await transcribeAudio(audio, { signal: request.signal });
 
-    await logger.info({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
+    await logSafeAiEvent(context, {
       action: "ai_voice_transcription_done",
-      message: "Voice transcription completed.",
       status: "completed",
-      metadata: { detectedLanguage: result.detectedLanguage, duration: result.duration }
+      metadata: { language: result.detectedLanguage, channel: "voice", provider: "openai" }
     });
 
-    return NextResponse.json(result);
+    return json(result);
   } catch (error) {
-    await logger.warn({
-      traceId: context.requestMeta.traceId,
-      requestId: context.requestMeta.requestId,
-      userId: context.profile.id,
-      userEmail: context.profile.email,
-      userRole: context.profile.role,
-      route: context.requestMeta.route,
-      module: "voice",
+    await logSafeAiEvent(context, {
       action: "ai_voice_failed",
-      message: "Voice transcription failed.",
       status: "failed",
-      error
+      error,
+      metadata: {
+        language,
+        channel: "voice",
+        provider: "openai",
+        timeout: error instanceof VoiceRequestError && error.status === 504
+      }
     });
 
-    if (error instanceof VoiceInputError || error instanceof VoiceConfigError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof VoiceRequestError) {
+      return json({ error: voiceMessage(language, error.code), code: error.code }, error.status);
     }
-    return NextResponse.json({ error: "OpenAI transcription failed. Please try again." }, { status: 502 });
+    return json({ error: voiceMessage(language, "transcription_failed"), code: "transcription_failed" }, 502);
   }
 }

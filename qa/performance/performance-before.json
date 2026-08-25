@@ -1,0 +1,22 @@
+{
+  "capturedAt": "2026-08-13",
+  "source": "previous read-only production/local audit supplied as the implementation baseline",
+  "dataset": {
+    "businessRecordsApprox": 327066,
+    "importErrorsApprox": 459242
+  },
+  "flows": {
+    "clients": { "latencyMs": 2220, "note": "DB path; UI also waited for the full opportunity request" },
+    "records": { "p50Ms": 8300, "p95Ms": 8700, "selectedHeavyJson": true, "pagination": "offset" },
+    "executiveSearch": { "latencyMs": 10450, "status": "timeout", "domainsQueriedForMpn": 4 },
+    "stock": { "latencyMs": 10560, "uploadFanoutQueries": "20-30", "silentPostgrestRisk": true },
+    "opportunities": { "latencyMs": 18960, "aggregationCpuMsFor5775Rows": 10192.7, "complexity": "O(groups * signals)" },
+    "opportunityFinder": { "terminalGetMs": 3350, "pollIntervalMs": 2500, "pollPayload": "full" },
+    "assistantDashboard": { "databaseSummaryMs": 8800, "databaseQueries": 5 },
+    "exactMpn": { "latencyMsRange": [400, 810] }
+  },
+  "notes": [
+    "Rows/bytes/backend CPU were not captured by the earlier audit for every route and are intentionally null rather than estimated.",
+    "This file preserves observed measurements; it does not claim a repeatable staging load test."
+  ]
+}
