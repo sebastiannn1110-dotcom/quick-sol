@@ -69,6 +69,8 @@ export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] 
   deleteTable("opportunity_finder_audit_events", "AUDIT_DATA", 30, "Opportunity-specific audit events may contain business identifiers."),
   deleteTable("opportunity_finder_files", "BUSINESS_DATA", 40, "Opportunity input file metadata."),
   deleteTable("opportunity_finder_jobs", "BUSINESS_DATA", 50, "Opportunity processing jobs."),
+  deleteTable("business_summary_mpn_stage", "BUSINESS_DATA", 5, "Version-fenced staged MPN summary aggregates."),
+  deleteTable("business_summary_entity_stage", "BUSINESS_DATA", 5, "Version-fenced staged opportunity entities."),
   deleteTable("business_opportunity_entities", "BUSINESS_DATA", 10, "Business entities derived from uploads."),
   deleteTable("business_mpn_summaries", "BUSINESS_DATA", 20, "Aggregated business-part summaries."),
   deleteTable("client_private_details", "BUSINESS_DATA", 10, "Private client identification."),
@@ -119,7 +121,7 @@ export const DATABASE_SAFETY_PROTECTED_TABLES = DATABASE_SAFETY_TABLE_POLICY
   .filter((entry) => entry.action === "PRESERVE");
 
 export const DATABASE_DESTRUCTION_PHRASE = "ELIMINAR INFORMACION QUIKSOL";
-export const DATABASE_SAFETY_CATALOG_VERSION = "20260822140000-r3-v1";
+export const DATABASE_SAFETY_CATALOG_VERSION = "20260825120000-r7-v1";
 export const DATABASE_BACKUP_FORMAT = "quiksol-safety-bundle-v2";
 export const DATABASE_BACKUP_MAX_AGE_MS = 30 * 60 * 1000;
 export const DATABASE_DESTRUCTION_CHALLENGE_TTL_MS = 5 * 60 * 1000;

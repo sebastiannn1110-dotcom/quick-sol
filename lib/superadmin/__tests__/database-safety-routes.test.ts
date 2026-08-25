@@ -64,6 +64,18 @@ describe("Database Safety API trust boundary", () => {
     expect(backup).toContain("manifest.evidenceHash");
   });
 
+  it("uses the fenced manifest begun by PostgreSQL as the only backup-version authority", () => {
+    const backup = source("app/api/admindev/database-safety/backups/route.ts");
+    expect(backup).not.toContain("loadDatabaseSafetySnapshot");
+    expect(backup).toContain("dataVersion: Number(begunRow.data_version)");
+    expect(backup).toContain("storageVersion: Number(begunRow.storage_version)");
+    expect(backup).toContain("catalogVersion: String(begunRow.catalog_version");
+    expect(backup).toContain("schemaInventoryHash: String(begunRow.schema_inventory_hash");
+    expect(backup.indexOf('rpc("begin_database_backup_manifest_v2"')).toBeLessThan(
+      backup.indexOf("await createDatabaseBackup({")
+    );
+  });
+
   it("defines a recoverable, exact-key Storage saga after the transactional database purge", () => {
     const execute = source("app/api/admindev/database-safety/execute/route.ts");
     const storage = source("lib/superadmin/database-safety-storage.ts");

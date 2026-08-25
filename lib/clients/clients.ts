@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/types";
+import type { SummaryLifecycleStatus } from "@/lib/performance/summary-readiness";
 import { canManageClients, canViewPrivateClientIdentification } from "@/lib/security/permissions";
 
 export type ClientStatus = "active" | "archived";
@@ -14,14 +15,17 @@ export type AccountClient = {
   authorizedIdentificationImageUrl: string | null;
   status: ClientStatus;
   fileCount: number;
-  mpnCount: number;
-  opportunityCount: number;
-  immediateSaleCount: number;
-  partialSaleCount: number;
-  sourcingNeededCount: number;
-  stockWithoutDemandCount: number;
-  highConfidenceCount: number;
-  highConfidenceTruncated: boolean;
+  summaryStatus: SummaryLifecycleStatus;
+  summaryCurrentVersion: number | null;
+  summaryRequiredVersion: number | null;
+  mpnCount: number | null;
+  opportunityCount: number | null;
+  immediateSaleCount: number | null;
+  partialSaleCount: number | null;
+  sourcingNeededCount: number | null;
+  stockWithoutDemandCount: number | null;
+  highConfidenceCount: number | null;
+  highConfidenceTruncated: boolean | null;
   createdAt: string;
   updatedAt: string;
   canManage: boolean;

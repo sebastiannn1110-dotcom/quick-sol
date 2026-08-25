@@ -2,12 +2,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
+  BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE,
   buildBusinessMpnSummaryRows,
   buildBusinessOpportunityEntityRows,
-  businessSummaryPublishChunks,
-  loadCompleteUploadRecords,
-  publishBusinessOpportunityEntityRows
+  rebuildBusinessUploadSummary
 } from "@/lib/performance/business-summaries";
 import { buildSalesOpportunitiesResult } from "@/lib/opportunities/opportunities";
 import { buildStockNeedsResult, type StockNeedsRecord } from "@/lib/stock-needs/stock-needs";
@@ -89,6 +87,41 @@ describe("versioned business summaries", () => {
     });
   });
 
+  it("uses one claim evaluation time across supplier-offer chunks", () => {
+    const makeRecord = (id: string) => ({
+      id,
+      upload_batch_id: "upload",
+      raw_data: {
+        MPN: id,
+        QTY: 10,
+        "Valid Until": "2030-01-01T00:00:00.000Z"
+      },
+      upload_batches: { detected_category: "supplier_offer" }
+    }) as StockNeedsRecord;
+    const profiles = [{ upload_batch_id: "upload", detected_template: "supplier_offer" }];
+    const evaluationAt = "2029-12-31T23:59:59.000Z";
+
+    const firstChunk = buildBusinessOpportunityEntityRows({
+      records: [makeRecord("10000000-0000-4000-8000-000000000011")],
+      profiles,
+      evaluationAt
+    });
+    const laterChunk = buildBusinessOpportunityEntityRows({
+      records: [makeRecord("10000000-0000-4000-8000-000000000012")],
+      profiles,
+      evaluationAt
+    });
+    const afterExpiry = buildBusinessOpportunityEntityRows({
+      records: [makeRecord("10000000-0000-4000-8000-000000000013")],
+      profiles,
+      evaluationAt: "2030-01-01T00:00:01.000Z"
+    });
+
+    expect(firstChunk[0]?.is_live_supply).toBe(true);
+    expect(laterChunk[0]?.is_live_supply).toBe(true);
+    expect(afterExpiry[0]?.is_live_supply).toBe(false);
+  });
+
   it("keeps canonical first-value metadata when records arrive newest first", () => {
     const records = [
       {
@@ -111,30 +144,6 @@ describe("versioned business summaries", () => {
     expect(summary.customer_name).toBe(canonical.customerNeedName);
     expect(summary.manufacturer_name).toBe(canonical.manufacturerName);
     expect(summary.manufacturer_names).toEqual(["Newest maker", "Older maker"]);
-  });
-
-  it.each([999, 1000, 1001, 5000, 10000])("loads all %i rows across PostgREST page boundaries", async (count) => {
-    const source = Array.from({ length: count }, (_, index) => ({
-      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      upload_batch_id: "00000000-0000-4000-8000-000000000001",
-      created_at: "2026-08-14T00:00:00.000Z"
-    }));
-    let offset = 0;
-    const cursorIds: string[] = [];
-    const query = {
-      select() { return this; }, eq() { return this; }, is() { return this; }, order() { return this; },
-      lt(column: string, value: string) { if (column === "id") cursorIds.push(value); return this; },
-      async limit(value: number) {
-        const data = source.slice(offset, offset + value);
-        offset += value;
-        return { data, error: null };
-      }
-    };
-    const supabase = { from: () => query };
-    const result = await loadCompleteUploadRecords(supabase as never, "00000000-0000-4000-8000-000000000001");
-    expect(result).toHaveLength(count);
-    expect(new Set(result.map((row) => row.id)).size).toBe(count);
-    expect(cursorIds).toHaveLength(Math.floor(count / 1000));
   });
 
   it("ships the composite partial index required by large keyset rebuilds", () => {
@@ -189,79 +198,85 @@ describe("versioned business summaries", () => {
     expect(migration).not.toMatch(/\b(drop|truncate|delete)\b/i);
   });
 
-  it("publishes large derived datasets in bounded chunks", () => {
-    const rows = Array.from({ length: BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE * 2 + 1 }, (_, index) => index);
-    const chunks = businessSummaryPublishChunks(rows);
-
-    expect(chunks.map((chunk) => chunk.length)).toEqual([
-      BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
-      BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE,
-      1
-    ]);
-    expect(chunks.flat()).toEqual(rows);
-    expect(businessSummaryPublishChunks([])).toEqual([]);
-  });
-
-  it("publishes immutable opportunity entities in retry-safe chunks", async () => {
-    const calls: Array<{ rows: unknown[]; options: Record<string, unknown> }> = [];
-    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
-    const table = {
-      async upsert(rows: unknown[], options: Record<string, unknown>) {
-        calls.push({ rows, options });
-        return { error: null };
-      }
+  it("streams keyset pages through fenced staging and one atomic publish", async () => {
+    const uploadId = "00000000-0000-4000-8000-000000000010";
+    const claim = {
+      upload_batch_id: uploadId,
+      target_data_version: 7,
+      rebuild_id: "00000000-0000-4000-8000-000000000020",
+      rebuild_generation: 3,
+      fence_token: 9,
+      lease_expires_at: "2099-01-01T00:00:00.000Z",
+      evaluation_at: "2026-08-24T00:00:00.000Z"
     };
+    const sourceRows = [0, 1, 2].map((index) => ({
+      record_id: `00000000-0000-4000-8000-${String(index + 30).padStart(12, "0")}`,
+      record_created_at: `2026-08-24T00:00:0${2 - index}.000Z`,
+      record_payload: {
+        upload_batch_id: uploadId,
+        raw_data: { MPN: `MPN-${index}`, "Required Qty": index + 1, Customer: "Buyer" }
+      }
+    }));
+    const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    let readIndex = 0;
+    const thenable = (result: unknown) => ({
+      select() { return this; },
+      eq() { return this; },
+      order() { return this; },
+      limit() { return Promise.resolve(result); },
+      single() { return Promise.resolve(result); },
+      then(resolve: (value: unknown) => unknown) { return Promise.resolve(result).then(resolve); }
+    });
     const supabase = {
-      from: (name: string) => {
-        expect(name).toBe("business_opportunity_entities");
-        return table;
+      from(name: string) {
+        if (name === "upload_batches") return thenable({
+          data: { id: uploadId, detected_category: "pricing", status: "completed" }, error: null
+        });
+        if (name === "file_schema_profiles") return thenable({ data: [], error: null });
+        if (name === "import_jobs") return thenable({ data: [], error: null });
+        throw new Error(`unexpected table ${name}`);
       },
       async rpc(name: string, args: Record<string, unknown>) {
         rpcCalls.push({ name, args });
-        return { error: null };
+        if (name === "read_business_summary_source_chunk_v2") {
+          const pages = [sourceRows.slice(0, 2), sourceRows.slice(2), []];
+          return { data: pages[readIndex++] ?? [], error: null };
+        }
+        if (name === "heartbeat_business_summary_rebuild_v2") {
+          return { data: "2099-01-01T00:00:00.000Z", error: null };
+        }
+        if (name === "stage_business_summary_chunk_v2") {
+          return { data: { accepted: true }, error: null };
+        }
+        if (name === "publish_business_summary_rebuild_v2") {
+          return { data: { status: "ready", version: 7 }, error: null };
+        }
+        throw new Error(`unexpected rpc ${name}`);
       }
     };
-    const rows = Array.from({ length: BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE * 2 + 1 }, (_, index) => ({
-      source_record_id: `record-${index}`,
-      entity_kind: "demand" as const,
-      entity_key: `record-${index}:demand`,
-      normalized_mpn: `MPN-${index}`,
-      display_mpn: `MPN-${index}`,
-      manufacturer_name: null,
-      customer_name: null,
-      supplier_name: null,
-      required_qty: 1,
-      available_qty: null,
-      excess_qty: null,
-      required_date: null,
-      unit_of_measure: null,
-      lead_time_weeks: null,
-      moq: null,
-      spq: null,
-      date_code: null,
-      coo: null,
-      condition: null,
-      expires_at: null,
-      is_active_demand: true,
-      is_live_supply: true,
-      warnings: [],
-      upload_batch_id: "upload",
-      owner_id: "owner",
-      data_version: 1
-    }));
 
-    await publishBusinessOpportunityEntityRows(supabase as never, rows, "upload", 1);
+    const result = await rebuildBusinessUploadSummary(supabase as never, claim, "worker-1", {
+      chunkSize: 2,
+      leaseSeconds: 60
+    });
 
-    expect(calls.map((call) => call.rows.length)).toEqual([500, 500, 1]);
-    expect(calls.every((call) => call.options.ignoreDuplicates === true)).toBe(true);
-    expect(calls.every((call) => call.options.onConflict === "upload_batch_id,data_version,source_record_id,entity_kind")).toBe(true);
-    expect(rpcCalls).toEqual([{
-      name: "replace_business_upload_opportunity_entities_v1",
-      args: {
-        target_upload_batch_id: "upload",
-        expected_data_version: 1,
-        entity_rows: []
-      }
-    }]);
+    expect(result).toMatchObject({
+      sourceRecords: 3,
+      chunks: 2,
+      peakChunkRows: 2,
+      version: 7
+    });
+    expect(BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE).toBe(500);
+    const reads = rpcCalls.filter((call) => call.name === "read_business_summary_source_chunk_v2");
+    expect(reads).toHaveLength(3);
+    expect(reads[1].args).toMatchObject({
+      input_after_created_at: sourceRows[1].record_created_at,
+      input_after_id: sourceRows[1].record_id
+    });
+    const stages = rpcCalls.filter((call) => call.name === "stage_business_summary_chunk_v2");
+    expect(stages.map((call) => call.args.input_source_rows)).toEqual([2, 1]);
+    expect(stages.map((call) => call.args.input_chunk_sequence)).toEqual([0, 1]);
+    expect(rpcCalls.filter((call) => call.name === "publish_business_summary_rebuild_v2")).toHaveLength(1);
+    expect(rpcCalls.some((call) => call.name.includes("_v1"))).toBe(false);
   });
 });

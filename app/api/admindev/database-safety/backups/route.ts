@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { assertCriticalSameOrigin, requireSuperadmin, superadminJson } from "@/lib/superadmin/auth";
 import { createDatabaseBackup, databaseBackupFileName, DatabaseBackupError, removePreparedDatabaseBackup, retainDatabaseBackup } from "@/lib/superadmin/database-safety";
 import { createSupabaseStorageBackupSource } from "@/lib/superadmin/database-safety-storage";
-import { databaseSafetyErrorResponse, databaseSafetyRateLimit, loadDatabaseSafetySnapshot } from "@/lib/superadmin/database-safety-api";
+import { databaseSafetyErrorResponse, databaseSafetyRateLimit } from "@/lib/superadmin/database-safety-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +19,6 @@ export async function POST(request: Request) {
   let prepared: Awaited<ReturnType<typeof createDatabaseBackup>> | null = null;
   let manifestId: string | null = null;
   try {
-    const snapshot = await loadDatabaseSafetySnapshot(context);
     const now = new Date();
     const { data: begun, error: beginError } = await context.service.rpc("begin_database_backup_manifest_v2", {
       input_actor_id: context.user.id,
@@ -28,6 +27,27 @@ export async function POST(request: Request) {
     if (beginError || !begun) throw beginError ?? new Error("BACKUP_MANIFEST_BEGIN_FAILED");
     const begunRow = Array.isArray(begun) ? begun[0] : begun;
     manifestId = String(begunRow.id);
+    const snapshot = {
+      schemaVersion: String(begunRow.schema_version ?? ""),
+      migrationVersion: String(begunRow.migration_version ?? ""),
+      dataVersion: Number(begunRow.data_version),
+      storageVersion: Number(begunRow.storage_version),
+      catalogVersion: String(begunRow.catalog_version ?? ""),
+      schemaInventoryHash: String(begunRow.schema_inventory_hash ?? ""),
+      tableCount: Number(begunRow.table_count)
+    };
+    if (
+      !snapshot.schemaVersion
+      || !snapshot.migrationVersion
+      || !Number.isSafeInteger(snapshot.dataVersion)
+      || snapshot.dataVersion <= 0
+      || !Number.isSafeInteger(snapshot.storageVersion)
+      || snapshot.storageVersion <= 0
+      || !snapshot.catalogVersion
+      || !/^[0-9a-f]{64}$/.test(snapshot.schemaInventoryHash)
+      || !Number.isSafeInteger(snapshot.tableCount)
+      || snapshot.tableCount <= 0
+    ) throw new Error("BACKUP_MANIFEST_BEGIN_FAILED");
     prepared = await createDatabaseBackup({
       ...snapshot,
       now,

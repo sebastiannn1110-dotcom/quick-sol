@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
-import { rebuildBusinessUploadSummary } from "@/lib/performance/business-summaries";
+import {
+  isBusinessSummaryFencedError,
+  isRetryableBusinessSummaryError,
+  rebuildBusinessUploadSummary,
+  safeBusinessSummaryErrorCode,
+  type BusinessSummaryRebuildClaim
+} from "@/lib/performance/business-summaries";
 import { getRequiredServerEnv, getSupabaseServiceRoleKey } from "@/lib/security/env";
 import { serverSupabaseClientOptions } from "@/lib/supabase/node-client-options";
 
@@ -31,6 +37,14 @@ loadEnvFile(".env");
 const once = process.argv.includes("--once");
 const workerId = `summary-${os.hostname()}-${process.pid}`;
 const intervalMs = Math.max(Number(process.env.BUSINESS_SUMMARY_POLL_INTERVAL_MS) || 5000, 1000);
+const leaseSeconds = Math.min(
+  Math.max(Math.floor(Number(process.env.BUSINESS_SUMMARY_LEASE_SECONDS) || 120), 30),
+  900
+);
+const sourceChunkSize = Math.min(
+  Math.max(Math.floor(Number(process.env.BUSINESS_SUMMARY_CHUNK_SIZE) || 500), 1),
+  500
+);
 let stopping = false;
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
@@ -41,23 +55,36 @@ async function main() {
   const supabase = createClient(getRequiredServerEnv("NEXT_PUBLIC_SUPABASE_URL"), key, serverSupabaseClientOptions());
 
   while (!stopping) {
-    const claim = await supabase.rpc("claim_business_summary_rebuilds_v1", { worker_id: workerId, batch_limit: 4 });
+    const claim = await supabase.rpc("claim_business_summary_rebuild_v2", {
+      input_worker_id: workerId,
+      input_lease_seconds: leaseSeconds
+    });
     if (claim.error) throw claim.error;
-    const jobs = (claim.data ?? []) as Array<{ upload_batch_id: string }>;
-    for (const job of jobs) {
+    const job = ((claim.data ?? []) as unknown as BusinessSummaryRebuildClaim[])[0] ?? null;
+    if (job) {
       try {
-        await rebuildBusinessUploadSummary(supabase, job.upload_batch_id);
-      } catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "rebuild_failed";
-        await supabase.rpc("release_business_summary_rebuild_v1", {
-          target_upload_batch_id: job.upload_batch_id,
-          worker_id: workerId,
-          error_code: code
+        await rebuildBusinessUploadSummary(supabase, job, workerId, {
+          chunkSize: sourceChunkSize,
+          leaseSeconds
         });
+      } catch (error) {
+        // A stale worker must never mutate the generation that reclaimed it.
+        if (!isBusinessSummaryFencedError(error)) {
+          const failed = await supabase.rpc("fail_business_summary_rebuild_v2", {
+            input_upload_batch_id: job.upload_batch_id,
+            input_worker_id: workerId,
+            input_rebuild_id: job.rebuild_id,
+            input_generation: job.rebuild_generation,
+            input_fence_token: job.fence_token,
+            input_error_code: safeBusinessSummaryErrorCode(error),
+            input_retryable: isRetryableBusinessSummaryError(error)
+          });
+          if (failed.error && !isBusinessSummaryFencedError(failed.error)) throw failed.error;
+        }
       }
     }
     if (once) break;
-    if (!jobs.length) await wait(intervalMs);
+    if (!job) await wait(intervalMs);
   }
 }
 

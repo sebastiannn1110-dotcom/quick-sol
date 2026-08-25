@@ -51,7 +51,11 @@ describe("archived business record filters", () => {
     expectSafeViewReads("app/api/admin/search/route.ts", 1);
     expectSafeViewReads("lib/stock-needs/data-source.ts", 3);
     expect(source("app/api/admin/opportunities/route.ts")).toContain("loadSalesOpportunities");
-    expect(source("lib/opportunities/service.ts")).toContain("loadStockNeedsInput");
+    const opportunityService = source("lib/opportunities/service.ts");
+    expect(opportunityService).toContain('rpc("get_sales_opportunities_page_v1"');
+    expect(opportunityService).toContain("requireBusinessSummaryReady");
+    expect(opportunityService).not.toContain("loadStockNeedsInput");
+    expect(opportunityService).not.toContain('.from("business_records")');
     expect(businessRecordReadSegments("app/api/admin/opportunities/route.ts")).toHaveLength(0);
     expectSafeViewReads("app/api/employees/route.ts", 1);
   });

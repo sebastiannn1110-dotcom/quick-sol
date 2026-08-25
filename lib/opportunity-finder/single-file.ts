@@ -52,6 +52,8 @@ export type OpportunityPlatformEntityRow = {
 
 const PAGE_SIZE = 1000;
 const FILTER_CHUNK_SIZE = 150;
+export const OPPORTUNITY_SNAPSHOT_MAX_CHUNK_ROWS = 1000;
+export const OPPORTUNITY_SNAPSHOT_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
 
 export function oppositeDatasetRole(role: OpportunitySelectedRole) {
   if (role === "demand") return "stock" as const;
@@ -126,6 +128,91 @@ export async function loadAuthorizedDatasetManifest(supabase: SupabaseClient) {
   });
 }
 
+export async function* streamOpportunityFinderUploadedMpnChunks(
+  supabase: SupabaseClient,
+  jobId: string
+) {
+  // The RPC is DISTINCT + ORDER BY normalized_mpn. Keep one boundary value as
+  // bounded defense against an overlapping PostgREST range response.
+  let previousMpn: string | null = null;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .rpc("get_opportunity_finder_uploaded_mpns", { job_id: jobId })
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rawPage = data ?? [];
+    const page: string[] = [];
+    for (const row of rawPage) {
+      const mpn = String((row as { normalized_mpn?: unknown }).normalized_mpn ?? "");
+      if (!mpn || mpn === previousMpn) continue;
+      page.push(mpn);
+      previousMpn = mpn;
+    }
+    for (let index = 0; index < page.length; index += FILTER_CHUNK_SIZE) {
+      yield page.slice(index, index + FILTER_CHUNK_SIZE);
+    }
+    if (rawPage.length < PAGE_SIZE) break;
+  }
+}
+
+export async function* streamAuthorizedPlatformCandidatePages(input: {
+  supabase: SupabaseClient;
+  manifest: OpportunityDatasetManifestEntry[];
+  normalizedMpnChunks: AsyncIterable<readonly string[]> | Iterable<readonly string[]>;
+}) {
+  const manifestsByVersion = new Map<number, OpportunityDatasetManifestEntry[]>();
+  for (const entry of input.manifest) {
+    manifestsByVersion.set(entry.dataVersion, [...(manifestsByVersion.get(entry.dataVersion) ?? []), entry]);
+  }
+  const versionGroups = Array.from(manifestsByVersion.entries())
+    .sort(([left], [right]) => left - right)
+    .map(([version, entries]) => [
+      version,
+      [...entries].sort((left, right) => left.uploadBatchId.localeCompare(right.uploadBatchId))
+    ] as const);
+
+  for await (const inputMpns of input.normalizedMpnChunks) {
+    const mpns = Array.from(new Set(inputMpns.filter(Boolean))).sort();
+    if (!mpns.length) continue;
+    for (const [dataVersion, entries] of versionGroups) {
+      for (let uploadIndex = 0; uploadIndex < entries.length; uploadIndex += FILTER_CHUNK_SIZE) {
+        const uploadIds = entries.slice(uploadIndex, uploadIndex + FILTER_CHUNK_SIZE).map((entry) => entry.uploadBatchId);
+        let cursor: { sourceRecordId: string; entityKind: string } | null = null;
+        while (true) {
+          let query = input.supabase
+            .from(BUSINESS_OPPORTUNITY_ENTITIES_SAFE_VIEW)
+            .select("upload_batch_id,owner_id,data_version,source_record_id,entity_kind,entity_key,normalized_mpn,display_mpn,customer_name,supplier_name,manufacturer_name,required_qty,available_qty,excess_qty,required_date,lead_time_weeks,unit_of_measure,moq,spq,date_code,coo,condition,expires_at,is_active_demand,is_live_supply,warnings")
+            .eq("data_version", dataVersion)
+            .in("upload_batch_id", uploadIds)
+            .in("normalized_mpn", mpns)
+            .order("source_record_id", { ascending: true })
+            .order("entity_kind", { ascending: true })
+            .limit(PAGE_SIZE);
+          if (cursor) {
+            query = query.or(
+              `source_record_id.gt.${cursor.sourceRecordId},and(source_record_id.eq.${cursor.sourceRecordId},entity_kind.gt.${cursor.entityKind})`
+            );
+          }
+          const { data, error } = await query;
+          if (error) throw error;
+          const page = (data ?? []) as unknown as OpportunityPlatformEntityRow[];
+          if (page.length) yield page;
+          if (page.length < PAGE_SIZE) break;
+          const last = page.at(-1);
+          if (!last?.source_record_id || !last.entity_kind) throw new Error("OPPORTUNITY_SNAPSHOT_KEYSET_CURSOR_MISSING");
+          const previousCursor = cursor as { sourceRecordId: string; entityKind: string } | null;
+          if (previousCursor
+            && previousCursor.sourceRecordId === last.source_record_id
+            && previousCursor.entityKind === last.entity_kind) {
+            throw new Error("OPPORTUNITY_SNAPSHOT_KEYSET_CURSOR_STALLED");
+          }
+          cursor = { sourceRecordId: last.source_record_id, entityKind: last.entity_kind };
+        }
+      }
+    }
+  }
+}
+
 export async function loadAuthorizedPlatformCandidates(input: {
   supabase: SupabaseClient;
   manifest: OpportunityDatasetManifestEntry[];
@@ -133,37 +220,15 @@ export async function loadAuthorizedPlatformCandidates(input: {
 }) {
   const rows: OpportunityPlatformEntityRow[] = [];
   const uniqueMpns = Array.from(new Set(input.normalizedMpns.filter(Boolean))).sort();
-  const manifestsByVersion = new Map<number, OpportunityDatasetManifestEntry[]>();
-  for (const entry of input.manifest) {
-    manifestsByVersion.set(entry.dataVersion, [...(manifestsByVersion.get(entry.dataVersion) ?? []), entry]);
+  const normalizedMpnChunks = [];
+  for (let index = 0; index < uniqueMpns.length; index += FILTER_CHUNK_SIZE) {
+    normalizedMpnChunks.push(uniqueMpns.slice(index, index + FILTER_CHUNK_SIZE));
   }
-  for (const [dataVersion, entries] of manifestsByVersion) {
-    for (let uploadIndex = 0; uploadIndex < entries.length; uploadIndex += FILTER_CHUNK_SIZE) {
-      const uploadIds = entries.slice(uploadIndex, uploadIndex + FILTER_CHUNK_SIZE).map((entry) => entry.uploadBatchId);
-      for (let mpnIndex = 0; mpnIndex < uniqueMpns.length; mpnIndex += FILTER_CHUNK_SIZE) {
-        const mpns = uniqueMpns.slice(mpnIndex, mpnIndex + FILTER_CHUNK_SIZE);
-        let from = 0;
-        while (true) {
-          const { data, error } = await input.supabase
-            .from(BUSINESS_OPPORTUNITY_ENTITIES_SAFE_VIEW)
-            .select("upload_batch_id,owner_id,data_version,source_record_id,entity_kind,entity_key,normalized_mpn,display_mpn,customer_name,supplier_name,manufacturer_name,required_qty,available_qty,excess_qty,required_date,lead_time_weeks,unit_of_measure,moq,spq,date_code,coo,condition,expires_at,is_active_demand,is_live_supply,warnings")
-            .eq("data_version", dataVersion)
-            .in("upload_batch_id", uploadIds)
-            .in("normalized_mpn", mpns)
-            .order("upload_batch_id", { ascending: true })
-            .order("normalized_mpn", { ascending: true })
-            .order("source_record_id", { ascending: true })
-            .order("entity_kind", { ascending: true })
-            .range(from, from + PAGE_SIZE - 1);
-          if (error) throw error;
-          const page = (data ?? []) as unknown as OpportunityPlatformEntityRow[];
-          rows.push(...page);
-          if (page.length < PAGE_SIZE) break;
-          from += page.length;
-        }
-      }
-    }
-  }
+  for await (const page of streamAuthorizedPlatformCandidatePages({
+    supabase: input.supabase,
+    manifest: input.manifest,
+    normalizedMpnChunks
+  })) rows.push(...page);
   return rows;
 }
 
@@ -276,4 +341,89 @@ export function buildPlatformSnapshotRows(input: {
     });
   }
   return rows;
+}
+
+export function opportunitySnapshotChunkPayloadBytes(rows: OpportunitySnapshotCandidateRow[]) {
+  return Buffer.byteLength(JSON.stringify(rows), "utf8");
+}
+
+export function opportunitySnapshotChunkFingerprint(rows: OpportunitySnapshotCandidateRow[]) {
+  return createHash("sha256").update(JSON.stringify(rows), "utf8").digest("hex");
+}
+
+export function splitOpportunitySnapshotRows(
+  rows: OpportunitySnapshotCandidateRow[],
+  maxRows = OPPORTUNITY_SNAPSHOT_MAX_CHUNK_ROWS,
+  maxBytes = OPPORTUNITY_SNAPSHOT_MAX_CHUNK_BYTES
+) {
+  const safeMaxRows = Math.min(Math.max(Math.floor(maxRows), 1), OPPORTUNITY_SNAPSHOT_MAX_CHUNK_ROWS);
+  const safeMaxBytes = Math.min(Math.max(Math.floor(maxBytes), 2), OPPORTUNITY_SNAPSHOT_MAX_CHUNK_BYTES);
+  const chunks: Array<{
+    rows: OpportunitySnapshotCandidateRow[];
+    payloadBytes: number;
+    chunkFingerprint: string;
+  }> = [];
+  let chunk: OpportunitySnapshotCandidateRow[] = [];
+  let chunkBytes = 2;
+
+  const flush = () => {
+    if (!chunk.length) return;
+    chunks.push({
+      rows: chunk,
+      payloadBytes: opportunitySnapshotChunkPayloadBytes(chunk),
+      chunkFingerprint: opportunitySnapshotChunkFingerprint(chunk)
+    });
+    chunk = [];
+    chunkBytes = 2;
+  };
+
+  for (const row of rows) {
+    const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8");
+    if (rowBytes + 2 > safeMaxBytes) throw new Error("OPPORTUNITY_SNAPSHOT_ROW_TOO_LARGE");
+    const nextBytes = chunkBytes + rowBytes + (chunk.length ? 1 : 0);
+    if (chunk.length && (chunk.length >= safeMaxRows || nextBytes > safeMaxBytes)) flush();
+    chunk.push(row);
+    chunkBytes += rowBytes + (chunk.length > 1 ? 1 : 0);
+  }
+  flush();
+  return chunks;
+}
+
+export async function* streamPlatformSnapshotChunks(input: {
+  uploadedRole: OpportunitySelectedRole;
+  candidatePages: AsyncIterable<OpportunityPlatformEntityRow[]>;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  let pending: OpportunitySnapshotCandidateRow[] = [];
+  let pendingBytes = 2;
+
+  const chunk = () => {
+    const rows = pending;
+    pending = [];
+    pendingBytes = 2;
+    return {
+      rows,
+      payloadBytes: opportunitySnapshotChunkPayloadBytes(rows),
+      chunkFingerprint: opportunitySnapshotChunkFingerprint(rows)
+    };
+  };
+
+  for await (const candidates of input.candidatePages) {
+    const rows = buildPlatformSnapshotRows({ uploadedRole: input.uploadedRole, candidates, now });
+    for (const row of rows) {
+      const rowBytes = Buffer.byteLength(JSON.stringify(row), "utf8");
+      if (rowBytes + 2 > OPPORTUNITY_SNAPSHOT_MAX_CHUNK_BYTES) {
+        throw new Error("OPPORTUNITY_SNAPSHOT_ROW_TOO_LARGE");
+      }
+      const nextBytes = pendingBytes + rowBytes + (pending.length ? 1 : 0);
+      if (pending.length && (
+        pending.length >= OPPORTUNITY_SNAPSHOT_MAX_CHUNK_ROWS
+        || nextBytes > OPPORTUNITY_SNAPSHOT_MAX_CHUNK_BYTES
+      )) yield chunk();
+      pending.push(row);
+      pendingBytes += rowBytes + (pending.length > 1 ? 1 : 0);
+    }
+  }
+  if (pending.length) yield chunk();
 }

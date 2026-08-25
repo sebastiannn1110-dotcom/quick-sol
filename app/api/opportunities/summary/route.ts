@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
-import { loadSalesOpportunities } from "@/lib/opportunities/service";
+import {
+  isSummaryUnavailableError,
+  requireBusinessSummaryReady,
+  requireReadySummary,
+  summaryResponseHeaders,
+  summaryUnavailableHttpStatus,
+  summaryUnavailablePayload
+} from "@/lib/performance/summary-readiness";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 
 export const runtime = "nodejs";
@@ -48,26 +55,20 @@ export async function GET(request: Request) {
     return NextResponse.json(rpcPayload({ ready: true }));
   }
 
-  const { data, error } = await context.supabase.rpc("get_opportunity_summary_v1");
-  const row = (Array.isArray(data) ? data[0] : data) as SummaryRpcRow | null;
-  if (!error && row?.ready) {
-    return NextResponse.json(redactSensitiveFieldsForRole(rpcPayload(row), context.profile.role), {
-      headers: { "Cache-Control": "private, no-store, max-age=0" }
-    });
-  }
-
-  // Compatibility path while an additive migration is pending or a source
-  // version is deliberately marked dirty. It is exact, but intentionally not
-  // cached; the reconciliation worker restores the fast path.
   try {
-    const result = await loadSalesOpportunities(context.supabase, context.profile.role, { limit: 1 });
-    if (!result) return NextResponse.json({ error: "Summary is unavailable." }, { status: 404 });
-    return NextResponse.json(redactSensitiveFieldsForRole({
-      totals: result.totals,
-      dataVersion: null,
-      source: "exact_fallback"
-    }, context.profile.role));
-  } catch {
+    await requireBusinessSummaryReady(context.supabase);
+    const { data, error } = await context.supabase.rpc("get_opportunity_summary_v1");
+    const row = requireReadySummary<SummaryRpcRow>(data, error);
+    return NextResponse.json(redactSensitiveFieldsForRole(rpcPayload(row), context.profile.role), {
+      headers: summaryResponseHeaders()
+    });
+  } catch (summaryError) {
+    if (isSummaryUnavailableError(summaryError)) {
+      return NextResponse.json(summaryUnavailablePayload(summaryError.state), {
+        status: summaryUnavailableHttpStatus(summaryError.state),
+        headers: summaryResponseHeaders(summaryError.state)
+      });
+    }
     return NextResponse.json({ error: "Unable to load opportunity summary." }, { status: 500 });
   }
 }

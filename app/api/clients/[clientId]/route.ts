@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
-import { getClientDetail } from "@/lib/clients/data-source";
+import { aggregateClientSummaryState, getClientDetail } from "@/lib/clients/data-source";
 import { isUuid } from "@/lib/clients/clients";
+import { summaryResponseHeaders } from "@/lib/performance/summary-readiness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ clie
   try {
     const client = await getClientDetail(context.supabase, context.profile.role, clientId);
     if (!client) return NextResponse.json({ error: "Client not found or outside your scope." }, { status: 404 });
-    return NextResponse.json({ client });
+    return NextResponse.json({ client }, {
+      headers: summaryResponseHeaders(aggregateClientSummaryState([client]))
+    });
   } catch {
     return NextResponse.json({ error: "Unable to load client." }, { status: 500 });
   }

@@ -63,16 +63,18 @@ describe("Phase 7.1 client access and scope", () => {
 
   it("applies clientId and upload scope on the backend", () => {
     const service = source("lib/opportunities/service.ts");
-    const loader = source("lib/stock-needs/data-source.ts");
+    const clientsDataSource = source("lib/clients/data-source.ts");
     const detailRoute = source("app/api/clients/[clientId]/opportunities/route.ts");
 
-    expect(service).toContain("getClientDetail");
-    expect(service).toContain("listClientUploadIds");
-    expect(service).toContain("uploadIds");
+    expect(service).toContain("clientExistsInScope");
+    expect(service).toContain("requireBusinessSummaryReady");
+    expect(service).toContain("p_client_id: filters.clientId");
     expect(detailRoute).toContain("clientId }");
     expect(detailRoute).toContain("loadSalesOpportunities");
-    expect(loader).toContain("options.uploadIds !== null && !options.uploadIds.length");
-    expect(loader).toContain('.is("archived_at", null)');
+    expect(clientsDataSource).toContain("export async function clientExistsInScope");
+    expect(clientsDataSource).toContain('.is("archived_at", null)');
+    expect(clientsDataSource).not.toContain("loadStockNeedsInput");
+    expect(clientsDataSource).not.toContain("complete: true");
   });
 
   it("keeps private identification in a manager-only table and uses scoped RLS assignments", () => {

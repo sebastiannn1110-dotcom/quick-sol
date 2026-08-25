@@ -16,11 +16,7 @@ import {
   opportunityFinderPipelineVersionFromKey
 } from "@/lib/opportunity-finder/pipeline";
 import { safeContextText } from "@/lib/opportunity-finder/normalization";
-import {
-  datasetScopeForRole,
-  datasetVersionFromManifest,
-  loadAuthorizedDatasetManifest
-} from "@/lib/opportunity-finder/single-file";
+import { datasetScopeForRole } from "@/lib/opportunity-finder/single-file";
 import { checkRateLimit, rateLimitResponse } from "@/lib/security/rateLimit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
@@ -98,6 +94,13 @@ function existingComparisonResponse(existing: {
   }, { status: 409 });
 }
 
+function recordValue(value: unknown) {
+  const unwrapped = Array.isArray(value) ? value[0] : value;
+  return unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)
+    ? unwrapped as Record<string, unknown>
+    : null;
+}
+
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
@@ -129,22 +132,41 @@ export async function POST(request: Request) {
 
   const clientContext = safeContextText(parsed.data.clientContext, 160);
   const comparisonMode = parsed.data.comparisonMode;
-  let datasetManifest: Awaited<ReturnType<typeof loadAuthorizedDatasetManifest>> = [];
+  let datasetManifest: Record<string, unknown> | [] = [];
   let datasetVersion: string | null = null;
   const datasetScope = comparisonMode === "single_file"
     ? datasetScopeForRole(context.profile.role)
     : null;
   if (comparisonMode === "single_file") {
-    try {
-      datasetManifest = await loadAuthorizedDatasetManifest(context.supabase);
-      datasetVersion = datasetVersionFromManifest(datasetManifest);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (message === "OPPORTUNITY_DATASET_SUMMARY_NOT_READY") {
-        return NextResponse.json({ errorCode: "DATASET_SUMMARY_NOT_READY" }, { status: 409 });
+    const locatorResult = await context.supabase.rpc("get_opportunity_finder_dataset_locator_v2");
+    if (locatorResult.error) {
+      if (/OPPORTUNITY_DATASET_SUMMARY_NOT_READY/.test(locatorResult.error.message ?? "")) {
+        return NextResponse.json({ errorCode: "DATASET_SUMMARY_NOT_READY" }, {
+          status: 409,
+          headers: { "Cache-Control": "private, no-store, max-age=0", "Retry-After": "5" }
+        });
       }
-      return databaseFailureResponse(error);
+      return databaseFailureResponse(locatorResult.error);
     }
+    const locator = recordValue(locatorResult.data);
+    const manifest = recordValue(locator?.datasetManifest);
+    const locatorVersion = locator?.datasetVersion;
+    const locatorScope = locator?.datasetScope;
+    if (
+      typeof locatorVersion !== "string"
+      || !/^[0-9a-f]{64}$/.test(locatorVersion)
+      || locatorScope !== datasetScope
+      || manifest?.kind !== "opportunity-dataset-locator-v2"
+      || typeof manifest.universeVersion !== "string"
+      || typeof manifest.authorizationHash !== "string"
+      || !/^[0-9a-f]{64}$/.test(manifest.authorizationHash)
+      || !Number.isSafeInteger(Number(manifest.uploadCount))
+      || Number(manifest.uploadCount) < 0
+    ) {
+      return NextResponse.json({ errorCode: "OPPORTUNITY_FINDER_DATASET_LOCATOR_INVALID" }, { status: 503 });
+    }
+    datasetManifest = manifest;
+    datasetVersion = locatorVersion;
   }
   const idempotencyKey = comparisonMode === "two_files"
     ? await buildOpportunityFinderIdempotencyKey({

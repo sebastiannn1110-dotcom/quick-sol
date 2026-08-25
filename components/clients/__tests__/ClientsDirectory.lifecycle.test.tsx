@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ClientsDirectory from "@/components/clients/ClientsDirectory";
 import { LanguageProvider } from "@/components/LanguageProvider";
@@ -12,10 +12,10 @@ vi.mock("@/components/ProfileProvider", () => ({
   })
 }));
 
-function jsonResponse(payload: unknown, ok = true) {
+function jsonResponse(payload: unknown, status = 200) {
   return {
-    ok,
-    status: ok ? 200 : 500,
+    ok: status >= 200 && status < 300,
+    status,
     json: vi.fn(async () => payload)
   } as unknown as Response;
 }
@@ -62,12 +62,13 @@ describe("ClientsDirectory request lifecycle", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/api/clients")) return Promise.resolve(jsonResponse({ clients: [] }));
-      if (url === "/api/opportunities/summary") return Promise.resolve(jsonResponse({}, false));
+      if (url === "/api/opportunities/summary") return Promise.resolve(jsonResponse({}, 500));
       throw new Error(`Unexpected request: ${url}`);
     }));
 
     render(<LanguageProvider><ClientsDirectory /></LanguageProvider>);
-    expect(await screen.findByText("No se pudieron cargar los clientes.")).toBeTruthy();
+    expect(await screen.findByText("No se pudieron cargar las oportunidades.")).toBeTruthy();
+    expect(screen.queryByText("No se pudieron cargar los clientes.")).toBeNull();
   });
 
   it("still surfaces a real backend/network rejection", async () => {
@@ -81,6 +82,46 @@ describe("ClientsDirectory request lifecycle", () => {
     }));
 
     render(<LanguageProvider><ClientsDirectory /></LanguageProvider>);
-    expect(await screen.findByText("No se pudieron cargar los clientes.")).toBeTruthy();
+    expect(await screen.findByText("No se pudieron cargar las oportunidades.")).toBeTruthy();
+    expect(screen.queryByText("No se pudieron cargar los clientes.")).toBeNull();
+  });
+
+  it("shows an explicit rebuilding state, no false zero, and retries only on user action", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/clients")) {
+        return Promise.resolve(jsonResponse({
+          clients: [],
+          summary: { status: "ready", currentVersion: null, requiredVersion: null, retryable: false, retryAfterSeconds: 0 }
+        }));
+      }
+      if (url === "/api/opportunities/summary") {
+        const summaryCalls = fetchMock.mock.calls.filter(([target]) => String(target) === "/api/opportunities/summary").length;
+        if (summaryCalls === 1) return Promise.resolve(jsonResponse({
+          error: "The summary is not ready yet.",
+          errorCode: "SUMMARY_NOT_READY",
+          summaryStatus: "rebuilding",
+          status: "rebuilding",
+          currentVersion: 4,
+          requiredVersion: 5,
+          retryable: true,
+          retryAfterSeconds: 3
+        }, 409));
+        return Promise.resolve(jsonResponse({
+          totals: { totalOpportunities: 0, immediateSale: 0, partialSale: 0, sourcingNeeded: 0 }
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<LanguageProvider><ClientsDirectory /></LanguageProvider>);
+    expect(await screen.findByText("El resumen se está actualizando. Los datos estarán disponibles al terminar.")).toBeTruthy();
+    expect(screen.queryByText("0")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByText("El resumen se está actualizando. Los datos estarán disponibles al terminar.")).toBeNull());
   });
 });

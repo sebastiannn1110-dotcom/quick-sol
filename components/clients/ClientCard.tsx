@@ -17,6 +17,7 @@ import type { AccountClient } from "@/lib/clients/clients";
 
 export default function ClientCard({ client }: { client: AccountClient }) {
   const { t } = useLanguage();
+  const metric = (value: number | null) => value ?? "—";
   return (
     <Link
       href={`/clients/${client.id}`}
@@ -38,13 +39,18 @@ export default function ClientCard({ client }: { client: AccountClient }) {
         </div>
       </div>
       <div className="grid grid-cols-2 content-start gap-x-3 gap-y-3 p-4 text-sm text-slate-600">
+        {client.summaryStatus !== "ready" ? (
+          <span className="col-span-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+            {t("summary.metricsUnavailable")}
+          </span>
+        ) : null}
         <span className="flex min-w-0 items-center gap-2"><FileSpreadsheet className="h-4 w-4 shrink-0 text-slate-400" /><span>{client.fileCount} {t("clients.files")}</span></span>
-        <span className="flex min-w-0 items-center gap-2"><PackageSearch className="h-4 w-4 shrink-0 text-slate-400" /><span>{client.mpnCount} {t("clients.mpns")}</span></span>
-        <span className="flex min-w-0 items-center gap-2"><Sparkles className="h-4 w-4 shrink-0 text-slate-400" /><span>{client.opportunityCount} {t("clients.opportunities")}</span></span>
-        <span className="flex min-w-0 items-center gap-2"><ShoppingCart className="h-4 w-4 shrink-0 text-emerald-600" /><span>{client.immediateSaleCount} {t("clients.immediateSales")}</span></span>
-        <span className="flex min-w-0 items-center gap-2"><Split className="h-4 w-4 shrink-0 text-amber-600" /><span>{client.partialSaleCount} {t("clients.partialSales")}</span></span>
-        <span className="flex min-w-0 items-center gap-2"><Search className="h-4 w-4 shrink-0 text-red-600" /><span>{client.sourcingNeededCount} {t("clients.sourcingNeeded")}</span></span>
-        <span className="col-span-2 flex min-w-0 items-center gap-2"><Warehouse className="h-4 w-4 shrink-0 text-sky-600" /><span>{client.stockWithoutDemandCount} {t("clients.stockWithoutDemand")}</span></span>
+        <span className="flex min-w-0 items-center gap-2"><PackageSearch className="h-4 w-4 shrink-0 text-slate-400" /><span>{metric(client.mpnCount)} {t("clients.mpns")}</span></span>
+        <span className="flex min-w-0 items-center gap-2"><Sparkles className="h-4 w-4 shrink-0 text-slate-400" /><span>{metric(client.opportunityCount)} {t("clients.opportunities")}</span></span>
+        <span className="flex min-w-0 items-center gap-2"><ShoppingCart className="h-4 w-4 shrink-0 text-emerald-600" /><span>{metric(client.immediateSaleCount)} {t("clients.immediateSales")}</span></span>
+        <span className="flex min-w-0 items-center gap-2"><Split className="h-4 w-4 shrink-0 text-amber-600" /><span>{metric(client.partialSaleCount)} {t("clients.partialSales")}</span></span>
+        <span className="flex min-w-0 items-center gap-2"><Search className="h-4 w-4 shrink-0 text-red-600" /><span>{metric(client.sourcingNeededCount)} {t("clients.sourcingNeeded")}</span></span>
+        <span className="col-span-2 flex min-w-0 items-center gap-2"><Warehouse className="h-4 w-4 shrink-0 text-sky-600" /><span>{metric(client.stockWithoutDemandCount)} {t("clients.stockWithoutDemand")}</span></span>
       </div>
       <div className="flex min-h-11 items-center justify-between border-t border-slate-100 px-4 py-3 text-sm font-semibold text-brand-700">
         <span>{t("clients.viewClient")}</span>

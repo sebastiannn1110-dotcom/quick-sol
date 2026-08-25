@@ -483,8 +483,13 @@ export default function OpportunityFinder() {
   const [reviewNotice, setReviewNotice] = useState("");
   const [supplementalLoaded, setSupplementalLoaded] = useState({ possible: false, rejected: false });
   const [supplementalLoading, setSupplementalLoading] = useState<"possible" | "rejected" | null>(null);
-  const snapshotRequestRef = useRef<string | null>(null);
+  const snapshotRequestRef = useRef<{ jobId: string; controller: AbortController } | null>(null);
+  const snapshotAttemptRef = useRef<string | null>(null);
+  const snapshotContinuationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uploadRequestRef = useRef<AbortController | null>(null);
+  const [snapshotRetryNonce, setSnapshotRetryNonce] = useState(0);
+  const [snapshotInFlight, setSnapshotInFlight] = useState(false);
+  const [snapshotFailure, setSnapshotFailure] = useState<{ jobId: string; errorCode: string } | null>(null);
 
   function errorMessage(code: string) {
     const errors = text.errors as Record<string, string>;
@@ -657,6 +662,10 @@ export default function OpportunityFinder() {
   useEffect(() => () => {
     abortRequest(uploadRequestRef.current, "Opportunity Finder was closed.");
     uploadRequestRef.current = null;
+    abortRequest(snapshotRequestRef.current?.controller ?? null, "Opportunity Finder snapshot request stopped.");
+    snapshotRequestRef.current = null;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -678,13 +687,22 @@ export default function OpportunityFinder() {
       || data.job.status !== "awaiting_roles"
       || data.job.snapshotStatus !== "pending"
       || data.job.currentStage !== "finding_matches"
-      || snapshotRequestRef.current === jobId
+      || snapshotRequestRef.current
     ) return;
-    snapshotRequestRef.current = jobId;
+    const attemptKey = `${jobId}:${snapshotRetryNonce}`;
+    if (snapshotAttemptRef.current === attemptKey) return;
+    snapshotAttemptRef.current = attemptKey;
+    const controller = new AbortController();
+    snapshotRequestRef.current = { jobId, controller };
+    setSnapshotInFlight(true);
+    setSnapshotFailure(null);
     void (async () => {
       try {
-        const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/snapshot`, { method: "POST" });
+        const response = await fetch(`/api/opportunity-finder/jobs/${jobId}/snapshot`, {
+          method: "POST"
+        });
         const payload = await readPayload<{ jobId: string }>(response);
+        if (snapshotRequestRef.current?.jobId !== jobId) return;
         if (payload.jobId !== jobId) {
           setData(null);
           setRoles({});
@@ -694,8 +712,27 @@ export default function OpportunityFinder() {
           setJobId(payload.jobId);
           return;
         }
+        if (response.status === 202) {
+          await loadJob(appliedFilters, 0, false, false, jobId);
+          const retryAfter = Number(response.headers.get("Retry-After"));
+          const delayMs = Math.min(Math.max(
+            Number.isFinite(retryAfter) ? retryAfter * 1000 : 2_000,
+            1_000
+          ), 10_000);
+          if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+          snapshotContinuationTimerRef.current = setTimeout(() => {
+            snapshotContinuationTimerRef.current = null;
+            setSnapshotRetryNonce((value) => value + 1);
+          }, delayMs);
+          return;
+        }
+        if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+        snapshotContinuationTimerRef.current = null;
+        setSnapshotFailure(null);
+        setErrorCode("");
         await loadJob(appliedFilters, 0, false, false, jobId);
       } catch (error) {
+        if (isExpectedAbort(error, controller.signal)) return;
         const apiError = error as OpportunityApiError;
         if (
           apiError.message === "COMPARISON_ALREADY_EXISTS"
@@ -718,13 +755,27 @@ export default function OpportunityFinder() {
           setData(null);
           setJobId(apiError.jobId);
         }
-        setErrorCode(apiError.message || "DATASET_SNAPSHOT_FAILED");
+        const nextErrorCode = apiError.message || "DATASET_SNAPSHOT_FAILED";
+        setSnapshotFailure({ jobId, errorCode: nextErrorCode });
+        setErrorCode(nextErrorCode);
       } finally {
-        if (snapshotRequestRef.current === jobId) snapshotRequestRef.current = null;
+        if (snapshotRequestRef.current?.jobId === jobId) {
+          snapshotRequestRef.current = null;
+          setSnapshotInFlight(false);
+        }
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, data?.job.status, data?.job.currentStage, data?.job.snapshotStatus, data?.job.comparisonMode]);
+  }, [jobId, data?.job.status, data?.job.currentStage, data?.job.snapshotStatus, data?.job.comparisonMode, snapshotRetryNonce]);
+
+  function retrySnapshot() {
+    if (!jobId || snapshotRequestRef.current) return;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
+    setErrorCode("");
+    setSnapshotFailure(null);
+    setSnapshotRetryNonce((value) => value + 1);
+  }
 
   const roleCompatibility = useMemo(() => {
     const uploadedFiles = data?.files.filter((file) => file.sourceKind !== "platform_snapshot") ?? [];
@@ -921,7 +972,14 @@ export default function OpportunityFinder() {
     setReviewNotice("");
     setSupplementalLoaded({ possible: false, rejected: false });
     setSupplementalLoading(null);
+    abortRequest(snapshotRequestRef.current?.controller ?? null, "A new Opportunity Finder search was started.");
     snapshotRequestRef.current = null;
+    if (snapshotContinuationTimerRef.current) clearTimeout(snapshotContinuationTimerRef.current);
+    snapshotContinuationTimerRef.current = null;
+    snapshotAttemptRef.current = null;
+    setSnapshotRetryNonce(0);
+    setSnapshotInFlight(false);
+    setSnapshotFailure(null);
   }
 
   async function deleteJob() {
@@ -1267,11 +1325,20 @@ export default function OpportunityFinder() {
       ) : null}
 
       {data?.job.comparisonMode === "single_file" && data.job.status === "awaiting_roles" && data.job.currentStage === "finding_matches" ? (
-        <section className="rounded-xl border border-brand-200 bg-brand-50 p-5 text-brand-900" role="status">
-          <div className="flex items-center gap-3">
-            <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" />
-            <p className="font-semibold">{modeText.snapshot}</p>
-          </div>
+        <section className={`rounded-xl border p-5 ${snapshotFailure?.jobId === jobId ? "border-red-200 bg-red-50 text-red-900" : "border-brand-200 bg-brand-50 text-brand-900"}`} role={snapshotFailure?.jobId === jobId ? "alert" : "status"}>
+          {snapshotFailure?.jobId === jobId ? (
+            <div>
+              <p className="font-semibold">{errorMessage(snapshotFailure.errorCode)}</p>
+              <button type="button" disabled={snapshotInFlight} onClick={retrySnapshot} className="focus-ring mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white disabled:opacity-50">
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />{text.retry}
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <LoaderCircle className={`h-5 w-5 ${snapshotInFlight ? "animate-spin" : ""}`} aria-hidden="true" />
+              <p className="font-semibold">{modeText.snapshot}</p>
+            </div>
+          )}
         </section>
       ) : null}
 

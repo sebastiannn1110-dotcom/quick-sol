@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/auth/context";
-import { getClientDetail, listClientUploads } from "@/lib/clients/data-source";
+import { clientExistsInScope, listClientUploads } from "@/lib/clients/data-source";
 import { isUuid } from "@/lib/clients/clients";
 
 export const runtime = "nodejs";
@@ -14,8 +14,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ clie
   if (context.isDemoMode || !context.supabase) return NextResponse.json({ uploads: [] });
 
   try {
-    const client = await getClientDetail(context.supabase, context.profile.role, clientId);
-    if (!client) return NextResponse.json({ error: "Client not found or outside your scope." }, { status: 404 });
+    const canAccess = await clientExistsInScope(context.supabase, context.profile.role, clientId);
+    if (!canAccess) return NextResponse.json({ error: "Client not found or outside your scope." }, { status: 404 });
     return NextResponse.json({ uploads: await listClientUploads(context.supabase, clientId) });
   } catch {
     return NextResponse.json({ error: "Unable to load client uploads." }, { status: 500 });

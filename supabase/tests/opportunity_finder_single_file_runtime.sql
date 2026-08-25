@@ -23,6 +23,20 @@ insert into public.opportunity_finder_dataset_snapshots (
   ('23000000-0000-4000-8000-000000000002', '22000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002',
    '20000000-0000-4000-8000-000000000002', 'demand', 'stock', repeat('b', 64), 'own', '[]');
 
+-- These fixtures represent finalized snapshots. R7 intentionally hides a
+-- snapshot until the job's atomic visibility pointer references it.
+update public.opportunity_finder_jobs
+set snapshot_status='ready',
+    dataset_snapshot_id=case id
+      when '11000000-0000-4000-8000-000000000001' then '12000000-0000-4000-8000-000000000001'::uuid
+      else '23000000-0000-4000-8000-000000000002'::uuid
+    end,
+    dataset_snapshot_at=clock_timestamp()
+where id in (
+  '11000000-0000-4000-8000-000000000001',
+  '22000000-0000-4000-8000-000000000002'
+);
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
 

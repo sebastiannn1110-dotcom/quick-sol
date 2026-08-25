@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { detectOpportunitySignals } from "@/lib/opportunities/opportunities";
-import { BUSINESS_RECORD_UPLOAD_RELATION } from "@/lib/platform/query-columns";
 import {
   buildStockNeedsResult,
   type StockNeedsImportJob,
@@ -8,9 +8,24 @@ import {
   type StockNeedsRecord
 } from "@/lib/stock-needs/stock-needs";
 
-const RECONCILIATION_PAGE_SIZE = 1000;
-export const BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE = 500;
-const RECORD_SELECT = `id,upload_batch_id,category,raw_data,normalized_data,has_errors,errors,mpn,mpn_quoted,customer,client,supplier,supplier_name,manufacturer,clean_mfg,qty,req_qty,on_hand,earliest_shipping_date,lead_time_weeks,created_at,${BUSINESS_RECORD_UPLOAD_RELATION}(original_file_name,detected_category,status,created_at)`;
+export const BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE = 500;
+export const BUSINESS_SUMMARY_MAX_STAGE_BYTES = 8 * 1024 * 1024;
+
+export type BusinessSummaryRebuildClaim = {
+  upload_batch_id: string;
+  target_data_version: number;
+  rebuild_id: string;
+  rebuild_generation: number;
+  fence_token: number;
+  lease_expires_at: string;
+  evaluation_at: string;
+};
+
+type BusinessSummarySourceRow = {
+  record_id: string;
+  record_created_at: string;
+  record_payload: StockNeedsRecord;
+};
 
 export type BusinessMpnSummaryRow = {
   normalized_mpn: string;
@@ -122,7 +137,16 @@ export function buildBusinessOpportunityEntityRows(input: {
   records: StockNeedsRecord[];
   profiles?: StockNeedsProfile[];
   importJobs?: StockNeedsImportJob[];
+  evaluationAt?: string | Date;
 }): BusinessOpportunityEntityRow[] {
+  const requestedEvaluationAt = input.evaluationAt instanceof Date
+    ? input.evaluationAt.getTime()
+    : input.evaluationAt
+      ? new Date(input.evaluationAt).getTime()
+      : Date.now();
+  if (!Number.isFinite(requestedEvaluationAt)) {
+    throw new Error("BUSINESS_SUMMARY_EVALUATION_TIME_INVALID");
+  }
   const recordsById = new Map(input.records.map((record) => [String(record.id ?? ""), record]));
   const rows: BusinessOpportunityEntityRow[] = [];
   for (const signal of detectOpportunitySignals(input)) {
@@ -198,7 +222,7 @@ export function buildBusinessOpportunityEntityRows(input: {
       excess_qty: null,
       expires_at: offerExpiry,
       is_active_demand: true,
-      is_live_supply: new Date(offerExpiry).getTime() > Date.now()
+      is_live_supply: new Date(offerExpiry).getTime() > requestedEvaluationAt
     });
     if (signal.receivedSignal && entityNumber(signal.receivedQty) !== null) rows.push({
       ...common,
@@ -299,146 +323,196 @@ export function buildBusinessMpnSummaryRows(input: {
   return Array.from(grouped.values()).sort((left, right) => left.normalized_mpn.localeCompare(right.normalized_mpn));
 }
 
-export async function loadCompleteUploadRecords(
+function rpcErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") return "SUMMARY_REBUILD_FAILED";
+  const value = "code" in error ? String(error.code ?? "") : "";
+  if (value) return value;
+  const message = "message" in error ? String(error.message ?? "") : "";
+  return message.match(/[A-Z][A-Z0-9_]{2,79}/)?.[0] ?? "SUMMARY_REBUILD_FAILED";
+}
+
+async function heartbeatBusinessSummaryRebuild(
   supabase: SupabaseClient,
-  uploadBatchId: string,
-  pageSize = RECONCILIATION_PAGE_SIZE
+  claim: BusinessSummaryRebuildClaim,
+  workerId: string,
+  leaseSeconds: number
 ) {
-  const records: StockNeedsRecord[] = [];
-  let cursorId: string | null = null;
-  while (true) {
-    let query = supabase
-      .from("business_records")
-      .select(RECORD_SELECT)
-      .eq("upload_batch_id", uploadBatchId)
-      .is("archived_at", null)
-      .order("id", { ascending: false });
-    if (cursorId) query = query.lt("id", cursorId);
-    const { data, error } = await query.limit(pageSize);
-    if (error) throw error;
-    const page = (data ?? []) as unknown as StockNeedsRecord[];
-    records.push(...page);
-    if (page.length < pageSize) break;
-    const last = page.at(-1) as (StockNeedsRecord & { created_at?: string; id?: string }) | undefined;
-    if (!last?.id) throw new Error("BUSINESS_SUMMARY_KEYSET_CURSOR_MISSING");
-    if (cursorId === last.id) {
-      throw new Error("BUSINESS_SUMMARY_KEYSET_CURSOR_STALLED");
-    }
-    cursorId = last.id;
-  }
-  return records.sort((left, right) => {
-    const leftRow = left as StockNeedsRecord & { created_at?: string; id?: string };
-    const rightRow = right as StockNeedsRecord & { created_at?: string; id?: string };
-    const createdOrder = String(rightRow.created_at ?? "").localeCompare(String(leftRow.created_at ?? ""));
-    return createdOrder || String(rightRow.id ?? "").localeCompare(String(leftRow.id ?? ""));
+  const heartbeat = await supabase.rpc("heartbeat_business_summary_rebuild_v2", {
+    input_upload_batch_id: claim.upload_batch_id,
+    input_worker_id: workerId,
+    input_rebuild_id: claim.rebuild_id,
+    input_generation: claim.rebuild_generation,
+    input_fence_token: claim.fence_token,
+    input_lease_seconds: leaseSeconds
   });
+  if (heartbeat.error) throw heartbeat.error;
+  return String(heartbeat.data ?? "");
 }
 
-export function businessSummaryPublishChunks<T>(rows: T[], chunkSize = BUSINESS_SUMMARY_PUBLISH_CHUNK_SIZE) {
-  if (!rows.length) return [] as T[][];
-  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
-  const chunks: T[][] = [];
-  for (let index = 0; index < rows.length; index += safeChunkSize) {
-    chunks.push(rows.slice(index, index + safeChunkSize));
-  }
-  return chunks;
+export function isBusinessSummaryFencedError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String(error.code ?? "") : "";
+  const message = "message" in error ? String(error.message ?? "") : "";
+  return code === "55000" && /SUMMARY_(?:WORKER|BUILDER)_FENCED/.test(message);
 }
 
-export async function publishBusinessOpportunityEntityRows(
+export function isRetryableBusinessSummaryError(error: unknown) {
+  if (isBusinessSummaryFencedError(error)) return false;
+  if (!error || typeof error !== "object") return true;
+  const code = "code" in error ? String(error.code ?? "") : "";
+  return !["22023", "22P02", "23502", "23503", "23505", "23514", "42501"].includes(code);
+}
+
+export function safeBusinessSummaryErrorCode(error: unknown) {
+  return rpcErrorCode(error).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80) || "SUMMARY_REBUILD_FAILED";
+}
+
+export async function rebuildBusinessUploadSummary(
   supabase: SupabaseClient,
-  rows: Array<BusinessOpportunityEntityRow & {
-    upload_batch_id: string;
-    owner_id: string;
-    data_version: number;
-  }>,
-  targetUploadBatchId: string,
-  expectedDataVersion: number
+  claim: BusinessSummaryRebuildClaim,
+  workerId: string,
+  options: { chunkSize?: number; leaseSeconds?: number } = {}
 ) {
-  for (const entityChunk of businessSummaryPublishChunks(rows)) {
-    // Source versions are immutable. Ignoring an existing primary key makes a
-    // retry resume cheaply after a partial publish instead of rewriting every
-    // previously persisted entity through the locking RPC.
-    const entityPublish = await supabase
-      .from("business_opportunity_entities")
-      .upsert(entityChunk, {
-        onConflict: "upload_batch_id,data_version,source_record_id,entity_kind",
-        ignoreDuplicates: true
-      });
-    if (entityPublish.error) throw entityPublish.error;
-  }
-
-  // The empty RPC is the atomic visibility boundary. It locks and rechecks the
-  // source version, then advances opportunity_entity_version only after every
-  // direct chunk has completed.
-  const finalize = await supabase.rpc("replace_business_upload_opportunity_entities_v1", {
-    target_upload_batch_id: targetUploadBatchId,
-    expected_data_version: expectedDataVersion,
-    entity_rows: []
-  });
-  if (finalize.error) throw finalize.error;
-}
-
-export async function rebuildBusinessUploadSummary(supabase: SupabaseClient, uploadBatchId: string) {
-  const versionResult = await supabase
-    .from("business_upload_versions")
-    .select("owner_id,data_version,dirty")
-    .eq("upload_batch_id", uploadBatchId)
-    .single();
-  if (versionResult.error) throw versionResult.error;
-  if (!versionResult.data.dirty) return { rebuilt: false, version: Number(versionResult.data.data_version) };
-
-  const [records, profilesResult, jobsResult] = await Promise.all([
-    loadCompleteUploadRecords(supabase, uploadBatchId),
-    supabase.from("file_schema_profiles").select("upload_batch_id,detected_template,detected_mappings_json,column_count").eq("upload_batch_id", uploadBatchId),
-    supabase.from("import_jobs").select("upload_batch_id,status").eq("upload_batch_id", uploadBatchId).order("updated_at", { ascending: false }).limit(1)
+  const chunkSize = Math.min(
+    Math.max(Math.floor(options.chunkSize ?? BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE), 1),
+    BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE
+  );
+  const leaseSeconds = Math.min(Math.max(Math.floor(options.leaseSeconds ?? 120), 30), 900);
+  const [uploadResult, profilesResult, jobsResult] = await Promise.all([
+    supabase
+      .from("upload_batches")
+      .select("id,original_file_name,detected_category,status,created_at")
+      .eq("id", claim.upload_batch_id)
+      .single(),
+    supabase
+      .from("file_schema_profiles")
+      .select("upload_batch_id,detected_template,detected_mappings_json,column_count")
+      .eq("upload_batch_id", claim.upload_batch_id),
+    supabase
+      .from("import_jobs")
+      .select("upload_batch_id,status")
+      .eq("upload_batch_id", claim.upload_batch_id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
   ]);
+  if (uploadResult.error) throw uploadResult.error;
   if (profilesResult.error) throw profilesResult.error;
   if (jobsResult.error) throw jobsResult.error;
-  const rows = buildBusinessMpnSummaryRows({
-    records,
-    profiles: (profilesResult.data ?? []) as StockNeedsProfile[],
-    importJobs: (jobsResult.data ?? []) as StockNeedsImportJob[]
-  });
-  const opportunityEntities = buildBusinessOpportunityEntityRows({
-    records,
-    profiles: (profilesResult.data ?? []) as StockNeedsProfile[],
-    importJobs: (jobsResult.data ?? []) as StockNeedsImportJob[]
-  });
-  const version = Number(versionResult.data.data_version);
-  const versionedOpportunityEntities = opportunityEntities.map((row) => ({
-    ...row,
-    upload_batch_id: uploadBatchId,
-    owner_id: versionResult.data.owner_id,
-    data_version: version
-  }));
-  await publishBusinessOpportunityEntityRows(supabase, versionedOpportunityEntities, uploadBatchId, version);
 
-  const summaryRows = rows.map((row) => ({
-    ...row,
-    upload_batch_id: uploadBatchId,
-    owner_id: versionResult.data.owner_id,
-    data_version: version
-  }));
-  for (const summaryChunk of businessSummaryPublishChunks(summaryRows)) {
-    const summaryPublish = await supabase
-      .from("business_mpn_summaries")
-      .upsert(summaryChunk, { onConflict: "upload_batch_id,data_version,normalized_mpn" });
-    if (summaryPublish.error) throw summaryPublish.error;
+  const profiles = (profilesResult.data ?? []) as StockNeedsProfile[];
+  const importJobs = (jobsResult.data ?? []) as StockNeedsImportJob[];
+  const sourceFingerprint = createHash("sha256");
+  let cursorCreatedAt: string | null = null;
+  let cursorId: string | null = null;
+  let chunkSequence = 0;
+  let sourceRecords = 0;
+  let summaryPartials = 0;
+  let opportunityEntities = 0;
+  let peakChunkRows = 0;
+  let peakPayloadBytes = 0;
+
+  while (true) {
+    const pageResult = await supabase.rpc("read_business_summary_source_chunk_v2", {
+      input_upload_batch_id: claim.upload_batch_id,
+      input_worker_id: workerId,
+      input_rebuild_id: claim.rebuild_id,
+      input_generation: claim.rebuild_generation,
+      input_fence_token: claim.fence_token,
+      input_after_created_at: cursorCreatedAt,
+      input_after_id: cursorId,
+      input_limit: chunkSize
+    });
+    if (pageResult.error) throw pageResult.error;
+    const sourcePage = (pageResult.data ?? []) as unknown as BusinessSummarySourceRow[];
+    if (!sourcePage.length) break;
+    if (sourcePage.length > chunkSize) throw new Error("SUMMARY_SOURCE_CHUNK_LIMIT_BROKEN");
+
+    const records = sourcePage.map((source) => ({
+      ...(source.record_payload as StockNeedsRecord),
+      id: source.record_id,
+      created_at: source.record_created_at,
+      upload_batches: uploadResult.data
+    })) as StockNeedsRecord[];
+    // Stage one partial per source row. PostgreSQL can then replay float8
+    // accumulation in the exact global newest-first order; pre-summing each
+    // chunk would change IEEE-754 results at the chunk boundaries.
+    const summaryRows = records.flatMap((record, sourceOrdinal) =>
+      buildBusinessMpnSummaryRows({ records: [record], profiles, importJobs })
+        .map((row) => ({ ...row, source_ordinal: sourceOrdinal }))
+    );
+    const entityRows = buildBusinessOpportunityEntityRows({
+      records,
+      profiles,
+      importJobs,
+      evaluationAt: claim.evaluation_at
+    });
+    const payloadBytes = Buffer.byteLength(JSON.stringify({ summaryRows, entityRows }), "utf8");
+    if (payloadBytes > BUSINESS_SUMMARY_MAX_STAGE_BYTES) {
+      throw new Error("SUMMARY_STAGE_LIMIT_EXCEEDED");
+    }
+    const last = sourcePage.at(-1);
+    if (!last?.record_id || !last.record_created_at) {
+      throw new Error("SUMMARY_SOURCE_CURSOR_MISSING");
+    }
+    if (cursorCreatedAt === last.record_created_at && cursorId === last.record_id) {
+      throw new Error("SUMMARY_SOURCE_CURSOR_STALLED");
+    }
+    for (const source of sourcePage) {
+      sourceFingerprint.update(`${source.record_created_at}:${source.record_id}\n`, "utf8");
+    }
+
+    // Computation is bounded to one page. Renew immediately before the write so
+    // a slow page never publishes under an expired lease.
+    await heartbeatBusinessSummaryRebuild(supabase, claim, workerId, leaseSeconds);
+    const stage = await supabase.rpc("stage_business_summary_chunk_v2", {
+      input_upload_batch_id: claim.upload_batch_id,
+      input_worker_id: workerId,
+      input_rebuild_id: claim.rebuild_id,
+      input_generation: claim.rebuild_generation,
+      input_fence_token: claim.fence_token,
+      input_chunk_sequence: chunkSequence,
+      input_source_rows: sourcePage.length,
+      input_summary_rows: summaryRows,
+      input_entity_rows: entityRows,
+      input_payload_bytes: payloadBytes,
+      input_cursor_created_at: last.record_created_at,
+      input_cursor_id: last.record_id
+    });
+    if (stage.error) throw stage.error;
+
+    sourceRecords += sourcePage.length;
+    summaryPartials += summaryRows.length;
+    opportunityEntities += entityRows.length;
+    peakChunkRows = Math.max(peakChunkRows, sourcePage.length);
+    peakPayloadBytes = Math.max(peakPayloadBytes, payloadBytes);
+    cursorCreatedAt = last.record_created_at;
+    cursorId = last.record_id;
+    chunkSequence += 1;
   }
 
-  // Finalization is deliberately separate from chunk publication. The RPC
-  // locks and rechecks the source version, then makes the complete set visible.
-  const finalize = await supabase.rpc("replace_business_upload_summary_v1", {
-    target_upload_batch_id: uploadBatchId,
-    expected_data_version: version,
-    summary_rows: []
+  await heartbeatBusinessSummaryRebuild(supabase, claim, workerId, leaseSeconds);
+  const fingerprint = sourceFingerprint.digest("hex");
+  const publish = await supabase.rpc("publish_business_summary_rebuild_v2", {
+    input_upload_batch_id: claim.upload_batch_id,
+    input_worker_id: workerId,
+    input_rebuild_id: claim.rebuild_id,
+    input_generation: claim.rebuild_generation,
+    input_fence_token: claim.fence_token,
+    input_expected_source_rows: sourceRecords,
+    input_source_fingerprint: fingerprint
   });
-  if (finalize.error) throw finalize.error;
+  if (publish.error) throw publish.error;
+
   return {
     rebuilt: true,
-    version,
-    sourceRecords: records.length,
-    summaryRows: rows.length,
-    opportunityEntities: opportunityEntities.length
+    version: Number(claim.target_data_version),
+    sourceRecords,
+    summaryPartials,
+    opportunityEntities,
+    chunks: chunkSequence,
+    peakChunkRows,
+    peakPayloadBytes,
+    sourceFingerprint: fingerprint,
+    publish: publish.data
   };
 }

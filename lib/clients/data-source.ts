@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildSalesOpportunitiesResult, type SalesOpportunitiesResult } from "@/lib/opportunities/opportunities";
-import { enrichOpportunitiesWithConfidence } from "@/lib/opportunities/quality";
-import { loadStockNeedsInput } from "@/lib/stock-needs/data-source";
-import { normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
+import {
+  aggregateSummaryStates,
+  isSummaryContractUnavailable,
+  loadBusinessSummaryState,
+  type SummaryReadState
+} from "@/lib/performance/summary-readiness";
 import type { UserRole } from "@/lib/types";
 import {
   type AccountClient,
@@ -124,17 +126,10 @@ function assignmentsForClient(assignments: AssignmentRow[], clientId: string) {
   );
 }
 
-function opportunityMetrics(result: SalesOpportunitiesResult) {
-  const confidence = enrichOpportunitiesWithConfidence(result);
-  return {
-    opportunity_count: result.totals.totalOpportunities,
-    immediate_sale_count: result.totals.immediateSale,
-    partial_sale_count: result.totals.partialSale,
-    sourcing_needed_count: result.totals.sourcingNeeded,
-    stock_without_demand_count: result.totals.stockWithoutDemand,
-    high_confidence_count: confidence.totals.highConfidence,
-    high_confidence_truncated: confidence.meta.confidenceTruncated
-  };
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function listClientSummaries(
@@ -145,43 +140,56 @@ export async function listClientSummaries(
   const clients = await loadClientRows(supabase, options);
   const capabilities = clientCapabilities(role);
   const clientIds = clients.map((client) => client.id);
-  const [assignments, identificationImagePaths, metricsResult] = await Promise.all([
+  const [assignments, identificationImagePaths, lifecycle] = await Promise.all([
     loadAssignments(supabase, clientIds),
     loadAuthorizedIdentificationImagePaths(supabase, clientIds, capabilities.canViewPrivateIdentification),
-    clientIds.length ? supabase.rpc("get_client_business_metrics_v1", { target_client_ids: clientIds }) : Promise.resolve({ data: [], error: null })
+    clientIds.length
+      ? loadBusinessSummaryState(supabase, { clientId: options.clientId })
+      : Promise.resolve<SummaryReadState>({
+          status: "ready",
+          currentVersion: null,
+          requiredVersion: null,
+          retryable: false,
+          retryAfterSeconds: 0
+        })
   ]);
-  if (metricsResult.error && !["PGRST202", "42883"].includes(metricsResult.error.code ?? "")) throw metricsResult.error;
+  const metricsResult = lifecycle.status === "ready" && clientIds.length
+    ? await supabase.rpc("get_client_business_metrics_v1", { target_client_ids: clientIds })
+    : { data: [], error: null };
+  const metricsLifecycle: SummaryReadState = metricsResult.error
+    ? {
+        status: isSummaryContractUnavailable(metricsResult.error) ? "contract_unavailable" : "stale",
+        currentVersion: lifecycle.currentVersion,
+        requiredVersion: lifecycle.requiredVersion,
+        retryable: !isSummaryContractUnavailable(metricsResult.error),
+        retryAfterSeconds: isSummaryContractUnavailable(metricsResult.error) ? 60 : 3
+      }
+    : lifecycle;
   const metrics = new Map(((metricsResult.data ?? []) as Array<Record<string, unknown>>).map((row) => [String(row.client_id), row]));
-  const summariesReady = !metricsResult.error && clientIds.every((id) => metrics.get(id)?.summary_ready === true);
-  if (!summariesReady) {
-    const visibleUploadIds = Array.from(new Set(assignments
-      .filter((assignment) => assignment.upload_batches && !assignment.upload_batches.archived_at && assignment.upload_batches.status !== "archived")
-      .map((assignment) => assignment.upload_batch_id)));
-    const input = visibleUploadIds.length
-      ? await loadStockNeedsInput(supabase, { uploadIds: visibleUploadIds, complete: true })
-      : { records: [], profiles: [], importJobs: [], uploadIds: [] };
-    for (const client of clients) {
-      const uploads = new Set(assignmentsForClient(assignments, client.id).map((assignment) => assignment.upload_batch_id));
-      const records = input.records.filter((record) => uploads.has(record.upload_batch_id));
-      const result = buildSalesOpportunitiesResult({
-        records,
-        profiles: input.profiles.filter((profile) => uploads.has(profile.upload_batch_id)),
-        importJobs: input.importJobs.filter((job) => uploads.has(job.upload_batch_id)),
-        filters: { limit: 200 },
-        includeAllItems: true
-      });
-      metrics.set(client.id, {
-        client_id: client.id,
-        mpn_count: new Set(records.map((record) => normalizePartNumberForMatch(record.mpn ?? record.mpn_quoted)).filter(Boolean)).size,
-        ...opportunityMetrics(result),
-        summary_ready: false
-      });
-    }
-  }
 
   return clients.map((client) => {
     const clientAssignments = assignmentsForClient(assignments, client.id);
     const metric = metrics.get(client.id);
+    const clientLifecycle: SummaryReadState = metricsLifecycle.status !== "ready"
+      ? metricsLifecycle
+      : !metric
+        ? {
+          status: "contract_unavailable",
+          currentVersion: metricsLifecycle.currentVersion,
+          requiredVersion: metricsLifecycle.requiredVersion,
+          retryable: false,
+          retryAfterSeconds: 60
+        }
+        : metric.summary_ready === true
+          ? metricsLifecycle
+          : {
+              status: "stale",
+              currentVersion: metricsLifecycle.currentVersion,
+              requiredVersion: metricsLifecycle.requiredVersion,
+              retryable: true,
+              retryAfterSeconds: 3
+            };
+    const summaryReady = clientLifecycle.status === "ready";
 
     return {
       id: client.id,
@@ -196,19 +204,47 @@ export async function listClientSummaries(
         : null,
       status: client.status,
       fileCount: clientAssignments.length,
-      mpnCount: Number(metric?.mpn_count ?? 0),
-      opportunityCount: Number(metric?.opportunity_count ?? 0),
-      immediateSaleCount: Number(metric?.immediate_sale_count ?? 0),
-      partialSaleCount: Number(metric?.partial_sale_count ?? 0),
-      sourcingNeededCount: Number(metric?.sourcing_needed_count ?? 0),
-      stockWithoutDemandCount: Number(metric?.stock_without_demand_count ?? 0),
-      highConfidenceCount: Number(metric?.high_confidence_count ?? 0),
-      highConfidenceTruncated: Boolean(metric?.high_confidence_truncated ?? false),
+      summaryStatus: clientLifecycle.status,
+      summaryCurrentVersion: clientLifecycle.currentVersion,
+      summaryRequiredVersion: clientLifecycle.requiredVersion,
+      mpnCount: summaryReady ? nullableNumber(metric?.mpn_count) : null,
+      opportunityCount: summaryReady ? nullableNumber(metric?.opportunity_count) : null,
+      immediateSaleCount: summaryReady ? nullableNumber(metric?.immediate_sale_count) : null,
+      partialSaleCount: summaryReady ? nullableNumber(metric?.partial_sale_count) : null,
+      sourcingNeededCount: summaryReady ? nullableNumber(metric?.sourcing_needed_count) : null,
+      stockWithoutDemandCount: summaryReady ? nullableNumber(metric?.stock_without_demand_count) : null,
+      highConfidenceCount: summaryReady ? nullableNumber(metric?.high_confidence_count) : null,
+      highConfidenceTruncated: summaryReady && typeof metric?.high_confidence_truncated === "boolean"
+        ? metric.high_confidence_truncated
+        : null,
       createdAt: client.created_at,
       updatedAt: client.updated_at,
       canManage: capabilities.canManage
     };
   });
+}
+
+export function aggregateClientSummaryState(clients: AccountClient[]) {
+  return aggregateSummaryStates(clients.map((client) => ({
+    status: client.summaryStatus,
+    currentVersion: client.summaryCurrentVersion,
+    requiredVersion: client.summaryRequiredVersion,
+    retryable: client.summaryStatus !== "ready" && client.summaryStatus !== "contract_unavailable",
+    retryAfterSeconds: client.summaryStatus === "failed" ? 30 : client.summaryStatus === "contract_unavailable" ? 60 : 3
+  })));
+}
+
+export async function clientExistsInScope(
+  supabase: SupabaseClient,
+  role: UserRole,
+  clientId: string
+) {
+  const clients = await loadClientRows(supabase, {
+    clientId,
+    includeArchived: role !== "employee",
+    limit: 1
+  });
+  return clients.length === 1;
 }
 
 export async function getClientDetail(

@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Language } from "@/lib/i18n";
+import {
+  parseSummaryUnavailablePayload,
+  requestBusinessSummaryRebuildFromUi,
+  type SummaryUnavailablePayload
+} from "@/lib/performance/summary-readiness";
+import { isExpectedAbort } from "@/lib/request-lifecycle";
 import type { CoverageStatus, StockNeedsItem, StockNeedsResult } from "@/lib/stock-needs/stock-needs";
 
 const COPY = {
@@ -35,7 +41,11 @@ const COPY = {
     requiredDate: "Fecha requerida",
     leadTime: "Plazo de entrega",
     loading: "Cargando stock y necesidades...",
-    empty: "No hay MPN que coincidan con los filtros actuales."
+    empty: "No hay MPN que coincidan con los filtros actuales.",
+    summaryUpdating: "El resumen se está actualizando. Los datos estarán disponibles al terminar.",
+    summaryFailed: "La reconstrucción del resumen falló.",
+    summaryContractUnavailable: "El contrato de resumen no está disponible.",
+    retry: "Reintentar"
   },
   en: {
     adminEyebrow: "Administrative operations",
@@ -65,7 +75,11 @@ const COPY = {
     requiredDate: "Required date",
     leadTime: "Lead time",
     loading: "Loading stock and needs...",
-    empty: "No MPNs match the current filters."
+    empty: "No MPNs match the current filters.",
+    summaryUpdating: "The summary is updating. Data will be available when it finishes.",
+    summaryFailed: "The summary rebuild failed.",
+    summaryContractUnavailable: "The summary contract is unavailable.",
+    retry: "Retry"
   },
   zh: {
     adminEyebrow: "管理操作",
@@ -95,32 +109,13 @@ const COPY = {
     requiredDate: "需求日期",
     leadTime: "交货期",
     loading: "正在加载库存与需求...",
-    empty: "没有符合当前筛选条件的 MPN。"
+    empty: "没有符合当前筛选条件的 MPN。",
+    summaryUpdating: "摘要正在更新，完成后即可查看数据。",
+    summaryFailed: "摘要重建失败。",
+    summaryContractUnavailable: "摘要服务暂不可用。",
+    retry: "重试"
   }
 } satisfies Record<Language, Record<string, string>>;
-
-const EMPTY_RESULT: StockNeedsResult = {
-  items: [],
-  totals: {
-    totalItems: 0,
-    inStock: 0,
-    partialStock: 0,
-    noStock: 0,
-    overstock: 0,
-    unknown: 0,
-    totalRequiredQty: 0,
-    totalStockQty: 0
-  },
-  meta: {
-    limit: 50,
-    offset: 0,
-    returnedItems: 0,
-    scannedRecords: 0,
-    missingProfileCount: 0,
-    missingProfileUploadIds: [],
-    hasMissingProfiles: false
-  }
-};
 
 function formatQty(value: number | null, locale: string, unknown: string) {
   return value === null ? unknown : new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(value));
@@ -157,9 +152,12 @@ export function StockNeedsDashboard({
 }) {
   const { language, locale } = useLanguage();
   const copy = COPY[language];
-  const [result, setResult] = useState<StockNeedsResult>(EMPTY_RESULT);
+  const [result, setResult] = useState<StockNeedsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [summaryUnavailable, setSummaryUnavailable] = useState<SummaryUnavailablePayload | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const rebuildRequestRef = useRef<AbortController | null>(null);
   const [q, setQ] = useState("");
   const [customer, setCustomer] = useState("");
   const [partner, setPartner] = useState("");
@@ -168,15 +166,20 @@ export function StockNeedsDashboard({
 
   const uploadOptions = useMemo(() => {
     const uploads = new Map<string, string>();
-    for (const item of result.items) {
+    for (const item of result?.items ?? []) {
       for (const upload of item.sourceUploads) uploads.set(upload.uploadBatchId, upload.fileName ?? upload.detectedTemplate ?? upload.uploadBatchId);
     }
     return Array.from(uploads.entries());
-  }, [result.items]);
+  }, [result]);
 
   async function loadData() {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     setLoading(true);
     setError("");
+    setSummaryUnavailable(null);
+    setResult(null);
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
     if (customer.trim()) params.set("customer", customer.trim());
@@ -188,18 +191,62 @@ export function StockNeedsDashboard({
     if (uploadBatchId) params.set("uploadBatchId", uploadBatchId);
     params.set("limit", "100");
 
-    const response = await fetch(`${endpoint}?${params.toString()}`, { cache: "no-store" });
-    if (!response.ok) {
-      setError(copy.error);
-      setLoading(false);
+    try {
+      const response = await fetch(`${endpoint}?${params.toString()}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const payload = await response.json().catch(() => null) as unknown;
+      if (!response.ok) {
+        const lifecycle = parseSummaryUnavailablePayload(payload);
+        if (lifecycle) {
+          setSummaryUnavailable(lifecycle);
+          return;
+        }
+        throw new Error("STOCK_NEEDS_LOAD_FAILED");
+      }
+      setResult(payload as StockNeedsResult);
+    } catch (loadError) {
+      if (!isExpectedAbort(loadError, controller.signal)) setError(copy.error);
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setLoading(false);
+      }
+    }
+  }
+
+  async function retrySummary() {
+    if (!summaryUnavailable || loading || rebuildRequestRef.current) return;
+    if (summaryUnavailable.summaryStatus !== "failed") {
+      await loadData();
       return;
     }
-    setResult(await response.json() as StockNeedsResult);
-    setLoading(false);
+    const controller = new AbortController();
+    rebuildRequestRef.current = controller;
+    setLoading(true);
+    setError("");
+    try {
+      await requestBusinessSummaryRebuildFromUi({
+        uploadBatchId: uploadBatchId || null
+      }, controller.signal);
+      if (!controller.signal.aborted) await loadData();
+    } catch (rebuildError) {
+      if (!isExpectedAbort(rebuildError, controller.signal)) {
+        setError(copy.error);
+        setLoading(false);
+      }
+    } finally {
+      if (rebuildRequestRef.current === controller) rebuildRequestRef.current = null;
+    }
   }
 
   useEffect(() => {
     void loadData();
+    return () => {
+      requestRef.current?.abort();
+      rebuildRequestRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint, language]);
 
@@ -213,13 +260,13 @@ export function StockNeedsDashboard({
   ];
 
   const summaryCards = [
-    [copy.total, result.totals.totalItems],
-    [copy.inStock, result.totals.inStock],
-    [copy.partial, result.totals.partialStock],
-    [copy.noStock, result.totals.noStock],
-    [copy.unknown, result.totals.unknown],
-    [copy.requiredTotal, formatQty(result.totals.totalRequiredQty, locale, copy.unknown)],
-    [copy.stockTotal, formatQty(result.totals.totalStockQty, locale, copy.unknown)]
+    [copy.total, result?.totals.totalItems ?? null],
+    [copy.inStock, result?.totals.inStock ?? null],
+    [copy.partial, result?.totals.partialStock ?? null],
+    [copy.noStock, result?.totals.noStock ?? null],
+    [copy.unknown, result?.totals.unknown ?? null],
+    [copy.requiredTotal, result ? formatQty(result.totals.totalRequiredQty, locale, copy.unknown) : null],
+    [copy.stockTotal, result ? formatQty(result.totals.totalStockQty, locale, copy.unknown) : null]
   ];
 
   return (
@@ -234,7 +281,9 @@ export function StockNeedsDashboard({
           {summaryCards.map(([label, value]) => (
             <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
-              <p className="mt-2 text-xl font-semibold text-slate-950">{value}</p>
+              <p className="mt-2 text-xl font-semibold text-slate-950">
+                {loading ? <span className="inline-block h-6 w-12 animate-pulse rounded bg-slate-200" aria-label={copy.loading} /> : value ?? "—"}
+              </p>
             </div>
           ))}
         </div>
@@ -280,7 +329,24 @@ export function StockNeedsDashboard({
           </button>
         </form>
 
-        {error ? <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
+        {summaryUnavailable ? (
+          <div className={`rounded-md border p-4 text-sm ${summaryUnavailable.summaryStatus === "failed" || summaryUnavailable.summaryStatus === "contract_unavailable" ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800"}`} role="status">
+            <p>{summaryUnavailable.summaryStatus === "failed"
+              ? copy.summaryFailed
+              : summaryUnavailable.summaryStatus === "contract_unavailable"
+                ? copy.summaryContractUnavailable
+                : copy.summaryUpdating}</p>
+            {summaryUnavailable.retryable ? (
+              <button type="button" className="mt-3 rounded-md border border-current px-3 py-2 font-semibold" onClick={() => void retrySummary()} disabled={loading}>{copy.retry}</button>
+            ) : null}
+          </div>
+        ) : null}
+        {error ? (
+          <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            <p>{error}</p>
+            <button type="button" className="mt-3 rounded-md border border-current px-3 py-2 font-semibold" onClick={() => void loadData()} disabled={loading}>{copy.retry}</button>
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
@@ -302,7 +368,7 @@ export function StockNeedsDashboard({
               <tbody className="divide-y divide-slate-100">
                 {loading ? (
                   <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">{copy.loading}</td></tr>
-                ) : result.items.length ? result.items.map((item) => (
+                ) : result?.items.length ? result.items.map((item) => (
                   <tr key={item.mpn} className="align-top hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono font-semibold text-slate-950">{item.mpn}</td>
                     <td className="px-4 py-3 text-slate-700">{item.customerName ?? copy.unknown}</td>
@@ -319,9 +385,9 @@ export function StockNeedsDashboard({
                       <span className="block truncate">{sourceLabel(item, copy.unknown)}</span>
                     </td>
                   </tr>
-                )) : (
+                )) : result ? (
                   <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">{copy.empty}</td></tr>
-                )}
+                ) : null}
               </tbody>
             </table>
           </div>
