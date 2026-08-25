@@ -133,6 +133,33 @@ describe("Opportunity Finder export workbook", () => {
     expect(trace.getColumn(traceCandidateColumn).values).toContain(resultCandidateId);
   });
 
+  it("marks bounded provenance previews explicitly in workbook traces", () => {
+    const workbook = buildOpportunityExportWorkbook([
+      result("bounded-trace", "full_sale", {
+        supplySourceRows: 5_000,
+        supplyTraces: [{
+          fileId: "synthetic-supply",
+          fileName: "synthetic-supply.xlsx",
+          sheetName: "Synthetic",
+          sourceRow: 2,
+          hidden: false,
+          headerRow: 1,
+          columns: {},
+          originalIndex: 0
+        }],
+        supplyTracePreviewTruncated: true
+      })
+    ], "es");
+    const trace = workbook.getWorksheet("Trazabilidad y reglas")!;
+    const types = trace.getColumn(headerIndex(trace, "Tipo de registro")).values;
+    const details = trace.getColumn(headerIndex(trace, "Detalle o regla")).values;
+
+    expect(types).toContain("Vista previa acotada");
+    expect(details).toContain(
+      "1 de 5000 fila(s) mostradas en la vista previa; no se descartaron resultados ni cantidades."
+    );
+  });
+
   it("classifies stock, excess, supplier offers, reviews and historical signals into their semantic sheets", () => {
     const results = [
       result("full", "full_sale"),

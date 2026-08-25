@@ -13,7 +13,7 @@ function uuid(value: string | null | undefined) {
 
 async function configureRoute(
   resultRows: Record<string, unknown>[] = [],
-  options: { rateAllowed?: boolean } = {}
+  options: { rateAllowed?: boolean; hydratedResultRows?: Record<string, unknown>[] } = {}
 ) {
   const resultQuery: Record<string, ReturnType<typeof vi.fn>> = {};
   resultQuery.eq = vi.fn(() => resultQuery);
@@ -40,6 +40,12 @@ async function configureRoute(
     summary_json: { fullSales: 99 }
   }));
   const logAuditEvent = vi.fn(async () => undefined);
+  const hydrateUserScopedOpportunityAllocations = vi.fn(async (
+    _supabase: unknown,
+    _jobId: string,
+    rows: Record<string, unknown>[]
+  ) => ({ rows: options.hydratedResultRows ?? rows, error: null }));
+  const opportunityCsvResultLine = vi.fn((result: { id?: string }) => String(result.id ?? ""));
 
   vi.doMock("@/lib/auth/context", () => ({
     getAuthContext: vi.fn(async () => ({
@@ -51,6 +57,7 @@ async function configureRoute(
   }));
   vi.doMock("@/lib/opportunity-finder/api", () => ({
     cleanUuid: vi.fn(uuid),
+    hydrateUserScopedOpportunityAllocations,
     loadOwnedOpportunityJob,
     OPPORTUNITY_RESULT_SELECT: "id,job_id,created_at",
     resultDatabaseRow: vi.fn((row) => row)
@@ -93,7 +100,7 @@ async function configureRoute(
       abort() {}
     },
     opportunityCsvHeaderLine: vi.fn(() => "id"),
-    opportunityCsvResultLine: vi.fn((result: { id?: string }) => String(result.id ?? "")),
+    opportunityCsvResultLine,
     buildOpportunityCsv: vi.fn(),
     buildOpportunityExportWorkbook: vi.fn(),
     classifyOpportunityForExport: vi.fn(),
@@ -104,7 +111,15 @@ async function configureRoute(
   }));
 
   const route = await import("../route");
-  return { route, resultQuery, supabase, loadOwnedOpportunityJob, logAuditEvent };
+  return {
+    route,
+    resultQuery,
+    supabase,
+    loadOwnedOpportunityJob,
+    logAuditEvent,
+    hydrateUserScopedOpportunityAllocations,
+    opportunityCsvResultLine
+  };
 }
 
 function exportableResult(id = RESULT_ID) {
@@ -187,6 +202,33 @@ describe("Opportunity Finder individual export validation", () => {
     await expect(response.json()).resolves.toEqual({ errorCode: "EXPORT_RATE_LIMITED" });
     expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
     expect(loadOwnedOpportunityJob).not.toHaveBeenCalled();
+  });
+
+  it("hydrates capped allocation previews before streaming an owned export", async () => {
+    const preview = Array.from({ length: 32 }, (_, index) => ({ lotKey: `preview-${index}` }));
+    const complete = Array.from({ length: 40 }, (_, index) => ({ lotKey: `complete-${index}` }));
+    const result = { ...exportableResult(), allocations_trace: preview };
+    const hydratedResult = { ...result, allocations_trace: complete };
+    const configured = await configureRoute([result], { hydratedResultRows: [hydratedResult] });
+    const response = await configured.route.GET(
+      new Request(
+        `https://app.test/api/opportunity-finder/jobs/${JOB_ID}/export?format=csv&resultId=${RESULT_ID}`
+      ),
+      { params: Promise.resolve({ id: JOB_ID }) }
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(configured.hydrateUserScopedOpportunityAllocations).toHaveBeenCalledWith(
+      configured.supabase,
+      JOB_ID,
+      [result]
+    );
+    expect(configured.opportunityCsvResultLine).toHaveBeenCalledWith(
+      expect.objectContaining({ allocations: complete }),
+      "es",
+      { includePricing: false, includeFinancials: false }
+    );
   });
 
   it("streams CSV from paginated result queries and audits only non-sensitive metadata", async () => {

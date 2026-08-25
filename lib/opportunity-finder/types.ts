@@ -375,6 +375,12 @@ export interface OpportunityResult {
   demandTraces?: OpportunitySourceTrace[];
   supplyTraces?: OpportunitySourceTrace[];
   allocations?: OpportunityAllocationTrace[];
+  /** True when the API intentionally returns only a bounded inline preview. */
+  demandTracePreviewTruncated?: boolean;
+  /** True when full candidate provenance remains in normalized job data, not inline. */
+  supplyTracePreviewTruncated?: boolean;
+  /** True only for legacy rows whose normalized allocations could not be rehydrated. */
+  allocationTracePreviewTruncated?: boolean;
   reasonCode: OpportunityReasonCode;
   actionCode: OpportunityActionCode;
   warnings: OpportunityWarningCode[];

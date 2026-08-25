@@ -668,11 +668,14 @@ declare
   bulk_event_id uuid := gen_random_uuid();
   bulk_option_id uuid := gen_random_uuid();
   bulk_result_id uuid := gen_random_uuid();
+  bulk_candidate_lot_id uuid;
   bulk_commit_key text := 'runtime-bulk-output-10001-v1';
   allocation_batch jsonb;
   chunk_start integer;
   stale_append_rejected boolean := false;
+  stale_commit_rejected boolean := false;
   incomplete_manifest_rejected boolean := false;
+  late_commit_rejected boolean := false;
   committed_job public.opportunity_finder_jobs%rowtype;
   bulk_started_at timestamptz := clock_timestamp();
   bulk_commit_started_at timestamptz;
@@ -867,6 +870,13 @@ begin
     )
   from generate_series(1, 10001) series(number);
 
+  select lot.id
+  into bulk_candidate_lot_id
+  from public.opportunity_finder_supply_lots lot
+  where lot.job_id = bulk_job_id
+  order by lot.deterministic_order
+  limit 1;
+
   perform public.begin_opportunity_finder_output(
     bulk_job_id,
     'bulk-runtime-contract',
@@ -932,6 +942,71 @@ begin
     ))
   );
 
+  perform public.append_opportunity_finder_output(
+    bulk_job_id,
+    'bulk-runtime-contract',
+    bulk_lock_token,
+    7,
+    bulk_commit_key,
+    'possible_matches',
+    0,
+    jsonb_build_array(jsonb_build_object(
+      'candidate_key', 'bulk-possible-match-10001',
+      'demand_option_id', bulk_option_id,
+      'supply_lot_id', bulk_candidate_lot_id,
+      'demand_display_mpn', 'BULK-0001',
+      'supply_display_mpn', 'BULK0001',
+      'demand_normalized_mpn', 'BULK-0001',
+      'supply_normalized_mpn', 'BULK0001',
+      'review_key', 'BULK0001',
+      'demand_file_id', bulk_file_a_id,
+      'supply_file_id', bulk_file_b_id,
+      'reason_code', 'symbol_variant',
+      'match_tier', 'search_mpn_mfg',
+      'confidence', 'review',
+      'review_status', 'pending'
+    ))
+  );
+
+  perform public.append_opportunity_finder_output(
+    bulk_job_id,
+    'bulk-runtime-contract',
+    bulk_lock_token,
+    7,
+    bulk_commit_key,
+    'commercials',
+    0,
+    jsonb_build_array(jsonb_build_object(
+      'result_id', bulk_result_id,
+      'target_price', 12,
+      'offer_price', 10,
+      'target_gap_percent', -16.6667,
+      'currency', 'USD',
+      'revenue_potential', 100010,
+      'pricing_quality', 'confirmed'
+    ))
+  );
+
+  perform public.append_opportunity_finder_output(
+    bulk_job_id,
+    'bulk-runtime-contract',
+    bulk_lock_token,
+    7,
+    bulk_commit_key,
+    'financials',
+    0,
+    jsonb_build_array(jsonb_build_object(
+      'result_id', bulk_result_id,
+      'unit_cost', 8,
+      'cost_currency', 'USD',
+      'gross_profit', 20002,
+      'gross_margin_percent', 20,
+      'cost_quality', 'valid',
+      'cost_source_trace', jsonb_build_object('source', 'synthetic-runtime'),
+      'computed_at', now()
+    ))
+  );
+
   for chunk_start in 1..10001 by 500 loop
     select jsonb_agg(
       jsonb_build_object(
@@ -987,6 +1062,35 @@ begin
     raise exception 'stale processing fence appended staged output';
   end if;
 
+  begin
+    perform public.commit_staged_opportunity_finder_output(
+      bulk_job_id,
+      'bulk-runtime-contract',
+      bulk_lock_token,
+      8,
+      bulk_commit_key,
+      jsonb_build_object(
+        'results', 1,
+        'possible_matches', 1,
+        'rejected_rows', 1,
+        'allocations', 10001,
+        'commercials', 1,
+        'financials', 1
+      ),
+      jsonb_build_object('exactMatches', 1),
+      0,
+      0,
+      0
+    );
+  exception
+    when sqlstate '40001' then
+      stale_commit_rejected := true;
+  end;
+
+  if not stale_commit_rejected then
+    raise exception 'stale processing fence committed staged output';
+  end if;
+
   if exists (
     select 1 from public.opportunity_finder_results result where result.job_id = bulk_job_id
   ) or exists (
@@ -1004,11 +1108,11 @@ begin
       bulk_commit_key,
       jsonb_build_object(
         'results', 1,
-        'possible_matches', 0,
+        'possible_matches', 1,
         'rejected_rows', 1,
         'allocations', 10002,
-        'commercials', 0,
-        'financials', 0
+        'commercials', 1,
+        'financials', 1
       ),
       jsonb_build_object('exactMatches', 1, 'rejectedRows', 0),
       0,
@@ -1030,6 +1134,110 @@ begin
     raise exception 'failed manifest validation published partial output';
   end if;
 
+  -- Force a foreign-key failure after candidates, results and commercials
+  -- have been inserted. The subtransaction must roll all publication changes
+  -- back while retaining the staged run for a corrected retry.
+  update public.opportunity_finder_output_items staged_item
+  set payload = jsonb_set(
+    staged_item.payload,
+    '{result_id}',
+    to_jsonb(gen_random_uuid()::text)
+  )
+  where staged_item.run_id = (
+      select run.id
+      from public.opportunity_finder_output_runs run
+      where run.job_id = bulk_job_id
+    )
+    and staged_item.output_kind = 'financials'
+    and staged_item.item_index = 0;
+
+  begin
+    perform public.commit_staged_opportunity_finder_output(
+      bulk_job_id,
+      'bulk-runtime-contract',
+      bulk_lock_token,
+      7,
+      bulk_commit_key,
+      jsonb_build_object(
+        'results', 1,
+        'possible_matches', 1,
+        'rejected_rows', 1,
+        'allocations', 10001,
+        'commercials', 1,
+        'financials', 1
+      ),
+      jsonb_build_object('exactMatches', 1),
+      0,
+      0,
+      0
+    );
+  exception
+    when foreign_key_violation then
+      late_commit_rejected := true;
+  end;
+
+  if not late_commit_rejected then
+    raise exception 'late staged foreign-key failure was accepted';
+  end if;
+
+  if exists (
+    select 1 from public.opportunity_finder_results result where result.job_id = bulk_job_id
+  ) or exists (
+    select 1 from public.opportunity_finder_possible_matches candidate where candidate.job_id = bulk_job_id
+  ) or exists (
+    select 1 from public.opportunity_finder_result_commercials commercial where commercial.job_id = bulk_job_id
+  ) or exists (
+    select 1 from public.opportunity_finder_result_financials financial where financial.job_id = bulk_job_id
+  ) or exists (
+    select 1 from public.opportunity_finder_rejected_rows rejected where rejected.job_id = bulk_job_id
+  ) or exists (
+    select 1 from public.opportunity_finder_allocations allocation where allocation.job_id = bulk_job_id
+  ) then
+    raise exception 'late staged failure published partial business output';
+  end if;
+
+  if exists (
+    select 1
+    from public.opportunity_finder_supply_lots lot
+    where lot.job_id = bulk_job_id
+      and (lot.allocated_qty <> 0 or lot.remaining_qty <> lot.available_qty)
+  ) or exists (
+    select 1
+    from public.opportunity_finder_demand_events event_row
+    where event_row.id = bulk_event_id
+      and (event_row.allocated_qty <> 0 or event_row.remaining_qty <> event_row.required_qty)
+  ) then
+    raise exception 'late staged failure did not roll quantity counters back';
+  end if;
+
+  if not exists (
+    select 1
+    from public.opportunity_finder_output_runs run
+    where run.job_id = bulk_job_id
+  ) or not exists (
+    select 1
+    from public.opportunity_finder_output_items staged_item
+    where staged_item.job_id = bulk_job_id
+      and staged_item.output_kind = 'financials'
+      and staged_item.item_index = 0
+  ) then
+    raise exception 'late staged failure removed retryable staging rows';
+  end if;
+
+  update public.opportunity_finder_output_items staged_item
+  set payload = jsonb_set(
+    staged_item.payload,
+    '{result_id}',
+    to_jsonb(bulk_result_id::text)
+  )
+  where staged_item.run_id = (
+      select run.id
+      from public.opportunity_finder_output_runs run
+      where run.job_id = bulk_job_id
+    )
+    and staged_item.output_kind = 'financials'
+    and staged_item.item_index = 0;
+
   bulk_commit_started_at := clock_timestamp();
 
   select committed.*
@@ -1042,11 +1250,11 @@ begin
     bulk_commit_key,
     jsonb_build_object(
       'results', 1,
-      'possible_matches', 0,
+      'possible_matches', 1,
       'rejected_rows', 1,
       'allocations', 10001,
-      'commercials', 0,
-      'financials', 0
+      'commercials', 1,
+      'financials', 1
     ),
     jsonb_build_object('exactMatches', 1, 'rejectedRows', 0),
     0,
@@ -1088,6 +1296,12 @@ begin
     raise exception 'bulk staged rejected row was not published';
   end if;
 
+  if (select count(*) from public.opportunity_finder_possible_matches candidate where candidate.job_id = bulk_job_id) <> 1
+     or (select count(*) from public.opportunity_finder_result_commercials commercial where commercial.job_id = bulk_job_id) <> 1
+     or (select count(*) from public.opportunity_finder_result_financials financial where financial.job_id = bulk_job_id) <> 1 then
+    raise exception 'bulk staged six-kind output was not published completely';
+  end if;
+
   if exists (
     select 1 from public.opportunity_finder_output_runs run where run.job_id = bulk_job_id
   ) or exists (
@@ -1105,11 +1319,11 @@ begin
     bulk_commit_key,
     jsonb_build_object(
       'results', 1,
-      'possible_matches', 0,
+      'possible_matches', 1,
       'rejected_rows', 1,
       'allocations', 10001,
-      'commercials', 0,
-      'financials', 0
+      'commercials', 1,
+      'financials', 1
     ),
     jsonb_build_object('exactMatches', 1),
     0,

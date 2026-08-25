@@ -6,7 +6,10 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { evaluateOpportunityCompatibility } from "@/lib/opportunity-finder/compatibility";
-import { matchOpportunityRows } from "@/lib/opportunity-finder/matcher";
+import {
+  matchOpportunityRows,
+  matchOpportunityRowsAsync
+} from "@/lib/opportunity-finder/matcher";
 import { safeContextText } from "@/lib/opportunity-finder/normalization";
 import { manufacturerIdentity, mpnIdentity } from "@/lib/opportunity-finder/normalization";
 import { OPPORTUNITY_FINDER_PIPELINE_VERSION } from "@/lib/opportunity-finder/pipeline";
@@ -29,6 +32,8 @@ const INSERT_CHUNK_SIZE = 500;
 const QUERY_PAGE_SIZE = 1000;
 const OUTPUT_STAGE_CHUNK_SIZE = 500;
 const DEFAULT_MAX_DATABASE_PAYLOAD_BYTES = 768 * 1024;
+const MAX_INLINE_DECISION_TRACES = 32;
+const COMPACT_RESULT_IDENTITY_VERSION = "opportunity-result-compact-v1";
 const HISTORY_ROLES = new Set<OpportunitySelectedRole>([
   "received_history",
   "purchase_history",
@@ -53,6 +58,9 @@ export function opportunityPayloadChunks<T>(
   let chunkBytes = 2;
   for (const item of items) {
     const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + (chunk.length ? 1 : 0);
+    if (itemBytes + 2 > maxBytes) {
+      throw new Error("OPPORTUNITY_OUTPUT_ITEM_EXCEEDS_DATABASE_PAYLOAD_LIMIT");
+    }
     if (chunk.length && (chunk.length >= maxItems || chunkBytes + itemBytes > maxBytes)) {
       chunks.push(chunk);
       chunk = [];
@@ -63,6 +71,84 @@ export function opportunityPayloadChunks<T>(
   }
   if (chunk.length) chunks.push(chunk);
   return chunks;
+}
+
+function traceIdentity(trace: {
+  fileId: string;
+  sheetName: string;
+  sourceRow: number;
+}) {
+  return `${trace.fileId}\u001f${trace.sheetName}\u001f${trace.sourceRow}`;
+}
+
+const traceArrayDigestCache = new WeakMap<object, string>();
+
+function traceArrayDigest(traces: readonly {
+  fileId: string;
+  sheetName: string;
+  sourceRow: number;
+}[]) {
+  const cached = traceArrayDigestCache.get(traces);
+  if (cached) return cached;
+  const digest = createHash("sha256");
+  for (const trace of traces) {
+    digest.update(JSON.stringify([
+      trace.fileId,
+      trace.sheetName,
+      trace.sourceRow
+    ]), "utf8");
+  }
+  const value = digest.digest("hex");
+  traceArrayDigestCache.set(traces, value);
+  return value;
+}
+
+function allocationArrayDigest(
+  allocations: NonNullable<ReturnType<typeof matchOpportunityRows>["results"][number]["allocations"]>
+) {
+  const digest = createHash("sha256");
+  for (const allocation of allocations) {
+    digest.update(JSON.stringify([
+      allocation.lotKey,
+      allocation.demandPartOptionId,
+      allocation.supplyLotId,
+      allocation.allocatedQty,
+      allocation.reservedQty,
+      allocation.availableBefore,
+      allocation.remainingQty,
+      traceIdentity(allocation.supply)
+    ]), "utf8");
+  }
+  return digest.digest("hex");
+}
+
+export function boundedResultDecisionEvidence(
+  result: ReturnType<typeof matchOpportunityRows>["results"][number]
+) {
+  const demandTraces = (result.demandTraces ?? []).slice(0, MAX_INLINE_DECISION_TRACES);
+  const supplyTraces = [] as NonNullable<typeof result.supplyTraces>;
+  const seenSupply = new Set<string>();
+  const appendSupplyTrace = (trace: NonNullable<typeof result.supplyTraces>[number]) => {
+    const identity = traceIdentity(trace);
+    if (seenSupply.has(identity)) return;
+    seenSupply.add(identity);
+    supplyTraces.push(trace);
+  };
+  for (const allocation of result.allocations ?? []) {
+    appendSupplyTrace(allocation.supply);
+    if (supplyTraces.length >= MAX_INLINE_DECISION_TRACES) break;
+  }
+  if (supplyTraces.length < MAX_INLINE_DECISION_TRACES) {
+    for (const trace of result.supplyTraces ?? []) {
+      appendSupplyTrace(trace);
+      if (supplyTraces.length >= MAX_INLINE_DECISION_TRACES) break;
+    }
+  }
+  return {
+    demandTraces,
+    supplyTraces,
+    allocations: (result.allocations ?? []).slice(0, MAX_INLINE_DECISION_TRACES)
+  };
 }
 const CANONICAL_ROW_SELECT = [
   "id", "job_id", "file_id", "side", "sheet_name", "source_row", "original_index",
@@ -113,7 +199,7 @@ type OpportunityWorkerFence = {
   processingFence: number;
 };
 
-type OpportunityOutputStageKind =
+export type OpportunityOutputStageKind =
   | "results"
   | "possible_matches"
   | "rejected_rows"
@@ -121,7 +207,7 @@ type OpportunityOutputStageKind =
   | "commercials"
   | "financials";
 
-type OpportunityOutputStage = OpportunityWorkerFence & {
+export type OpportunityOutputStage = OpportunityWorkerFence & {
   jobId: string;
   commitKey: string;
   counts: Record<OpportunityOutputStageKind, number>;
@@ -205,6 +291,9 @@ async function updateJob(
     query = query
       .eq("lock_token", fence.lockToken)
       .eq("processing_fence", fence.processingFence);
+  }
+  if (fence && values.status !== "cancelled") {
+    query = query.eq("cancel_requested", false);
   }
   const { error, count } = await query;
   if (error) throw error;
@@ -327,6 +416,7 @@ async function profileFiles(
       .eq("job_id", job.id);
     if (profilingStatusError) throw profilingStatusError;
     const profile = await profileOpportunityWorkbook(localFiles.get(file.id)!, file.original_file_name);
+    await requireNotCancelled(supabase, job.id);
     await updateHeartbeat(supabase, job.id, fence);
     processed += 1;
     const { error } = await supabase
@@ -359,6 +449,7 @@ async function profileFiles(
       ...(file.side === "A" ? { total_rows_a: profile.rowCount } : { total_rows_b: profile.rowCount })
     }, fence);
   }
+  await requireNotCancelled(supabase, job.id);
   await updateJob(supabase, job.id, {
     status: "awaiting_roles",
     current_stage: "confirming_roles",
@@ -1058,9 +1149,13 @@ async function matchCanonicalRowsIncrementally(input: {
   const supplyByMpn = new Map<string, CanonicalOpportunityRow[]>();
   const supplyByReviewKey = new Map<string, CanonicalOpportunityRow[]>();
   for (const row of supplyRows) {
-    supplyByMpn.set(row.normalizedMpn, [...(supplyByMpn.get(row.normalizedMpn) ?? []), row]);
+    const exactBucket = supplyByMpn.get(row.normalizedMpn);
+    if (exactBucket) exactBucket.push(row);
+    else supplyByMpn.set(row.normalizedMpn, [row]);
     if (row.reviewKey) {
-      supplyByReviewKey.set(row.reviewKey, [...(supplyByReviewKey.get(row.reviewKey) ?? []), row]);
+      const reviewBucket = supplyByReviewKey.get(row.reviewKey);
+      if (reviewBucket) reviewBucket.push(row);
+      else supplyByReviewKey.set(row.reviewKey, [row]);
     }
   }
   supplyRows.length = 0;
@@ -1079,7 +1174,23 @@ async function matchCanonicalRowsIncrementally(input: {
   let offset = 0;
   let currentMpn = "";
   let currentDemandRows: CanonicalOpportunityRow[] = [];
+  let completedDemandEvents = 0;
+  let reportedProgress = 78;
   const fileNames = new Map(input.files.map((file) => [file.id, file.original_file_name]));
+
+  async function reportMatchingProgress(completedEvents: number) {
+    if (identities.demandEventCount <= 0) return;
+    const progress = Math.min(
+      88,
+      78 + Math.floor((completedEvents / identities.demandEventCount) * 10)
+    );
+    if (progress <= reportedProgress) return;
+    reportedProgress = progress;
+    await updateJob(input.supabase, input.jobId, {
+      current_stage: "finding_matches",
+      progress_percent: progress
+    }, fence);
+  }
 
   async function processDemandMpn(rows: CanonicalOpportunityRow[]) {
     if (!rows.length) return;
@@ -1090,13 +1201,24 @@ async function matchCanonicalRowsIncrementally(input: {
     const reviewSupply = rows[0].reviewKey
       ? (supplyByReviewKey.get(rows[0].reviewKey) ?? []).filter((row) => row.normalizedMpn !== normalizedMpn)
       : [];
-    const output = matchOpportunityRows({
-      jobId: input.jobId,
-      rows: [...rows, ...exactSupply, ...reviewSupply],
-      roleA: input.roleA,
-      roleB: input.roleB,
-      clientContext: input.customerContext
-    });
+    const output = await matchOpportunityRowsAsync(
+      {
+        jobId: input.jobId,
+        rows: [...rows, ...exactSupply, ...reviewSupply],
+        roleA: input.roleA,
+        roleB: input.roleB,
+        clientContext: input.customerContext
+      },
+      {
+        eventsPerYield: 100,
+        assertNotCancelled: () => requireNotCancelled(input.supabase, input.jobId),
+        onProgress: ({ completedEvents }) => reportMatchingProgress(
+          completedDemandEvents + completedEvents
+        )
+      }
+    );
+    completedDemandEvents += output.summary.demandEvents ?? 0;
+    await reportMatchingProgress(completedDemandEvents);
     output.results = output.results.filter((result) =>
       result.opportunityType !== "supply_without_demand" ||
       result.normalizedMpn === normalizedMpn
@@ -1131,6 +1253,7 @@ async function matchCanonicalRowsIncrementally(input: {
       .range(offset, offset + QUERY_PAGE_SIZE - 1);
     if (error) throw error;
     const page = (data ?? []) as unknown as Record<string, unknown>[];
+    await requireNotCancelled(input.supabase, input.jobId);
     for (const databaseRow of page) {
       const row = attachMaterializedEntityIds(
         demandRowWithFallbackContext(databaseCanonicalRow({
@@ -1214,21 +1337,46 @@ async function matchCanonicalRowsByEvent(input: {
     identities
   ));
   const supplyRows = rawSupplyRows.map((row) => attachMaterializedEntityIds(row, identities));
-  const output = matchOpportunityRows({
-    jobId: input.jobId,
-    rows: [...demandRows, ...supplyRows],
-    roleA: input.roleA,
-    roleB: input.roleB,
-    clientContext: input.customerContext,
-    missingMpnRows: input.missingMpnRows,
-    invalidQuantityRows: input.invalidQuantityRows,
-    rejectedRows: input.rejectedRows
-  });
-  await stageMatchOutput(input.supabase, input.outputStage, output);
+  let reportedProgress = 78;
+  let resultCount = 0;
+  let warningCount = 0;
+  const output = await matchOpportunityRowsAsync(
+    {
+      jobId: input.jobId,
+      rows: [...demandRows, ...supplyRows],
+      roleA: input.roleA,
+      roleB: input.roleB,
+      clientContext: input.customerContext,
+      missingMpnRows: input.missingMpnRows,
+      invalidQuantityRows: input.invalidQuantityRows,
+      rejectedRows: input.rejectedRows
+    },
+    {
+      eventsPerYield: 100,
+      collectOutput: false,
+      outputChunkSize: OUTPUT_STAGE_CHUNK_SIZE,
+      assertNotCancelled: () => requireNotCancelled(input.supabase, input.jobId),
+      onOutputChunk: async (chunk) => {
+        await stageMatchOutput(input.supabase, input.outputStage, chunk);
+        resultCount += chunk.results.length;
+        for (const result of chunk.results) warningCount += result.warnings.length;
+      },
+      onProgress: async ({ completedEvents, totalEvents }) => {
+        if (totalEvents <= 0) return;
+        const progress = Math.min(88, 78 + Math.floor((completedEvents / totalEvents) * 10));
+        if (progress <= reportedProgress) return;
+        reportedProgress = progress;
+        await updateJob(input.supabase, input.jobId, {
+          current_stage: "finding_matches",
+          progress_percent: progress
+        }, fence);
+      }
+    }
+  );
   return {
     summary: output.summary,
-    resultCount: output.results.length,
-    warningCount: output.results.reduce((sum, result) => sum + result.warnings.length, 0)
+    resultCount,
+    warningCount
   };
 }
 
@@ -1247,9 +1395,68 @@ function candidateUuid(candidateKey: string) {
   return deterministicUuidFromHex(candidateKey.toLowerCase());
 }
 
-function resultIdentity(result: ReturnType<typeof matchOpportunityRows>["results"][number]) {
+function legacyResultIdentityDigest(
+  result: ReturnType<typeof matchOpportunityRows>["results"][number]
+) {
+  const digest = createHash("sha256");
+  let propertyCount = 0;
+  digest.update("{", "utf8");
+
+  const writeProperty = (key: string, value: unknown) => {
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) return;
+    digest.update(`${propertyCount ? "," : ""}${JSON.stringify(key)}:${encoded}`, "utf8");
+    propertyCount += 1;
+  };
+  const writeTraceArray = (
+    key: string,
+    traces: readonly { fileId: string; sheetName: string; sourceRow: number }[]
+  ) => {
+    digest.update(`${propertyCount ? "," : ""}${JSON.stringify(key)}:[`, "utf8");
+    for (const [index, trace] of traces.entries()) {
+      if (index) digest.update(",", "utf8");
+      digest.update(JSON.stringify([trace.fileId, trace.sheetName, trace.sourceRow]), "utf8");
+    }
+    digest.update("]", "utf8");
+    propertyCount += 1;
+  };
+
+  writeProperty("jobId", result.jobId);
+  writeProperty("opportunityType", result.opportunityType);
+  writeProperty("demandEventKey", result.demandEventKey ?? null);
+  writeProperty("normalizedMpn", result.normalizedMpn);
+  writeProperty("customerContext", result.customerContext);
+  writeProperty("supplierContext", result.supplierContext);
+  writeProperty("requiredDate", result.requiredDate);
+  if (result.candidateId) writeProperty("candidateId", result.candidateId);
+  writeTraceArray("demandTraces", result.demandTraces ?? []);
+  writeTraceArray("supplyTraces", result.supplyTraces ?? []);
+  digest.update("}", "utf8");
+  return digest.digest("hex");
+}
+
+function resultIdentity(
+  result: ReturnType<typeof matchOpportunityRows>["results"][number],
+  evidence: ReturnType<typeof boundedResultDecisionEvidence>
+) {
+  const demandTraces = result.demandTraces ?? [];
+  const supplyTraces = result.supplyTraces ?? [];
+  const allocations = result.allocations ?? [];
+  const evidenceIsTruncated = result.demandTracePreviewTruncated === true ||
+    result.supplyTracePreviewTruncated === true ||
+    result.allocationTracePreviewTruncated === true ||
+    result.demandSourceRows > evidence.demandTraces.length ||
+    result.supplySourceRows > evidence.supplyTraces.length ||
+    demandTraces.length > evidence.demandTraces.length ||
+    supplyTraces.length > evidence.supplyTraces.length ||
+    allocations.length > evidence.allocations.length;
+  if (!evidenceIsTruncated) {
+    const digest = legacyResultIdentityDigest(result);
+    return { resultKey: digest, id: deterministicUuidFromHex(digest) };
+  }
   const digest = createHash("sha256")
     .update(JSON.stringify({
+      identityVersion: COMPACT_RESULT_IDENTITY_VERSION,
       jobId: result.jobId,
       opportunityType: result.opportunityType,
       demandEventKey: result.demandEventKey ?? null,
@@ -1258,23 +1465,23 @@ function resultIdentity(result: ReturnType<typeof matchOpportunityRows>["results
       supplierContext: result.supplierContext,
       requiredDate: result.requiredDate,
       ...(result.candidateId ? { candidateId: result.candidateId } : {}),
-      demandTraces: (result.demandTraces ?? []).map((trace) => [
-        trace.fileId,
-        trace.sheetName,
-        trace.sourceRow
-      ]),
-      supplyTraces: (result.supplyTraces ?? []).map((trace) => [
-        trace.fileId,
-        trace.sheetName,
-        trace.sourceRow
-      ])
+      demandTraceCount: demandTraces.length,
+      demandTraceDigest: traceArrayDigest(demandTraces),
+      demandSourceRows: result.demandSourceRows,
+      supplyTraceCount: supplyTraces.length,
+      supplyTraceDigest: traceArrayDigest(supplyTraces),
+      supplySourceRows: result.supplySourceRows,
+      supplyTracePreviewTruncated: result.supplyTracePreviewTruncated === true,
+      allocationCount: allocations.length,
+      allocationDigest: allocationArrayDigest(allocations)
     }), "utf8")
     .digest("hex");
   return { resultKey: digest, id: deterministicUuidFromHex(digest) };
 }
 
 export function resultInsert(result: ReturnType<typeof matchOpportunityRows>["results"][number]) {
-  const identity = resultIdentity(result);
+  const evidence = boundedResultDecisionEvidence(result);
+  const identity = resultIdentity(result, evidence);
   result.id = result.id ?? identity.id;
   return {
     id: result.id,
@@ -1322,9 +1529,9 @@ export function resultInsert(result: ReturnType<typeof matchOpportunityRows>["re
     supply_sheet_name: result.supplySheetName,
     demand_source_rows: result.demandSourceRows,
     supply_source_rows: result.supplySourceRows,
-    demand_traces: result.demandTraces ?? [],
-    supply_traces: result.supplyTraces ?? [],
-    allocations_trace: result.allocations ?? [],
+    demand_traces: evidence.demandTraces,
+    supply_traces: evidence.supplyTraces,
+    allocations_trace: evidence.allocations,
     reason_code: result.reasonCode,
     action_code: result.actionCode,
     warnings: result.warnings
@@ -1372,6 +1579,7 @@ export function financialInsert(
   result: ReturnType<typeof matchOpportunityRows>["results"][number],
   resultId: string
 ) {
+  const evidence = boundedResultDecisionEvidence(result);
   const values = [result.unitCost, result.grossProfit, result.grossMarginPercent];
   if (values.every((value) => value === null || value === undefined)) return null;
   const validCost = result.financialQuality === "valid" && Boolean(result.costCurrency);
@@ -1384,43 +1592,43 @@ export function financialInsert(
     gross_margin_percent: validCost ? result.grossMarginPercent ?? null : null,
     cost_quality: validCost ? "valid" : "untrusted",
     cost_source_trace: {
-      sources: result.allocations?.length
-        ? result.allocations.map((allocation) => allocation.supply)
-        : result.supplyTraces ?? []
+      sources: evidence.allocations.length
+        ? evidence.allocations.map((allocation) => allocation.supply)
+        : evidence.supplyTraces
     },
     computed_at: validCost ? nowIso() : null
   };
 }
 
-function allocationInserts(
+function allocationInsert(
   result: ReturnType<typeof matchOpportunityRows>["results"][number],
-  resultId: string
+  resultId: string,
+  allocation: NonNullable<ReturnType<typeof matchOpportunityRows>["results"][number]["allocations"]>[number],
+  allocationIndex: number
 ) {
-  return (result.allocations ?? []).map((allocation, allocationIndex) => {
-    if (!allocation.demandPartOptionId) {
-      throw new Error("OPPORTUNITY_ALLOCATION_DEMAND_OPTION_ID_MISSING");
-    }
-    if (!allocation.supplyLotId) {
-      throw new Error("OPPORTUNITY_ALLOCATION_SUPPLY_LOT_ID_MISSING");
-    }
-    return {
-      allocation_key: `${resultId}:${allocation.lotKey}`,
-      result_id: resultId,
-      demand_event_key: result.demandEventKey ?? null,
-      demand_part_option_id: allocation.demandPartOptionId,
-      supply_lot_id: allocation.supplyLotId,
-      supply_lot_key: allocation.lotKey,
-      allocated_qty: allocation.allocatedQty,
-      reserved_qty: allocation.reservedQty ?? allocation.allocatedQty,
-      deterministic_rank: allocationIndex,
-      decision_trace: {
-        matchTier: result.matchTier ?? null,
-        confidence: result.confidence ?? null,
-        reasonCode: result.reasonCode
-      },
-      supply_trace: allocation.supply
-    };
-  });
+  if (!allocation.demandPartOptionId) {
+    throw new Error("OPPORTUNITY_ALLOCATION_DEMAND_OPTION_ID_MISSING");
+  }
+  if (!allocation.supplyLotId) {
+    throw new Error("OPPORTUNITY_ALLOCATION_SUPPLY_LOT_ID_MISSING");
+  }
+  return {
+    allocation_key: `${resultId}:${allocation.lotKey}`,
+    result_id: resultId,
+    demand_event_key: result.demandEventKey ?? null,
+    demand_part_option_id: allocation.demandPartOptionId,
+    supply_lot_id: allocation.supplyLotId,
+    supply_lot_key: allocation.lotKey,
+    allocated_qty: allocation.allocatedQty,
+    reserved_qty: allocation.reservedQty ?? allocation.allocatedQty,
+    deterministic_rank: allocationIndex,
+    decision_trace: {
+      matchTier: result.matchTier ?? null,
+      confidence: result.confidence ?? null,
+      reasonCode: result.reasonCode
+    },
+    supply_trace: allocation.supply
+  };
 }
 
 export function possibleMatchInsert(
@@ -1530,29 +1738,56 @@ async function appendMatchOutputItems(
   }
 }
 
-async function stageMatchOutput(
+export async function stageMatchOutput(
   supabase: SupabaseClient,
   stage: OpportunityOutputStage,
-  output: ReturnType<typeof matchOpportunityRows>
+  output: Pick<ReturnType<typeof matchOpportunityRows>, "results" | "possibleMatches">
 ) {
-  const resultRows = output.results.map(resultInsert);
-  const commercials = output.results.flatMap((result, index) => {
-    const row = commercialInsert(result, resultRows[index].id);
-    return row ? [row] : [];
-  });
-  const financials = output.results.flatMap((result, index) => {
-    const row = financialInsert(result, resultRows[index].id);
-    return row ? [row] : [];
-  });
-  const allocations = output.results.flatMap((result, index) =>
-    allocationInserts(result, resultRows[index].id)
-  );
-
-  await appendMatchOutputItems(supabase, stage, "results", resultRows);
-  await appendMatchOutputItems(supabase, stage, "possible_matches", output.possibleMatches.map(possibleMatchInsert));
-  await appendMatchOutputItems(supabase, stage, "commercials", commercials);
-  await appendMatchOutputItems(supabase, stage, "financials", financials);
-  await appendMatchOutputItems(supabase, stage, "allocations", allocations);
+  // Do not JSON-size the raw matcher result here: a shared hot-MPN trace can be
+  // intentionally large in memory. Convert to the bounded persistence shape
+  // first; appendMatchOutputItems then enforces both byte and item limits.
+  for (let offset = 0; offset < output.results.length; offset += OUTPUT_STAGE_CHUNK_SIZE) {
+    const results = output.results.slice(offset, offset + OUTPUT_STAGE_CHUNK_SIZE);
+    const resultRows = results.map(resultInsert);
+    const commercials = results.flatMap((result, index) => {
+      const row = commercialInsert(result, resultRows[index].id);
+      return row ? [row] : [];
+    });
+    const financials = results.flatMap((result, index) => {
+      const row = financialInsert(result, resultRows[index].id);
+      return row ? [row] : [];
+    });
+    await appendMatchOutputItems(supabase, stage, "results", resultRows);
+    await appendMatchOutputItems(supabase, stage, "commercials", commercials);
+    await appendMatchOutputItems(supabase, stage, "financials", financials);
+    for (const [resultIndex, result] of results.entries()) {
+      const allocations = result.allocations ?? [];
+      for (let allocationOffset = 0;
+        allocationOffset < allocations.length;
+        allocationOffset += OUTPUT_STAGE_CHUNK_SIZE) {
+        const allocationRows = allocations
+          .slice(allocationOffset, allocationOffset + OUTPUT_STAGE_CHUNK_SIZE)
+          .map((allocation, chunkIndex) => allocationInsert(
+            result,
+            resultRows[resultIndex].id,
+            allocation,
+            allocationOffset + chunkIndex
+          ));
+        await appendMatchOutputItems(supabase, stage, "allocations", allocationRows);
+      }
+    }
+  }
+  for (const matches of opportunityPayloadChunks(
+    output.possibleMatches,
+    OUTPUT_STAGE_CHUNK_SIZE
+  )) {
+    await appendMatchOutputItems(
+      supabase,
+      stage,
+      "possible_matches",
+      matches.map(possibleMatchInsert)
+    );
+  }
 }
 
 async function commitMatchOutputStage(
@@ -1884,18 +2119,34 @@ export async function processOpportunityFinderJob(
       metadata: { jobId: job.id, stage: job.current_stage }
     });
   } catch (error) {
-    const cancelled = error instanceof OpportunityFinderCancelledError || /CANCELLED/.test(error instanceof Error ? error.message : "");
-    const canRetry = !cancelled && job.attempts < job.max_attempts;
-    await updateJob(supabase, job.id, {
+    let cancelled = error instanceof OpportunityFinderCancelledError ||
+      /CANCELLED/.test(error instanceof Error ? error.message : "");
+    if (!cancelled) {
+      cancelled = await isCancelled(supabase, job.id).catch(() => false);
+    }
+    let canRetry = !cancelled && job.attempts < job.max_attempts;
+    const transition = () => updateJob(supabase, job.id, {
       status: cancelled ? "cancelled" : canRetry ? "queued" : "failed",
       error_code: cancelled ? "JOB_CANCELLED" : safeWorkerErrorCode(error),
-      next_retry_at: canRetry ? new Date(Date.now() + Math.min(job.attempts * 60_000, 5 * 60_000)).toISOString() : null,
+      next_retry_at: canRetry
+        ? new Date(Date.now() + Math.min(job.attempts * 60_000, 5 * 60_000)).toISOString()
+        : null,
       cancelled_at: cancelled ? nowIso() : null,
       locked_at: null,
       locked_by: null,
       lock_token: null,
       heartbeat_at: null
     }, fence);
+    try {
+      await transition();
+    } catch (transitionError) {
+      const cancelledDuringTransition = !cancelled &&
+        await isCancelled(supabase, job.id).catch(() => false);
+      if (!cancelledDuringTransition) throw transitionError;
+      cancelled = true;
+      canRetry = false;
+      await transition();
+    }
     await logger.error({
       ...logContext,
       module: "opportunity-finder",

@@ -1,4 +1,5 @@
--- Run after applying 20260808120000_opportunity_finder_advanced.sql.
+-- Run after applying the Opportunity Finder migrations through
+-- 20260824140000_stream_opportunity_finder_staged_commit.sql.
 -- Read-only catalog/security contract; the transaction is always rolled back.
 begin;
 
@@ -8,6 +9,11 @@ declare
   insecure_table text;
   canonical_storage_function text;
   staged_output_commit_function text;
+  staged_output_replace_function text;
+  staged_output_replace_oid oid;
+  staged_output_replace_count integer;
+  staged_output_commit_jsonb_agg_count integer;
+  staged_output_replace_jsonb_agg_count integer;
   allocation_commit_function text;
   allocation_identity_function text;
   materialize_function text;
@@ -482,10 +488,122 @@ begin
     'public.commit_staged_opportunity_finder_output(uuid,text,uuid,bigint,text,jsonb,jsonb,integer,integer,integer)'::regprocedure
   ) into staged_output_commit_function;
 
+  select count(*)
+  into staged_output_replace_count
+  from pg_proc procedure
+  join pg_namespace namespace on namespace.oid = procedure.pronamespace
+  where namespace.nspname = 'public'
+    and procedure.proname = 'replace_opportunity_finder_job_output_from_stage';
+
+  if staged_output_replace_count <> 1 then
+    raise exception
+      'expected exactly one replace_opportunity_finder_job_output_from_stage helper, found %',
+      staged_output_replace_count;
+  end if;
+
+  staged_output_replace_oid := to_regprocedure(
+    'public.replace_opportunity_finder_job_output_from_stage(uuid,text,uuid,bigint,text,uuid,jsonb,integer,integer,integer)'
+  )::oid;
+
+  if staged_output_replace_oid is null then
+    raise exception 'staged replacement helper has an unexpected signature';
+  end if;
+
+  select pg_get_functiondef(staged_output_replace_oid)
+  into staged_output_replace_function;
+
   if staged_output_commit_function not ilike '%incomplete_opportunity_output_manifest%'
-     or staged_output_commit_function not ilike '%replace_opportunity_finder_job_output%'
-     or staged_output_commit_function not ilike '%for update%' then
-    raise exception 'staged output commit lacks manifest validation, atomic replacement or row locking';
+     or staged_output_commit_function not ilike '%replace_opportunity_finder_job_output_from_stage%'
+     or staged_output_commit_function not ilike '%for update%'
+     or staged_output_commit_function not ilike '%stale_opportunity_worker_fence%'
+     or staged_output_commit_function not ilike '%stale_opportunity_output_run%'
+     or staged_output_commit_function not ilike '%processing_fence%'
+     or staged_output_commit_function !~* 'delete[[:space:]]+from[[:space:]]+public[.]opportunity_finder_output_runs' then
+    raise exception
+      'staged output commit lacks manifest validation, fenced atomic replacement, row locking or success cleanup';
+  end if;
+
+  select count(*)
+  into staged_output_commit_jsonb_agg_count
+  from regexp_matches(
+    staged_output_commit_function,
+    'jsonb_agg[[:space:]]*[(]',
+    'gi'
+  );
+
+  select count(*)
+  into staged_output_replace_jsonb_agg_count
+  from regexp_matches(
+    staged_output_replace_function,
+    'jsonb_agg[[:space:]]*[(]',
+    'gi'
+  );
+
+  if staged_output_commit_jsonb_agg_count <> 0
+     or staged_output_replace_jsonb_agg_count > 1
+     or (
+       staged_output_replace_jsonb_agg_count = 1
+       and (
+         staged_output_replace_function !~*
+           'jsonb_agg[[:space:]]*[(][[:space:]]*allocation_item[.]payload[[:space:]]+order[[:space:]]+by[[:space:]]+allocation_item[.]item_index'
+         or staged_output_replace_function !~*
+           'allocation_item[.]item_index[[:space:]]+between[[:space:]]+allocation_offset[[:space:]]+and[[:space:]]+allocation_end'
+         or staged_output_replace_function not ilike '%allocation_chunk_row_limit constant integer := 10000%'
+         or staged_output_replace_function not ilike '%allocation_chunk_byte_limit constant bigint := 8388608%'
+         or staged_output_replace_function not ilike '%accumulated_payload_bytes <= allocation_chunk_byte_limit%'
+         or staged_output_replace_function not ilike '%limit allocation_chunk_row_limit%'
+       )
+     ) then
+    raise exception
+      'staged output publication contains a whole-kind or otherwise unbounded jsonb_agg';
+  end if;
+
+  if staged_output_replace_function not ilike '%opportunity_finder_output_items%'
+     or staged_output_replace_function not ilike '%output_kind%'
+     or staged_output_replace_function not ilike '%run_id%'
+     or staged_output_replace_function not ilike '%item_index%'
+     or staged_output_replace_function not ilike '%for update%'
+     or staged_output_replace_function not ilike '%stale_opportunity_worker_fence%'
+     or staged_output_replace_function not ilike '%processing_fence%' then
+    raise exception
+      'staged replacement helper does not consume ordered staged rows under the worker fence';
+  end if;
+
+  if exists (
+    select 1
+    from pg_proc procedure
+    where procedure.oid = staged_output_replace_oid
+      and (
+        not procedure.prosecdef
+        or procedure.proretset
+        or procedure.prorettype <> 'public.opportunity_finder_jobs'::regtype
+        or procedure.proargnames is distinct from array[
+          'job_id',
+          'worker_id',
+          'lock_token',
+          'processing_fence',
+          'commit_key',
+          'run_id',
+          'summary',
+          'warning_count',
+          'missing_mpn_rows',
+          'invalid_quantity_rows'
+        ]::text[]
+        or not exists (
+          select 1
+          from unnest(coalesce(procedure.proconfig, array[]::text[])) configuration
+          where configuration like 'search_path=%'
+        )
+      )
+  ) then
+    raise exception
+      'staged replacement helper has an unsafe or incomplete security/fencing signature';
+  end if;
+
+  if has_function_privilege('anon', staged_output_replace_oid, 'EXECUTE')
+     or has_function_privilege('authenticated', staged_output_replace_oid, 'EXECUTE')
+     or has_function_privilege('service_role', staged_output_replace_oid, 'EXECUTE') then
+    raise exception 'internal staged replacement helper is directly executable by an API role';
   end if;
 
   select pg_get_functiondef(

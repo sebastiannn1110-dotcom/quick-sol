@@ -20,6 +20,7 @@ type ConfigureOptions = {
   rejectedCount?: number;
   commercialRows?: Record<string, unknown>[];
   financialRows?: Record<string, unknown>[];
+  hydratedResults?: Record<string, unknown>[];
 };
 
 function pagedQuery(data: Record<string, unknown>[], count = data.length) {
@@ -97,6 +98,11 @@ async function configureRoute(options: ConfigureOptions) {
     ...row,
     protectedFields
   }));
+  const hydrateUserScopedOpportunityAllocations = vi.fn(async (
+    _supabase: unknown,
+    _jobId: string,
+    rows: Record<string, unknown>[]
+  ) => ({ rows: options.hydratedResults ?? rows, error: null }));
   vi.doMock("@/lib/auth/context", () => ({
     getAuthContext: vi.fn(async () => ({
       profile: {
@@ -116,6 +122,7 @@ async function configureRoute(options: ConfigureOptions) {
   }));
   vi.doMock("@/lib/opportunity-finder/api", () => ({
     cleanUuid: vi.fn((value: string) => value),
+    hydrateUserScopedOpportunityAllocations,
     loadOwnedOpportunityJob: vi.fn(async () => ({
       id: JOB_ID,
       tenant_id: TENANT_ID,
@@ -144,7 +151,13 @@ async function configureRoute(options: ConfigureOptions) {
     }))
   }));
   const route = await import("../route");
-  return { route, database, service, resultDatabaseRow };
+  return {
+    route,
+    database,
+    service,
+    resultDatabaseRow,
+    hydrateUserScopedOpportunityAllocations
+  };
 }
 
 function request(query = "") {
@@ -222,6 +235,14 @@ async function configureDeleteRoute(options: {
   }));
   vi.doMock("@/lib/opportunity-finder/api", () => ({
     cleanUuid: vi.fn((value: string) => value),
+    hydrateUserScopedOpportunityAllocations: vi.fn(async (
+      _supabase: unknown,
+      _jobId: string,
+      rows: Record<string, unknown>[]
+    ) => ({
+      rows,
+      error: null
+    })),
     loadOwnedOpportunityJob: vi.fn(async () => ({
       id: JOB_ID,
       status: "completed",
@@ -344,6 +365,35 @@ describe("GET /api/opportunity-finder/jobs/:id", () => {
       canViewPricing: false,
       canViewFinancials: false
     });
+  });
+
+  it("hydrates capped allocation previews through the authenticated client before mapping results", async () => {
+    const resultId = "00000000-0000-4000-8000-000000000020";
+    const preview = Array.from({ length: 32 }, (_, index) => ({ lotKey: `preview-${index}` }));
+    const complete = Array.from({ length: 40 }, (_, index) => ({ lotKey: `complete-${index}` }));
+    const result = { id: resultId, allocations_trace: preview };
+    const hydratedResult = { ...result, allocations_trace: complete };
+    const configured = await configureRoute({
+      idempotencyKey: "legacy-random-key",
+      results: [result],
+      hydratedResults: [hydratedResult]
+    });
+
+    const response = await configured.route.GET(request(), params());
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(configured.hydrateUserScopedOpportunityAllocations).toHaveBeenCalledWith(
+      configured.database.supabase,
+      JOB_ID,
+      [result]
+    );
+    expect(configured.resultDatabaseRow).toHaveBeenCalledWith(
+      hydratedResult,
+      null,
+      { commercial: null, financial: null }
+    );
+    expect(payload.results[0].allocations_trace).toHaveLength(40);
   });
 
   it("paginates possible matches and rejected rows independently", async () => {
@@ -513,6 +563,14 @@ describe("DELETE /api/opportunity-finder/jobs/:id", () => {
     }));
     vi.doMock("@/lib/opportunity-finder/api", () => ({
       cleanUuid: vi.fn((value: string) => value),
+      hydrateUserScopedOpportunityAllocations: vi.fn(async (
+        _supabase: unknown,
+        _jobId: string,
+        rows: Record<string, unknown>[]
+      ) => ({
+        rows,
+        error: null
+      })),
       loadOwnedOpportunityJob: vi.fn(async () => ({
         id: JOB_ID,
         status: "completed",

@@ -705,6 +705,34 @@ function fallbackTraceRow(result: OpportunityResult, side: "Demanda" | "Oferta")
   ];
 }
 
+function previewTraceNoticeRow(
+  result: OpportunityResult,
+  side: "Demanda" | "Oferta" | "Asignaciones",
+  shown: number,
+  total: number | null
+) {
+  return [
+    "Vista previa acotada",
+    result.id ?? result.demandEventKey ?? null,
+    result.candidateId ?? null,
+    result.displayMpn,
+    side,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    total === null
+      ? `${shown} registro(s) mostrados; la evidencia normalizada completa no estuvo disponible.`
+      : `${shown} de ${total} fila(s) mostradas en la vista previa; no se descartaron resultados ni cantidades.`
+  ];
+}
+
 function ruleRows(options: OpportunityExportOptions) {
   return [
     ["Regla", "mpn_exact_norm", null, null, null, null, null, null, null, null, null, null, null, null, "MPN exacto usa Unicode NFKC, mayúsculas y espacios normalizados; preserva guiones, barras, ceros iniciales y sufijos."],
@@ -734,6 +762,30 @@ function addTraceSheet(
     for (const trace of supplyTraces) addSafeRow(sheet, sourceTraceRow(result, "Oferta", trace));
     for (const allocation of result.allocations ?? []) {
       addSafeRow(sheet, sourceTraceRow(result, "Asignación", allocation.supply, allocation));
+    }
+    if (result.demandTracePreviewTruncated) {
+      addSafeRow(sheet, previewTraceNoticeRow(
+        result,
+        "Demanda",
+        demandTraces.length,
+        result.demandSourceRows
+      ));
+    }
+    if (result.supplyTracePreviewTruncated) {
+      addSafeRow(sheet, previewTraceNoticeRow(
+        result,
+        "Oferta",
+        supplyTraces.length,
+        result.supplySourceRows
+      ));
+    }
+    if (result.allocationTracePreviewTruncated) {
+      addSafeRow(sheet, previewTraceNoticeRow(
+        result,
+        "Asignaciones",
+        result.allocations?.length ?? 0,
+        null
+      ));
     }
     if (!demandTraces.length && result.demandFileName) addSafeRow(sheet, fallbackTraceRow(result, "Demanda"));
     if (!supplyTraces.length && result.supplyFileName) addSafeRow(sheet, fallbackTraceRow(result, "Oferta"));
@@ -1024,6 +1076,30 @@ export class OpportunityStreamingExportWriter {
         "data",
         36
       );
+    }
+    if (result.demandTracePreviewTruncated) {
+      addCommittedSafeRow(this.traceSheet, previewTraceNoticeRow(
+        result,
+        "Demanda",
+        demandTraces.length,
+        result.demandSourceRows
+      ), "data", 36);
+    }
+    if (result.supplyTracePreviewTruncated) {
+      addCommittedSafeRow(this.traceSheet, previewTraceNoticeRow(
+        result,
+        "Oferta",
+        supplyTraces.length,
+        result.supplySourceRows
+      ), "data", 36);
+    }
+    if (result.allocationTracePreviewTruncated) {
+      addCommittedSafeRow(this.traceSheet, previewTraceNoticeRow(
+        result,
+        "Asignaciones",
+        result.allocations?.length ?? 0,
+        null
+      ), "data", 36);
     }
     if (!demandTraces.length && result.demandFileName) {
       addCommittedSafeRow(this.traceSheet, fallbackTraceRow(result, "Demanda"), "data", 36);

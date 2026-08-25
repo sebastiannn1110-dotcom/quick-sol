@@ -3,6 +3,7 @@ import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import { normalizePartNumberForMatch } from "@/lib/stock-needs/stock-needs";
 import {
   cleanUuid,
+  hydrateUserScopedOpportunityAllocations,
   loadOwnedOpportunityJob,
   OPPORTUNITY_FILE_SELECT,
   OPPORTUNITY_RESULT_SELECT,
@@ -189,10 +190,18 @@ export async function GET(
   if (resultsError || possibleError || rejectedError) {
     return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
   }
+  const hydratedResults = await hydrateUserScopedOpportunityAllocations(
+    context.supabase,
+    jobId,
+    (results ?? []) as unknown as Record<string, unknown>[]
+  );
+  if (hydratedResults.error) {
+    return NextResponse.json({ errorCode: "RESULTS_READ_FAILED" }, { status: 500 });
+  }
   const tenantAdmin = !adminResult.error && adminResult.data === true;
   const canViewPricing = tenantAdmin && permissions.canViewSensitivePricing;
   const canViewFinancials = tenantAdmin && permissions.canViewCosts && permissions.canViewGp;
-  const resultRows = (results ?? []) as unknown as Record<string, unknown>[];
+  const resultRows = hydratedResults.rows;
   const resultIds = resultRows.map((result) => String(result.id));
   const commercialByResult = new Map<string, Record<string, unknown>>();
   const financialByResult = new Map<string, Record<string, unknown>>();

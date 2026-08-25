@@ -10,6 +10,7 @@ import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
 import type { Language } from "@/lib/i18n";
 import {
   cleanUuid,
+  hydrateUserScopedOpportunityAllocations,
   loadOwnedOpportunityJob,
   OPPORTUNITY_RESULT_SELECT,
   resultDatabaseRow
@@ -196,9 +197,12 @@ async function loadFirstResultPage(
     select = OPPORTUNITY_EXPORT_LEGACY_RESULT_SELECT;
     loaded = await loadResultPage(supabase, jobId, resultId, select, 0);
   }
+  const hydrated = loaded.error
+    ? { rows: loaded.rows, error: null }
+    : await hydrateUserScopedOpportunityAllocations(supabase, jobId, loaded.rows);
   return {
-    results: loaded.rows.map((row) => exportResultDatabaseRow(row, pipelineVersion)),
-    error: loaded.error,
+    results: hydrated.rows.map((row) => exportResultDatabaseRow(row, pipelineVersion)),
+    error: loaded.error ?? hydrated.error,
     select
   };
 }
@@ -470,7 +474,13 @@ async function nextResultPage(input: {
     input.offset
   );
   if (loaded.error) throw new OpportunityExportDatabaseError(loaded.error);
-  return loaded.rows.map((row) => exportResultDatabaseRow(row, input.pipelineVersion));
+  const hydrated = await hydrateUserScopedOpportunityAllocations(
+    input.supabase,
+    input.jobId,
+    loaded.rows
+  );
+  if (hydrated.error) throw new OpportunityExportDatabaseError(hydrated.error);
+  return hydrated.rows.map((row) => exportResultDatabaseRow(row, input.pipelineVersion));
 }
 
 async function loadRestrictedPage(input: {
