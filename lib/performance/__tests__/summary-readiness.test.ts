@@ -4,6 +4,7 @@ import {
   aggregateSummaryStates,
   loadBusinessSummaryState,
   parseSummaryUnavailablePayload,
+  readBusinessSummaryWithFence,
   requireReadySummary,
   SummaryUnavailableError,
   summaryReadState,
@@ -29,7 +30,7 @@ describe("summary readiness contract", () => {
     });
   });
 
-  it.each(["queued", "rebuilding", "retrying", "stale"] as const)(
+  it.each(["dirty", "queued", "rebuilding", "retrying", "stale"] as const)(
     "maps %s to an explicit HTTP 409 payload",
     (status) => {
       const state = summaryReadState({
@@ -109,6 +110,22 @@ describe("summary readiness contract", () => {
     expect(rpc).toHaveBeenCalledWith("get_business_summary_state_v2", {
       p_upload_batch_id: "upload",
       p_client_id: "client"
+    });
+  });
+
+  it("uses the second state read to classify a normal post-read race", async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: { summaryReady: true, status: "ready", currentVersion: 4, requiredVersion: 4 }, error: null })
+      .mockResolvedValueOnce({ data: { summaryReady: false, status: "rebuilding", currentVersion: 4, requiredVersion: 5 }, error: null });
+    const supabase = { rpc } as unknown as SupabaseClient;
+
+    await expect(readBusinessSummaryWithFence(
+      supabase,
+      {},
+      async () => ({ data: null, error: { code: "57014" } })
+    )).rejects.toMatchObject({
+      reason: "post_read",
+      state: { status: "rebuilding", currentVersion: 4, requiredVersion: 5 }
     });
   });
 });

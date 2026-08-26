@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
-import { AppError, FileValidationError, ValidationError } from "@/lib/errors/AppError";
+import { AppError, FileValidationError, PermissionError, ValidationError } from "@/lib/errors/AppError";
 import { handleRouteError } from "@/lib/errors/errorHandler";
 import { sanitizeFileName, uploadFormSchema, validateUploadMetadata } from "@/lib/excel/validators";
 import { getLoggerContextFromRequest } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { canAssignClientUploads } from "@/lib/security/permissions";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { ensureClientUploadAssignment, loadAssignableUploadClient } from "@/lib/upload/client-assignment";
 import {
   assertUploadRuntimeReady,
   checkStorageBucket,
@@ -25,6 +27,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const initiateSchema = z.object({
+  clientId: z.string().uuid(),
   fileName: z.string().trim().min(1).max(260),
   fileSize: z.number().int().positive(),
   fileType: z.string().trim().max(180).optional().nullable(),
@@ -78,6 +81,9 @@ export async function POST(request: Request) {
     await logUploadDiagnostic(logContext, "metadata_validation_started", "Upload metadata validation started.", "started");
     const parsed = initiateSchema.safeParse(body);
     if (!parsed.success) throw new ValidationError("Upload initiate validation failed.", { issues: parsed.error.issues });
+    if (!canAssignClientUploads(context.profile.role)) {
+      throw new PermissionError("Actor cannot assign uploads to clients.");
+    }
     const formParsed = uploadFormSchema.safeParse(parsed.data);
     if (!formParsed.success) throw new ValidationError("Upload form validation failed.", { issues: formParsed.error.issues });
 
@@ -110,6 +116,8 @@ export async function POST(request: Request) {
         details: baseMetadata
       });
     }
+
+    const uploadClient = await loadAssignableUploadClient(context.supabase, parsed.data.clientId);
 
     await logUploadDiagnostic(logContext, "env_validation_started", "Upload runtime environment validation started.", "started", baseMetadata);
     const diagnostics = getUploadRuntimeDiagnostics();
@@ -161,7 +169,9 @@ export async function POST(request: Request) {
       input_region: parsed.data.region,
       input_notes: parsed.data.notes || "",
       input_upload_strategy: uploadStrategy,
-      input_idempotency_key: parsed.data.idempotencyKey || null,
+      input_idempotency_key: parsed.data.idempotencyKey
+        ? `${uploadClient.id}:${parsed.data.idempotencyKey}`
+        : null,
       input_max_attempts: diagnostics.workerMaxAttempts
     });
     if (issuedError || !issuedData) {
@@ -175,7 +185,17 @@ export async function POST(request: Request) {
       storageBucket: string;
       storagePath: string;
     };
-    if (issued.duplicate) {
+    const assignment = await ensureClientUploadAssignment(context.supabase, {
+      actorId: context.profile.id,
+      clientId: uploadClient.id,
+      uploadBatchId: issued.uploadId
+    });
+    if (assignment.created) {
+      await logAuditEvent(context, "client_upload_assigned", "client", uploadClient.id, {
+        uploadBatchId: issued.uploadId
+      });
+    }
+    if (issued.duplicate && issued.status !== "pending_upload") {
       return NextResponse.json({
         error: "This file already has an import job. Use retry from the upload history instead of uploading it again.",
         uploadId: issued.uploadId,
@@ -183,12 +203,15 @@ export async function POST(request: Request) {
         status: issued.status
       }, { status: 409 });
     }
+    const effectiveUploadId = issued.uploadId;
+    const effectiveJobId = issued.jobId;
     const bucket = issued.storageBucket;
     const storagePath = issued.storagePath;
     const uploadMetadata = {
       ...baseMetadata,
-      uploadRef: uploadBatchId.slice(0, 8),
-      jobRef: jobId.slice(0, 8),
+      uploadRef: effectiveUploadId.slice(0, 8),
+      jobRef: effectiveJobId.slice(0, 8),
+      clientRef: uploadClient.id.slice(0, 8),
       maxUploadSizeMb: diagnostics.maxUploadSizeMb,
       maxRowsPerFile: diagnostics.maxRowsPerFile,
       resumableThresholdMb: diagnostics.resumableThresholdMb
@@ -199,8 +222,8 @@ export async function POST(request: Request) {
     if (signedError || !signedUpload) {
       await service.rpc("fail_import_upload_initialization_v2", {
         input_actor_id: context.profile.id,
-        input_upload_id: uploadBatchId,
-        input_job_id: jobId,
+        input_upload_id: effectiveUploadId,
+        input_job_id: effectiveJobId,
         input_error_code: "IMPORT_SIGNED_UPLOAD_URL_FAILED"
       });
       throw uploadStorageError("Unable to create signed upload URL.", signedError, uploadMetadata);
@@ -213,15 +236,15 @@ export async function POST(request: Request) {
       action: "upload_started",
       message: "Direct-to-storage upload initialized.",
       status: "completed",
-      uploadBatchId: uploadBatchId.slice(0, 8),
-      metadata: { jobRef: jobId.slice(0, 8), sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile, uploadStrategy }
+      uploadBatchId: effectiveUploadId.slice(0, 8),
+      metadata: { jobRef: effectiveJobId.slice(0, 8), clientRef: uploadClient.id.slice(0, 8), sizeBytes: parsed.data.fileSize, maxUploadSizeMb: diagnostics.maxUploadSizeMb, maxRowsPerFile: diagnostics.maxRowsPerFile, uploadStrategy }
     });
-    await logAuditEvent(context, "upload_initialized", "upload_batch", uploadBatchId, { jobId, fileName: originalFileName });
+    await logAuditEvent(context, "upload_initialized", "upload_batch", effectiveUploadId, { jobId: effectiveJobId, fileName: originalFileName, clientId: uploadClient.id });
     await logUploadDiagnostic(logContext, "upload_initiate_completed", "Upload initiate completed.", "completed", uploadMetadata);
 
     return NextResponse.json({
-      uploadId: uploadBatchId,
-      jobId,
+      uploadId: effectiveUploadId,
+      jobId: effectiveJobId,
       bucket,
       storagePath,
       signedUrl: signedUpload.signedUrl,
@@ -235,7 +258,7 @@ export async function POST(request: Request) {
         chunkSizeBytes: 6 * 1024 * 1024
       },
       upload: {
-        id: uploadBatchId,
+        id: effectiveUploadId,
         original_file_name: originalFileName,
         status: "pending_upload"
       }

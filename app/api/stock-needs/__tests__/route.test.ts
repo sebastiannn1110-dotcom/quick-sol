@@ -36,7 +36,7 @@ describe("GET /api/stock-needs role and summary lifecycle", () => {
   }
 
   it.each(["employee", "manager", "admin", "super_admin_dev"] as const)(
-    "serves the optimized summary to %s with one preflight and one data RPC",
+    "serves the optimized summary to %s with pre-read and post-read fences",
     async (role) => {
       const context = authContext(role);
       const fastResult = {
@@ -47,7 +47,8 @@ describe("GET /api/stock-needs role and summary lifecycle", () => {
       };
       context.supabase.rpc
         .mockResolvedValueOnce({ data: readyState(), error: null })
-        .mockResolvedValueOnce({ data: fastResult, error: null });
+        .mockResolvedValueOnce({ data: fastResult, error: null })
+        .mockResolvedValueOnce({ data: readyState(), error: null });
       requireRole.mockResolvedValue(context);
 
       const request = new Request("https://app.test/api/stock-needs?limit=100&offset=25");
@@ -66,13 +67,17 @@ describe("GET /api/stock-needs role and summary lifecycle", () => {
         p_limit: 100,
         p_offset: 25
       }));
-      expect(context.supabase.rpc).toHaveBeenCalledTimes(2);
+      expect(context.supabase.rpc).toHaveBeenNthCalledWith(3, "get_business_summary_state_v2", {
+        p_upload_batch_id: null,
+        p_client_id: null
+      });
+      expect(context.supabase.rpc).toHaveBeenCalledTimes(3);
       expect(redactSensitiveFieldsForRole).toHaveBeenCalledWith(fastResult, role);
       expect(await response.json()).toEqual(fastResult);
     }
   );
 
-  it.each(["queued", "rebuilding", "retrying", "stale"] as const)(
+  it.each(["dirty", "queued", "rebuilding", "retrying", "stale"] as const)(
     "returns bounded HTTP 409 for %s without calling the data RPC or returning false totals",
     async (status) => {
       const context = authContext("manager");
@@ -108,6 +113,76 @@ describe("GET /api/stock-needs role and summary lifecycle", () => {
       expect(context.supabase.rpc).toHaveBeenCalledTimes(1);
     }
   );
+
+  it("maps a READY to DIRTY race to HTTP 409 even when the page RPC also errors", async () => {
+    const context = authContext("manager");
+    context.supabase.rpc
+      .mockResolvedValueOnce({ data: readyState(), error: null })
+      .mockResolvedValueOnce({ data: null, error: { code: "57014" } })
+      .mockResolvedValueOnce({
+        data: {
+          summaryReady: false,
+          status: "dirty",
+          currentVersion: 8,
+          requiredVersion: 9,
+          pendingCount: 1,
+          totalScopes: 2
+        },
+        error: null
+      });
+    requireRole.mockResolvedValue(context);
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/stock-needs"));
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload).toMatchObject({
+      errorCode: "SUMMARY_NOT_READY",
+      summaryStatus: "dirty",
+      currentVersion: 8,
+      requiredVersion: 9
+    });
+    expect(payload).not.toHaveProperty("items");
+    expect(payload).not.toHaveProperty("totals");
+    expect(context.supabase.rpc).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns HTTP 409 when a still-ready summary changes version across the data read", async () => {
+    const context = authContext("admin");
+    const page = { summaryReady: true, items: [{ mpn: "OLD" }], totals: { totalItems: 1 } };
+    context.supabase.rpc
+      .mockResolvedValueOnce({ data: { ...readyState(), currentVersion: 8, requiredVersion: 8 }, error: null })
+      .mockResolvedValueOnce({ data: page, error: null })
+      .mockResolvedValueOnce({ data: { ...readyState(), currentVersion: 9, requiredVersion: 9 }, error: null });
+    requireRole.mockResolvedValue(context);
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/stock-needs"));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      errorCode: "SUMMARY_NOT_READY",
+      summaryStatus: "stale",
+      currentVersion: 9,
+      requiredVersion: 9
+    });
+  });
+
+  it("keeps an unexpected data RPC failure as HTTP 500 when both fences stay READY", async () => {
+    const context = authContext("admin");
+    context.supabase.rpc
+      .mockResolvedValueOnce({ data: readyState(), error: null })
+      .mockResolvedValueOnce({ data: null, error: { code: "XX000" } })
+      .mockResolvedValueOnce({ data: readyState(), error: null });
+    requireRole.mockResolvedValue(context);
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/stock-needs"));
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Unable to load stock and needs." });
+  });
 
   it("returns HTTP 503 for a failed rebuild without querying page data", async () => {
     const context = authContext("admin");

@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
 import {
   isSummaryUnavailableError,
-  requireBusinessSummaryReady,
-  requireReadySummary,
+  readBusinessSummaryWithFence,
   summaryResponseHeaders,
   summaryUnavailableHttpStatus,
   summaryUnavailablePayload
@@ -53,19 +52,21 @@ export async function GET(request: Request) {
   }
 
   try {
-    await requireBusinessSummaryReady(context.supabase, { uploadBatchId: filters.uploadBatchId });
-    const summary = await context.supabase.rpc("get_stock_needs_page_v1", {
-      p_limit: filters.limit,
-      p_offset: filters.offset,
-      p_q: filters.q ?? null,
-      p_customer: filters.customer ?? null,
-      p_supplier: filters.supplier ?? null,
-      p_manufacturer: filters.manufacturer ?? null,
-      p_status: filters.status ?? null,
-      p_coverage: filters.coverageStatus ?? null,
-      p_upload_batch_id: filters.uploadBatchId ?? null
-    });
-    const result = requireReadySummary(summary.data, summary.error);
+    const { result } = await readBusinessSummaryWithFence(
+      context.supabase,
+      { uploadBatchId: filters.uploadBatchId },
+      () => context.supabase!.rpc("get_stock_needs_page_v1", {
+        p_limit: filters.limit,
+        p_offset: filters.offset,
+        p_q: filters.q ?? null,
+        p_customer: filters.customer ?? null,
+        p_supplier: filters.supplier ?? null,
+        p_manufacturer: filters.manufacturer ?? null,
+        p_status: filters.status ?? null,
+        p_coverage: filters.coverageStatus ?? null,
+        p_upload_batch_id: filters.uploadBatchId ?? null
+      })
+    );
     return NextResponse.json(redactSensitiveFieldsForRole(result, context.profile.role), {
       headers: summaryResponseHeaders()
     });

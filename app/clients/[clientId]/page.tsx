@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, Pencil, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ClientFiles from "@/components/clients/ClientFiles";
@@ -114,10 +114,16 @@ export default function ClientDetailPage() {
             <p className="mt-1 text-sm text-slate-500">{client.description ?? t("clientDetail.noDescription")}</p>
           </div>
           {client.canManage ? (
-            <Link href={`/admin/clients/${client.id}/edit`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              <Pencil className="h-4 w-4" />
-              {t("clientDetail.edit")}
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link href={`/upload?clientId=${encodeURIComponent(client.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700">
+                <Upload className="h-4 w-4" />
+                {t("clients.uploadFiles")}
+              </Link>
+              <Link href={`/admin/clients/${client.id}/edit`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                <Pencil className="h-4 w-4" />
+                {t("clientDetail.edit")}
+              </Link>
+            </div>
           ) : null}
         </header>
 

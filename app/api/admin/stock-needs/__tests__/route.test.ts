@@ -28,23 +28,28 @@ describe("GET /api/admin/stock-needs", () => {
     expect(requireRole).toHaveBeenCalledWith(request, ["admin", "manager"]);
   });
 
-  it.each(["manager", "admin", "super_admin_dev"])("uses only state + summary RPC for %s", async (role) => {
+  it.each(["manager", "admin", "super_admin_dev"])("uses pre-read state + summary RPC + post-read state for %s", async (role) => {
     const page = { summaryReady: true, items: [], totals: { totalItems: 0 }, meta: {} };
     const rpc = vi.fn()
       .mockResolvedValueOnce({ data: { summaryReady: true, status: "ready", currentVersion: 3, requiredVersion: 3 }, error: null })
-      .mockResolvedValueOnce({ data: page, error: null });
+      .mockResolvedValueOnce({ data: page, error: null })
+      .mockResolvedValueOnce({ data: { summaryReady: true, status: "ready", currentVersion: 3, requiredVersion: 3 }, error: null });
     requireRole.mockResolvedValue({ profile: { id: "actor", role }, isDemoMode: false, supabase: { rpc } });
 
     const { GET } = await import("../route");
     const response = await GET(new Request("https://app.test/api/admin/stock-needs"));
 
     expect(response.status).toBe(200);
-    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledTimes(3);
     expect(rpc).toHaveBeenNthCalledWith(1, "get_business_summary_state_v2", {
       p_upload_batch_id: null,
       p_client_id: null
     });
     expect(rpc).toHaveBeenNthCalledWith(2, "get_stock_needs_page_v1", expect.any(Object));
+    expect(rpc).toHaveBeenNthCalledWith(3, "get_business_summary_state_v2", {
+      p_upload_batch_id: null,
+      p_client_id: null
+    });
     expect(redactSensitiveFieldsForRole).toHaveBeenCalledWith(page, role);
   });
 
@@ -69,7 +74,7 @@ describe("GET /api/admin/stock-needs", () => {
   it("contains no user-facing raw-row or compatibility fallback path", () => {
     const source = readFileSync(path.join(process.cwd(), "app/api/admin/stock-needs/route.ts"), "utf8");
 
-    expect(source).toContain("requireBusinessSummaryReady");
+    expect(source).toContain("readBusinessSummaryWithFence");
     expect(source).toContain("get_stock_needs_page_v1");
     expect(source).not.toContain("loadStockNeedsInput");
     expect(source).not.toContain("complete: true");

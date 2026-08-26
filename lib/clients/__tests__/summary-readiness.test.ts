@@ -52,7 +52,7 @@ describe("client summary readiness", () => {
         status,
         currentVersion: 10,
         requiredVersion: 11
-      }, error: null }]);
+      }, error: null }, { data: [{ client_id: CLIENT_ID, summary_ready: false }], error: null }]);
 
       const [client] = await listClientSummaries(test.supabase, "employee");
 
@@ -67,10 +67,13 @@ describe("client summary readiness", () => {
         opportunityCount: null,
         highConfidenceTruncated: null
       });
-      expect(test.rpc).toHaveBeenCalledTimes(1);
+      expect(test.rpc).toHaveBeenCalledTimes(2);
       expect(test.rpc).toHaveBeenCalledWith("get_business_summary_state_v2", {
         p_upload_batch_id: null,
         p_client_id: null
+      });
+      expect(test.rpc).toHaveBeenCalledWith("get_client_business_metrics_v1", {
+        target_client_ids: [CLIENT_ID]
       });
       expect(test.from.mock.calls.map(([table]) => table)).toEqual(["clients", "client_upload_assignments"]);
     }
@@ -109,13 +112,70 @@ describe("client summary readiness", () => {
   });
 
   it("fails closed to nullable metrics when the state RPC contract is absent", async () => {
-    const test = fixture([{ data: null, error: { code: "PGRST202" } }]);
+    const test = fixture([
+      { data: null, error: { code: "PGRST202" } },
+      { data: null, error: { code: "PGRST202" } }
+    ]);
 
     const [client] = await listClientSummaries(test.supabase, "employee");
 
     expect(client.summaryStatus).toBe("contract_unavailable");
     expect(client.opportunityCount).toBeNull();
-    expect(test.rpc).toHaveBeenCalledTimes(1);
+    expect(test.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a READY client stable while an unrelated visible upload is queued", async () => {
+    const test = fixture([
+      { data: { summaryReady: false, status: "queued", currentVersion: 10, requiredVersion: 11 }, error: null },
+      { data: [{
+        client_id: CLIENT_ID,
+        summary_ready: true,
+        mpn_count: 0,
+        opportunity_count: 0,
+        immediate_sale_count: 0,
+        partial_sale_count: 0,
+        sourcing_needed_count: 0,
+        stock_without_demand_count: 0,
+        high_confidence_count: 0,
+        high_confidence_truncated: false
+      }], error: null }
+    ]);
+
+    const [client] = await listClientSummaries(test.supabase, "employee");
+
+    expect(client).toMatchObject({
+      summaryStatus: "ready",
+      summaryCurrentVersion: null,
+      summaryRequiredVersion: null,
+      mpnCount: 0,
+      opportunityCount: 0
+    });
+  });
+
+  it("invalidates on a real assigned write and returns to READY after rebuild", async () => {
+    const test = fixture([
+      { data: { summaryReady: false, status: "queued", currentVersion: 10, requiredVersion: 11 }, error: null },
+      { data: [{ client_id: CLIENT_ID, summary_ready: false }], error: null },
+      { data: { summaryReady: true, status: "ready", currentVersion: 11, requiredVersion: 11 }, error: null },
+      { data: [{
+        client_id: CLIENT_ID,
+        summary_ready: true,
+        mpn_count: 4,
+        opportunity_count: 2,
+        immediate_sale_count: 1,
+        partial_sale_count: 0,
+        sourcing_needed_count: 1,
+        stock_without_demand_count: 0,
+        high_confidence_count: 1,
+        high_confidence_truncated: false
+      }], error: null }
+    ]);
+
+    const [duringWrite] = await listClientSummaries(test.supabase, "employee");
+    const [afterRebuild] = await listClientSummaries(test.supabase, "employee");
+
+    expect(duringWrite).toMatchObject({ summaryStatus: "queued", mpnCount: null, opportunityCount: null });
+    expect(afterRebuild).toMatchObject({ summaryStatus: "ready", mpnCount: 4, opportunityCount: 2 });
   });
 
   it("checks client access without consulting any summary or metrics RPC", async () => {

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const SUMMARY_LIFECYCLE_STATUSES = [
   "ready",
+  "dirty",
   "queued",
   "rebuilding",
   "retrying",
@@ -40,6 +41,7 @@ type PostgrestErrorLike = {
 
 const CONTRACT_UNAVAILABLE_CODES = new Set(["PGRST202", "42883"]);
 const DEFAULT_RETRY_SECONDS: Record<Exclude<SummaryLifecycleStatus, "ready">, number> = {
+  dirty: 3,
   queued: 3,
   rebuilding: 3,
   retrying: 5,
@@ -252,18 +254,76 @@ export async function requireBusinessSummaryReady(
   scope: { uploadBatchId?: string | null; clientId?: string | null } = {}
 ) {
   const state = await loadBusinessSummaryState(supabase, scope);
-  if (state.status !== "ready") throw new SummaryUnavailableError(state);
+  if (state.status !== "ready") throw new SummaryUnavailableError(state, "pre_read");
   return state;
 }
 
+export type SummaryUnavailableReason = "pre_read" | "post_read" | "version_changed" | "data_fence";
+
 export class SummaryUnavailableError extends Error {
   readonly state: SummaryReadState;
+  readonly reason: SummaryUnavailableReason;
 
-  constructor(state: SummaryReadState) {
+  constructor(state: SummaryReadState, reason: SummaryUnavailableReason = "data_fence") {
     super(state.status === "contract_unavailable" ? "SUMMARY_CONTRACT_UNAVAILABLE" : "SUMMARY_NOT_READY");
     this.name = "SummaryUnavailableError";
     this.state = state;
+    this.reason = reason;
   }
+}
+
+const SUMMARY_VERSION_FIELDS = [
+  "currentVersion",
+  "requiredVersion",
+  "currentVersionMin",
+  "currentVersionMax",
+  "requiredVersionMin",
+  "requiredVersionMax",
+  "totalScopes",
+  "missingVersionCount"
+] as const;
+
+export function summaryVersionChanged(before: SummaryReadState, after: SummaryReadState) {
+  return SUMMARY_VERSION_FIELDS.some((field) => before[field] !== after[field]);
+}
+
+function staleAfterVersionChange(state: SummaryReadState): SummaryReadState {
+  return {
+    ...state,
+    status: "stale",
+    retryable: true,
+    retryAfterSeconds: DEFAULT_RETRY_SECONDS.stale
+  };
+}
+
+export async function readBusinessSummaryWithFence<T>(
+  supabase: SupabaseClient,
+  scope: { uploadBatchId?: string | null; clientId?: string | null },
+  readSummary: () => PromiseLike<{ data: unknown; error?: PostgrestErrorLike | null }>
+) {
+  const before = await requireBusinessSummaryReady(supabase, scope);
+  let summary: { data: unknown; error?: PostgrestErrorLike | null } | null = null;
+  let readError: unknown;
+
+  try {
+    summary = await readSummary();
+  } catch (error) {
+    readError = error;
+  }
+
+  const after = await loadBusinessSummaryState(supabase, scope);
+  if (after.status !== "ready") throw new SummaryUnavailableError(after, "post_read");
+  if (summaryVersionChanged(before, after)) {
+    throw new SummaryUnavailableError(staleAfterVersionChange(after), "version_changed");
+  }
+  if (readError) throw readError;
+  if (!summary) throw new Error("SUMMARY_DATA_PROTOCOL_INVALID");
+
+  return {
+    result: requireReadySummary<T>(summary.data, summary.error),
+    before,
+    after
+  };
 }
 
 export function requireReadySummary<T>(data: unknown, error?: PostgrestErrorLike | null) {
@@ -351,12 +411,13 @@ export function parseSummaryUnavailablePayload(value: unknown): SummaryUnavailab
 
 const STATUS_PRIORITY: Record<SummaryLifecycleStatus, number> = {
   ready: 0,
-  stale: 1,
-  queued: 2,
-  rebuilding: 3,
-  retrying: 3,
-  failed: 4,
-  contract_unavailable: 5
+  dirty: 1,
+  stale: 2,
+  queued: 3,
+  rebuilding: 4,
+  retrying: 4,
+  failed: 5,
+  contract_unavailable: 6
 };
 
 export function aggregateSummaryStates(states: SummaryReadState[]): SummaryReadState {

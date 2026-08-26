@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { logAuditEvent, requireRole } from "@/lib/auth/context";
 import { isUuid } from "@/lib/clients/clients";
+import { AppError } from "@/lib/errors/AppError";
+import { ensureClientUploadAssignment, loadAssignableUploadClient } from "@/lib/upload/client-assignment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,23 +22,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ cli
   if (!isUuid(body?.uploadBatchId)) return NextResponse.json({ error: "Invalid upload id." }, { status: 400 });
   if (context.isDemoMode || !context.supabase) return NextResponse.json({ ok: true, demo: true });
 
-  const { data: upload } = await context.supabase
-    .from("upload_batches")
-    .select("id")
-    .eq("id", body!.uploadBatchId!)
-    .is("archived_at", null)
-    .maybeSingle();
-  if (!upload) return NextResponse.json({ error: "Upload not found or outside your scope." }, { status: 404 });
-
-  const { error } = await context.supabase
-    .from("client_upload_assignments")
-    .upsert({
-      client_id: clientId,
-      upload_batch_id: body!.uploadBatchId!,
-      assigned_by: context.profile.id,
-      assigned_at: new Date().toISOString()
-    }, { onConflict: "upload_batch_id" });
-  if (error) return NextResponse.json({ error: "Unable to assign upload." }, { status: 500 });
+  try {
+    await loadAssignableUploadClient(context.supabase, clientId);
+    await ensureClientUploadAssignment(context.supabase, {
+      actorId: context.profile.id,
+      clientId,
+      uploadBatchId: body!.uploadBatchId!
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      return NextResponse.json({ error: error.safeMessage, code: error.code }, { status: error.statusCode });
+    }
+    return NextResponse.json({ error: "Unable to assign upload." }, { status: 500 });
+  }
 
   await logAuditEvent(context, "client_upload_assigned", "client", clientId, { uploadBatchId: body!.uploadBatchId! });
   return NextResponse.json({ ok: true, clientId, uploadBatchId: body!.uploadBatchId! });

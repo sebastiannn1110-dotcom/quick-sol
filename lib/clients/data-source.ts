@@ -153,7 +153,10 @@ export async function listClientSummaries(
           retryAfterSeconds: 0
         })
   ]);
-  const metricsResult = lifecycle.status === "ready" && clientIds.length
+  // The metrics RPC has a per-client post-read readiness fence. Run it even
+  // when the broader visible-upload scope is rebuilding: an unrelated or
+  // unassigned upload must not make every client card look stale.
+  const metricsResult = clientIds.length
     ? await supabase.rpc("get_client_business_metrics_v1", { target_client_ids: clientIds })
     : { data: [], error: null };
   const metricsLifecycle: SummaryReadState = metricsResult.error
@@ -170,7 +173,7 @@ export async function listClientSummaries(
   return clients.map((client) => {
     const clientAssignments = assignmentsForClient(assignments, client.id);
     const metric = metrics.get(client.id);
-    const clientLifecycle: SummaryReadState = metricsLifecycle.status !== "ready"
+    const clientLifecycle: SummaryReadState = metricsResult.error
       ? metricsLifecycle
       : !metric
         ? {
@@ -181,14 +184,22 @@ export async function listClientSummaries(
           retryAfterSeconds: 60
         }
         : metric.summary_ready === true
-          ? metricsLifecycle
-          : {
-              status: "stale",
-              currentVersion: metricsLifecycle.currentVersion,
-              requiredVersion: metricsLifecycle.requiredVersion,
-              retryable: true,
-              retryAfterSeconds: 3
-            };
+          ? {
+              status: "ready",
+              currentVersion: lifecycle.status === "ready" ? lifecycle.currentVersion : null,
+              requiredVersion: lifecycle.status === "ready" ? lifecycle.requiredVersion : null,
+              retryable: false,
+              retryAfterSeconds: 0
+            }
+          : lifecycle.status !== "ready"
+            ? lifecycle
+            : {
+                status: "stale",
+                currentVersion: lifecycle.currentVersion,
+                requiredVersion: lifecycle.requiredVersion,
+                retryable: true,
+                retryAfterSeconds: 3
+              };
     const summaryReady = clientLifecycle.status === "ready";
 
     return {

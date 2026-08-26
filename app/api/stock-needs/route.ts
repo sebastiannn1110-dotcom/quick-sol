@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
 import {
   isSummaryUnavailableError,
-  requireBusinessSummaryReady,
-  requireReadySummary,
+  readBusinessSummaryWithFence,
   summaryResponseHeaders,
   summaryUnavailableHttpStatus,
   summaryUnavailablePayload
 } from "@/lib/performance/summary-readiness";
+import { getLoggerContextFromRequest } from "@/lib/logger/context";
+import { logger } from "@/lib/logger/logger";
 import { redactSensitiveFieldsForRole } from "@/lib/security/permissions";
 import { buildStockNeedsResult, type CoverageStatus, type StockNeedsFilters } from "@/lib/stock-needs/stock-needs";
 
@@ -47,34 +48,80 @@ export async function GET(request: Request) {
   if (context instanceof NextResponse) return context;
 
   const filters = parseFilters(request);
+  const logContext = {
+    ...getLoggerContextFromRequest(request),
+    userId: context.profile.id,
+    userRole: context.profile.role,
+    module: "api" as const
+  };
   if (context.isDemoMode || !context.supabase) {
     return NextResponse.json(redactSensitiveFieldsForRole(buildStockNeedsResult({ records: [], filters }), context.profile.role));
   }
 
   try {
-    await requireBusinessSummaryReady(context.supabase, { uploadBatchId: filters.uploadBatchId });
-    const summary = await context.supabase.rpc("get_stock_needs_page_v1", {
-      p_limit: filters.limit,
-      p_offset: filters.offset,
-      p_q: filters.q ?? null,
-      p_customer: filters.customer ?? null,
-      p_supplier: filters.supplier ?? null,
-      p_manufacturer: filters.manufacturer ?? null,
-      p_status: filters.status ?? null,
-      p_coverage: filters.coverageStatus ?? null,
-      p_upload_batch_id: filters.uploadBatchId ?? null
+    const fenced = await readBusinessSummaryWithFence(
+      context.supabase,
+      { uploadBatchId: filters.uploadBatchId },
+      () => context.supabase!.rpc("get_stock_needs_page_v1", {
+        p_limit: filters.limit,
+        p_offset: filters.offset,
+        p_q: filters.q ?? null,
+        p_customer: filters.customer ?? null,
+        p_supplier: filters.supplier ?? null,
+        p_manufacturer: filters.manufacturer ?? null,
+        p_status: filters.status ?? null,
+        p_coverage: filters.coverageStatus ?? null,
+        p_upload_batch_id: filters.uploadBatchId ?? null
+      })
+    );
+    await logger.info({
+      ...logContext,
+      action: "stock_needs_summary_ready",
+      message: "Stock needs summary passed both readiness fences.",
+      status: "completed",
+      metadata: {
+        summaryStatus: fenced.after.status,
+        currentVersion: fenced.after.currentVersion,
+        requiredVersion: fenced.after.requiredVersion,
+        totalScopes: fenced.after.totalScopes,
+        scopedUpload: Boolean(filters.uploadBatchId)
+      }
     });
-    const result = requireReadySummary(summary.data, summary.error);
+    const result = fenced.result;
     return NextResponse.json(redactSensitiveFieldsForRole(result, context.profile.role), {
       headers: summaryResponseHeaders()
     });
   } catch (error) {
     if (isSummaryUnavailableError(error)) {
+      await logger.warn({
+        ...logContext,
+        action: `stock_needs_summary_${error.reason}`,
+        message: "Stock needs summary is unavailable at a readiness fence.",
+        status: "failed",
+        statusCode: summaryUnavailableHttpStatus(error.state),
+        metadata: {
+          summaryStatus: error.state.status,
+          currentVersion: error.state.currentVersion,
+          requiredVersion: error.state.requiredVersion,
+          pendingCount: error.state.pendingCount,
+          totalScopes: error.state.totalScopes,
+          reason: error.reason,
+          scopedUpload: Boolean(filters.uploadBatchId)
+        }
+      });
       return NextResponse.json(summaryUnavailablePayload(error.state), {
         status: summaryUnavailableHttpStatus(error.state),
         headers: summaryResponseHeaders(error.state)
       });
     }
+    await logger.error({
+      ...logContext,
+      action: "stock_needs_unexpected_failure",
+      message: "Unexpected stock needs summary read failure.",
+      status: "failed",
+      statusCode: 500,
+      error
+    });
     return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });
   }
 }

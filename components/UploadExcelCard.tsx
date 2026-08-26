@@ -18,6 +18,7 @@ interface UploadResult {
 interface UploadExcelCardProps {
   onUploaded?: (result: UploadResult) => void;
   onStatusChange?: () => void;
+  client: { id: string; name: string } | null;
 }
 
 interface InitiateResponse {
@@ -64,6 +65,8 @@ interface JobResponse {
 interface ActiveJobState {
   uploadId: string;
   jobId: string;
+  clientId: string;
+  clientName: string;
   fileName: string;
   status: UploadStatus;
   uploadProgress: number;
@@ -428,7 +431,7 @@ function uploadResultFromJob(job: ImportJob, upload: UploadBatch | null): Upload
   };
 }
 
-export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadExcelCardProps) {
+export default function UploadExcelCard({ onUploaded, onStatusChange, client }: UploadExcelCardProps) {
   const { t, tc } = useLanguage();
   const [form, setForm] = useState(INITIAL_FORM);
   const [file, setFile] = useState<File | null>(null);
@@ -460,6 +463,8 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
     setActiveJob((current) => ({
       uploadId: job.upload_batch_id,
       jobId: job.id,
+      clientId: current?.clientId ?? client?.id ?? "",
+      clientName: current?.clientName ?? client?.name ?? "",
       fileName: job.original_file_name,
       status: job.status,
       uploadProgress: upload?.upload_progress_percent ?? current?.uploadProgress ?? 100,
@@ -513,6 +518,10 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       setError(t("upload.fileRequired"));
       return;
     }
+    if (!client) {
+      setError(t("upload.clientRequired"));
+      return;
+    }
 
     cancelRequestedRef.current = false;
     uploadMetricsRef.current = { speedBps: null, etaSeconds: null };
@@ -533,6 +542,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          clientId: client.id,
           fileName: file.name,
           fileSize: file.size,
           fileType: file.type || null,
@@ -547,6 +557,8 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       setActiveJob({
         uploadId: initiate.uploadId,
         jobId: initiate.jobId,
+        clientId: client.id,
+        clientName: client.name,
         fileName: file.name,
         status: "pending_upload",
         uploadProgress: 0,
@@ -609,7 +621,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       const uploadResult = uploadResultFromJob(completed.job, completed.upload);
       const completedMessage = completed.job.status === "completed_with_warnings" ? t("upload.jobCompletedWithWarnings") : t("upload.jobCompleted");
       setMessage(
-        `${completedMessage}. ${t("upload.qualityScore")}: ${uploadResult.dataQualityScore ?? "n/a"}`
+        `${t("upload.completedFor")} ${client.name}. ${completedMessage}. ${t("upload.qualityScore")}: ${uploadResult.dataQualityScore ?? "n/a"}`
       );
       clientLogger.uploadCompleted({
         recordsUploaded: uploadResult.recordsUploaded,
@@ -667,7 +679,8 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       await readJsonResponse(response);
       const completed = await waitForJob(activeJob.jobId);
       const uploadResult = uploadResultFromJob(completed.job, completed.upload);
-      setMessage(completed.job.status === "completed_with_warnings" ? t("upload.jobCompletedWithWarnings") : t("upload.jobCompleted"));
+      const completedMessage = completed.job.status === "completed_with_warnings" ? t("upload.jobCompletedWithWarnings") : t("upload.jobCompleted");
+      setMessage(`${t("upload.completedFor")} ${activeJob.clientName}. ${completedMessage}`);
       onUploaded?.(uploadResult);
     } catch (retryError) {
       setError(retryError instanceof Error ? retryError.message : t("upload.failed"));
@@ -694,6 +707,9 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-slate-950">{t("upload.cardTitle")}</h2>
         <p className="mt-1 text-sm text-slate-500">{t("upload.accepted")}</p>
+        <p className={`mt-2 rounded-md px-3 py-2 text-sm font-medium ${client ? "bg-brand-50 text-brand-800" : "bg-amber-50 text-amber-800"}`}>
+          {client ? `${t("upload.uploadingFor")} ${client.name}` : t("upload.clientRequired")}
+        </p>
       </div>
       <form onSubmit={handleSubmit} className="grid gap-4">
         <div className="grid gap-4 md:grid-cols-2">
@@ -843,7 +859,7 @@ export default function UploadExcelCard({ onUploaded, onStatusChange }: UploadEx
             </button>
           ) : null}
           <button
-            disabled={loading}
+            disabled={loading || !client}
             className="focus-ring rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
           >

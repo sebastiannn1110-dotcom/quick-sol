@@ -9,6 +9,7 @@ import {
   ShoppingCart,
   Sparkles,
   Split,
+  Upload,
   Warehouse
 } from "lucide-react";
 import ClientImage from "@/components/clients/ClientImage";
@@ -19,10 +20,7 @@ export default function ClientCard({ client }: { client: AccountClient }) {
   const { t } = useLanguage();
   const metric = (value: number | null) => value ?? "—";
   return (
-    <Link
-      href={`/clients/${client.id}`}
-      className="group grid min-h-[390px] grid-rows-[104px_auto_1fr_auto] overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-brand-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-    >
+    <article className="group grid min-h-[390px] grid-rows-[104px_auto_1fr_auto] overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-brand-300 hover:shadow-md">
       <ClientImage
         logoUrl={client.logoUrl}
         authorizedIdentificationImageUrl={client.authorizedIdentificationImageUrl}
@@ -32,7 +30,9 @@ export default function ClientCard({ client }: { client: AccountClient }) {
       />
       <div className="px-4 pt-4">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">{client.name}</h2>
+          <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">
+            <Link href={`/clients/${client.id}`} className="focus-ring rounded-sm">{client.name}</Link>
+          </h2>
           <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-medium ${client.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-100 text-slate-600"}`}>
             {t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}
           </span>
@@ -52,10 +52,18 @@ export default function ClientCard({ client }: { client: AccountClient }) {
         <span className="flex min-w-0 items-center gap-2"><Search className="h-4 w-4 shrink-0 text-red-600" /><span>{metric(client.sourcingNeededCount)} {t("clients.sourcingNeeded")}</span></span>
         <span className="col-span-2 flex min-w-0 items-center gap-2"><Warehouse className="h-4 w-4 shrink-0 text-sky-600" /><span>{metric(client.stockWithoutDemandCount)} {t("clients.stockWithoutDemand")}</span></span>
       </div>
-      <div className="flex min-h-11 items-center justify-between border-t border-slate-100 px-4 py-3 text-sm font-semibold text-brand-700">
-        <span>{t("clients.viewClient")}</span>
-        <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden="true" />
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 text-sm font-semibold text-brand-700">
+        <Link href={`/clients/${client.id}`} className="focus-ring inline-flex items-center gap-2 rounded-sm">
+          <span>{t("clients.viewClient")}</span>
+          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" aria-hidden="true" />
+        </Link>
+        {client.canManage ? (
+          <Link href={`/upload?clientId=${encodeURIComponent(client.id)}`} className="focus-ring inline-flex min-h-9 items-center gap-2 rounded-md bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700">
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            {t("clients.uploadFiles")}
+          </Link>
+        ) : null}
       </div>
-    </Link>
+    </article>
   );
 }
