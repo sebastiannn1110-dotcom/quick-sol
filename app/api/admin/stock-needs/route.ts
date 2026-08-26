@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
 import {
   isSummaryUnavailableError,
-  readBusinessSummaryWithFence,
+  readStockNeedsSnapshotWithFence,
   summaryResponseHeaders,
   summaryUnavailableHttpStatus,
   summaryUnavailablePayload
@@ -52,10 +52,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { result } = await readBusinessSummaryWithFence(
+    const { result } = await readStockNeedsSnapshotWithFence(
       context.supabase,
       { uploadBatchId: filters.uploadBatchId },
-      () => context.supabase!.rpc("get_stock_needs_page_v1", {
+      () => context.supabase!.rpc("get_stock_needs_snapshot_page_v1", {
         p_limit: filters.limit,
         p_offset: filters.offset,
         p_q: filters.q ?? null,

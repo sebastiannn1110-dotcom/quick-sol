@@ -197,6 +197,7 @@ export function StockNeedsDashboard({
         signal: controller.signal
       });
       const payload = await response.json().catch(() => null) as unknown;
+      if (controller.signal.aborted || requestRef.current !== controller) return;
       if (!response.ok) {
         const lifecycle = parseSummaryUnavailablePayload(payload);
         if (lifecycle) {
@@ -248,7 +249,7 @@ export function StockNeedsDashboard({
       rebuildRequestRef.current?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint, language]);
+  }, [endpoint]);
 
   const coverageOptions: Array<{ value: "" | CoverageStatus; label: string }> = [
     { value: "", label: copy.allCoverage },

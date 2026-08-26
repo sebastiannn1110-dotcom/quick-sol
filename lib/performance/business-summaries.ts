@@ -10,6 +10,7 @@ import {
 
 export const BUSINESS_SUMMARY_SOURCE_CHUNK_SIZE = 500;
 export const BUSINESS_SUMMARY_MAX_STAGE_BYTES = 8 * 1024 * 1024;
+export const STOCK_NEEDS_SNAPSHOT_CHUNK_SIZE = 1000;
 
 export type BusinessSummaryRebuildClaim = {
   upload_batch_id: string;
@@ -19,6 +20,16 @@ export type BusinessSummaryRebuildClaim = {
   fence_token: number;
   lease_expires_at: string;
   evaluation_at: string;
+};
+
+export type StockNeedsSnapshotRebuildClaim = {
+  scope_id: string;
+  rebuild_id: string;
+  build_generation: number;
+  fence_token: number;
+  lease_expires_at: string;
+  evaluation_at: string;
+  next_chunk_sequence: number;
 };
 
 type BusinessSummarySourceRow = {
@@ -353,7 +364,7 @@ export function isBusinessSummaryFencedError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const code = "code" in error ? String(error.code ?? "") : "";
   const message = "message" in error ? String(error.message ?? "") : "";
-  return code === "55000" && /SUMMARY_(?:WORKER|BUILDER)_FENCED/.test(message);
+  return code === "55000" && /(?:SUMMARY_(?:WORKER|BUILDER)|STOCK_SNAPSHOT_(?:WORKER|SOURCE))_FENCED/.test(message);
 }
 
 export function isRetryableBusinessSummaryError(error: unknown) {
@@ -365,6 +376,125 @@ export function isRetryableBusinessSummaryError(error: unknown) {
 
 export function safeBusinessSummaryErrorCode(error: unknown) {
   return rpcErrorCode(error).replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80) || "SUMMARY_REBUILD_FAILED";
+}
+
+function snapshotResult(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+async function heartbeatStockNeedsSnapshot(
+  supabase: SupabaseClient,
+  claim: StockNeedsSnapshotRebuildClaim,
+  workerId: string,
+  leaseSeconds: number
+) {
+  const heartbeat = await supabase.rpc("heartbeat_stock_needs_snapshot_rebuild_v1", {
+    input_scope_id: claim.scope_id,
+    input_worker_id: workerId,
+    input_rebuild_id: claim.rebuild_id,
+    input_generation: claim.build_generation,
+    input_fence_token: claim.fence_token,
+    input_lease_seconds: leaseSeconds
+  });
+  if (heartbeat.error) throw heartbeat.error;
+}
+
+export async function rebuildStockNeedsSnapshot(
+  supabase: SupabaseClient,
+  claim: StockNeedsSnapshotRebuildClaim,
+  workerId: string,
+  options: { chunkSize?: number; leaseSeconds?: number } = {}
+) {
+  const chunkSize = Math.min(
+    Math.max(Math.floor(options.chunkSize ?? STOCK_NEEDS_SNAPSHOT_CHUNK_SIZE), 1),
+    2000
+  );
+  const leaseSeconds = Math.min(Math.max(Math.floor(options.leaseSeconds ?? 120), 30), 900);
+  let chunkSequence = Math.max(Math.floor(Number(claim.next_chunk_sequence) || 0), 0);
+  let chunksThisRun = 0;
+  let rowsThisRun = 0;
+  let sourcesThisRun = 0;
+  let peakChunkRows = 0;
+  let peakChunkBytes = 0;
+
+  while (true) {
+    await heartbeatStockNeedsSnapshot(supabase, claim, workerId, leaseSeconds);
+    const staged = await supabase.rpc("stage_stock_needs_snapshot_chunk_v1", {
+      input_scope_id: claim.scope_id,
+      input_worker_id: workerId,
+      input_rebuild_id: claim.rebuild_id,
+      input_generation: claim.build_generation,
+      input_fence_token: claim.fence_token,
+      input_chunk_sequence: chunkSequence,
+      input_limit: chunkSize
+    });
+    if (staged.error) throw staged.error;
+    const receipt = snapshotResult(staged.data);
+    if (!receipt || receipt.done === undefined) throw new Error("STOCK_SNAPSHOT_STAGE_PROTOCOL_INVALID");
+    if (receipt.done === true) break;
+    if (Number(receipt.chunkSequence) !== chunkSequence) {
+      throw new Error("STOCK_SNAPSHOT_STAGE_SEQUENCE_INVALID");
+    }
+    const chunkRows = Number(receipt.chunkRows);
+    const chunkSources = Number(receipt.chunkSources);
+    const chunkBytes = Number(receipt.chunkBytes);
+    if (!Number.isSafeInteger(chunkRows) || chunkRows < 1 || chunkRows > chunkSize
+      || !Number.isSafeInteger(chunkSources) || chunkSources < 0 || chunkSources > chunkRows * 5
+      || !Number.isSafeInteger(chunkBytes) || chunkBytes < 0) {
+      throw new Error("STOCK_SNAPSHOT_STAGE_METRICS_INVALID");
+    }
+    chunksThisRun += 1;
+    rowsThisRun += chunkRows;
+    sourcesThisRun += chunkSources;
+    peakChunkRows = Math.max(peakChunkRows, chunkRows);
+    peakChunkBytes = Math.max(peakChunkBytes, chunkBytes);
+    chunkSequence += 1;
+  }
+
+  await heartbeatStockNeedsSnapshot(supabase, claim, workerId, leaseSeconds);
+  const published = await supabase.rpc("publish_stock_needs_snapshot_rebuild_v1", {
+    input_scope_id: claim.scope_id,
+    input_worker_id: workerId,
+    input_rebuild_id: claim.rebuild_id,
+    input_generation: claim.build_generation,
+    input_fence_token: claim.fence_token
+  });
+  if (published.error) throw published.error;
+  const publish = snapshotResult(published.data);
+  if (!publish || publish.status !== "ready" || Number(publish.generation) !== claim.build_generation) {
+    throw new Error("STOCK_SNAPSHOT_PUBLISH_PROTOCOL_INVALID");
+  }
+  return {
+    rebuilt: true,
+    scopeId: claim.scope_id,
+    generation: claim.build_generation,
+    chunksThisRun,
+    rowsThisRun,
+    sourcesThisRun,
+    peakChunkRows,
+    peakChunkBytes,
+    publish
+  };
+}
+
+export async function cleanupStockNeedsSnapshotGenerations(
+  supabase: SupabaseClient,
+  batchLimit = 1000
+) {
+  const safeLimit = Math.min(Math.max(Math.floor(batchLimit), 1), 2000);
+  const cleaned = await supabase.rpc("cleanup_stock_needs_snapshot_generations_v1", {
+    input_batch_limit: safeLimit
+  });
+  if (cleaned.error) throw cleaned.error;
+  const receipt = snapshotResult(cleaned.data);
+  const rowsDeleted = Number(receipt?.rowsDeleted);
+  if (!receipt || typeof receipt.done !== "boolean"
+    || !Number.isSafeInteger(rowsDeleted) || rowsDeleted < 0 || rowsDeleted > safeLimit) {
+    throw new Error("STOCK_SNAPSHOT_CLEANUP_PROTOCOL_INVALID");
+  }
+  return { rowsDeleted, done: receipt.done, batchLimit: safeLimit };
 }
 
 export async function rebuildBusinessUploadSummary(

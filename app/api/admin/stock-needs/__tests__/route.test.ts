@@ -41,14 +41,12 @@ describe("GET /api/admin/stock-needs", () => {
 
     expect(response.status).toBe(200);
     expect(rpc).toHaveBeenCalledTimes(3);
-    expect(rpc).toHaveBeenNthCalledWith(1, "get_business_summary_state_v2", {
-      p_upload_batch_id: null,
-      p_client_id: null
+    expect(rpc).toHaveBeenNthCalledWith(1, "get_stock_needs_snapshot_state_v1", {
+      p_upload_batch_id: null
     });
-    expect(rpc).toHaveBeenNthCalledWith(2, "get_stock_needs_page_v1", expect.any(Object));
-    expect(rpc).toHaveBeenNthCalledWith(3, "get_business_summary_state_v2", {
-      p_upload_batch_id: null,
-      p_client_id: null
+    expect(rpc).toHaveBeenNthCalledWith(2, "get_stock_needs_snapshot_page_v1", expect.any(Object));
+    expect(rpc).toHaveBeenNthCalledWith(3, "get_stock_needs_snapshot_state_v1", {
+      p_upload_batch_id: null
     });
     expect(redactSensitiveFieldsForRole).toHaveBeenCalledWith(page, role);
   });
@@ -74,8 +72,8 @@ describe("GET /api/admin/stock-needs", () => {
   it("contains no user-facing raw-row or compatibility fallback path", () => {
     const source = readFileSync(path.join(process.cwd(), "app/api/admin/stock-needs/route.ts"), "utf8");
 
-    expect(source).toContain("readBusinessSummaryWithFence");
-    expect(source).toContain("get_stock_needs_page_v1");
+    expect(source).toContain("readStockNeedsSnapshotWithFence");
+    expect(source).toContain("get_stock_needs_snapshot_page_v1");
     expect(source).not.toContain("loadStockNeedsInput");
     expect(source).not.toContain("complete: true");
     expect(source).not.toContain('from("business_records")');

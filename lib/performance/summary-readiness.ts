@@ -37,6 +37,8 @@ export type SummaryUnavailablePayload = SummaryReadState & {
 type PostgrestErrorLike = {
   code?: string | null;
   message?: string | null;
+  details?: unknown;
+  hint?: unknown;
 };
 
 const CONTRACT_UNAVAILABLE_CODES = new Set(["PGRST202", "42883"]);
@@ -213,6 +215,16 @@ export async function loadBusinessSummaryState(
   return summaryReadState(result.data, result.error);
 }
 
+export async function loadStockNeedsSnapshotState(
+  supabase: SupabaseClient,
+  scope: { uploadBatchId?: string | null } = {}
+) {
+  const result = await supabase.rpc("get_stock_needs_snapshot_state_v1", {
+    p_upload_batch_id: scope.uploadBatchId ?? null
+  });
+  return summaryReadState(result.data, result.error);
+}
+
 export async function requestBusinessSummaryRebuild(
   supabase: SupabaseClient,
   scope: { uploadBatchId?: string | null; clientId?: string | null } = {}
@@ -254,7 +266,20 @@ export async function requireBusinessSummaryReady(
   scope: { uploadBatchId?: string | null; clientId?: string | null } = {}
 ) {
   const state = await loadBusinessSummaryState(supabase, scope);
-  if (state.status !== "ready") throw new SummaryUnavailableError(state, "pre_read");
+  if (state.status !== "ready") {
+    throw new SummaryUnavailableError(state, "pre_read", { before: state });
+  }
+  return state;
+}
+
+export async function requireStockNeedsSnapshotReady(
+  supabase: SupabaseClient,
+  scope: { uploadBatchId?: string | null } = {}
+) {
+  const state = await loadStockNeedsSnapshotState(supabase, scope);
+  if (state.status !== "ready") {
+    throw new SummaryUnavailableError(state, "pre_read", { before: state });
+  }
   return state;
 }
 
@@ -263,13 +288,127 @@ export type SummaryUnavailableReason = "pre_read" | "post_read" | "version_chang
 export class SummaryUnavailableError extends Error {
   readonly state: SummaryReadState;
   readonly reason: SummaryUnavailableReason;
+  readonly before: SummaryReadState | null;
+  readonly after: SummaryReadState | null;
+  readonly rpcDurationMs: number | null;
 
-  constructor(state: SummaryReadState, reason: SummaryUnavailableReason = "data_fence") {
+  constructor(
+    state: SummaryReadState,
+    reason: SummaryUnavailableReason = "data_fence",
+    fences: {
+      before?: SummaryReadState | null;
+      after?: SummaryReadState | null;
+      rpcDurationMs?: number | null;
+    } = {}
+  ) {
     super(state.status === "contract_unavailable" ? "SUMMARY_CONTRACT_UNAVAILABLE" : "SUMMARY_NOT_READY");
     this.name = "SummaryUnavailableError";
     this.state = state;
     this.reason = reason;
+    this.before = fences.before ?? null;
+    this.after = fences.after ?? null;
+    this.rpcDurationMs = fences.rpcDurationMs ?? null;
   }
+
+  withFences(before: SummaryReadState, after: SummaryReadState, rpcDurationMs = this.rpcDurationMs) {
+    return new SummaryUnavailableError(this.state, this.reason, { before, after, rpcDurationMs });
+  }
+}
+
+export type SummaryDataFailureKind = "rpc" | "transport" | "shape";
+export type SummaryDataFailureCategory =
+  | "STATEMENT_TIMEOUT"
+  | "SERIALIZATION_FAILURE"
+  | "DEADLOCK"
+  | "CONNECTION_FAILURE"
+  | "PERMISSION_FAILURE"
+  | "FUNCTION_MISSING"
+  | "POSTGREST_FAILURE"
+  | "DATA_SHAPE_FAILURE"
+  | "UNKNOWN_DB_FAILURE";
+
+type SummaryDataErrorClass = "PostgrestError" | "TransportError" | "DataShapeError";
+
+function summaryDataFailureCategory(kind: SummaryDataFailureKind, dbCode: string | null): SummaryDataFailureCategory {
+  if (kind === "shape") return "DATA_SHAPE_FAILURE";
+  if (dbCode === "57014") return "STATEMENT_TIMEOUT";
+  if (dbCode === "40001") return "SERIALIZATION_FAILURE";
+  if (dbCode === "40P01") return "DEADLOCK";
+  if (dbCode === "42501") return "PERMISSION_FAILURE";
+  if (dbCode === "42883" || dbCode === "PGRST202") return "FUNCTION_MISSING";
+  if (dbCode?.startsWith("08") || ["53300", "57P01", "57P03"].includes(dbCode ?? "")) {
+    return "CONNECTION_FAILURE";
+  }
+  if (dbCode?.startsWith("PGRST")) return "POSTGREST_FAILURE";
+  if (kind === "transport") return "CONNECTION_FAILURE";
+  return "UNKNOWN_DB_FAILURE";
+}
+
+const RETRYABLE_SUMMARY_DATA_CATEGORIES = new Set<SummaryDataFailureCategory>([
+  "STATEMENT_TIMEOUT",
+  "SERIALIZATION_FAILURE",
+  "DEADLOCK",
+  "CONNECTION_FAILURE"
+]);
+
+export class SummaryDataReadError extends Error {
+  readonly kind: SummaryDataFailureKind;
+  readonly dbCode: string | null;
+  readonly stage: "data_rpc" | "data_transport" | "data_shape";
+  readonly category: SummaryDataFailureCategory;
+  readonly errorClass: SummaryDataErrorClass;
+  readonly retryable: boolean;
+  readonly before: SummaryReadState | null;
+  readonly after: SummaryReadState | null;
+  readonly rpcDurationMs: number | null;
+  readonly detailsPresent: boolean;
+  readonly hintPresent: boolean;
+
+  constructor(input: {
+    kind: SummaryDataFailureKind;
+    dbCode?: string | null;
+    before?: SummaryReadState | null;
+    after?: SummaryReadState | null;
+    rpcDurationMs?: number | null;
+    detailsPresent?: boolean;
+    hintPresent?: boolean;
+  }) {
+    super(input.kind === "shape" ? "SUMMARY_DATA_SHAPE_INVALID" : "SUMMARY_DATA_READ_FAILED");
+    this.name = "SummaryDataReadError";
+    this.kind = input.kind;
+    this.dbCode = input.dbCode ?? null;
+    this.stage = input.kind === "rpc" ? "data_rpc" : input.kind === "transport" ? "data_transport" : "data_shape";
+    this.category = summaryDataFailureCategory(input.kind, this.dbCode);
+    this.errorClass = input.kind === "rpc" ? "PostgrestError" : input.kind === "transport" ? "TransportError" : "DataShapeError";
+    this.retryable = RETRYABLE_SUMMARY_DATA_CATEGORIES.has(this.category);
+    this.before = input.before ?? null;
+    this.after = input.after ?? null;
+    this.rpcDurationMs = input.rpcDurationMs ?? null;
+    this.detailsPresent = input.detailsPresent ?? false;
+    this.hintPresent = input.hintPresent ?? false;
+  }
+
+  withFences(before: SummaryReadState, after: SummaryReadState, rpcDurationMs = this.rpcDurationMs) {
+    return new SummaryDataReadError({
+      kind: this.kind,
+      dbCode: this.dbCode,
+      before,
+      after,
+      rpcDurationMs,
+      detailsPresent: this.detailsPresent,
+      hintPresent: this.hintPresent
+    });
+  }
+}
+
+export function isSummaryDataReadError(value: unknown): value is SummaryDataReadError {
+  return value instanceof SummaryDataReadError;
+}
+
+function sanitizedDatabaseCode(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const code = (value as { code?: unknown }).code;
+  return typeof code === "string" && /^[A-Z0-9_]{3,32}$/i.test(code) ? code.toUpperCase() : null;
 }
 
 const SUMMARY_VERSION_FIELDS = [
@@ -301,29 +440,74 @@ export async function readBusinessSummaryWithFence<T>(
   scope: { uploadBatchId?: string | null; clientId?: string | null },
   readSummary: () => PromiseLike<{ data: unknown; error?: PostgrestErrorLike | null }>
 ) {
-  const before = await requireBusinessSummaryReady(supabase, scope);
+  return readSummaryWithFence<T>(
+    () => requireBusinessSummaryReady(supabase, scope),
+    () => loadBusinessSummaryState(supabase, scope),
+    readSummary
+  );
+}
+
+export async function readStockNeedsSnapshotWithFence<T>(
+  supabase: SupabaseClient,
+  scope: { uploadBatchId?: string | null },
+  readSummary: () => PromiseLike<{ data: unknown; error?: PostgrestErrorLike | null }>
+) {
+  return readSummaryWithFence<T>(
+    () => requireStockNeedsSnapshotReady(supabase, scope),
+    () => loadStockNeedsSnapshotState(supabase, scope),
+    readSummary
+  );
+}
+
+async function readSummaryWithFence<T>(
+  loadBefore: () => Promise<SummaryReadState>,
+  loadAfter: () => Promise<SummaryReadState>,
+  readSummary: () => PromiseLike<{ data: unknown; error?: PostgrestErrorLike | null }>
+) {
+  const before = await loadBefore();
   let summary: { data: unknown; error?: PostgrestErrorLike | null } | null = null;
   let readError: unknown;
+  const rpcStartedAt = Date.now();
+  let rpcDurationMs = 0;
 
   try {
     summary = await readSummary();
   } catch (error) {
     readError = error;
+  } finally {
+    rpcDurationMs = Date.now() - rpcStartedAt;
   }
 
-  const after = await loadBusinessSummaryState(supabase, scope);
-  if (after.status !== "ready") throw new SummaryUnavailableError(after, "post_read");
+  const after = await loadAfter();
+  if (after.status !== "ready") {
+    throw new SummaryUnavailableError(after, "post_read", { before, after, rpcDurationMs });
+  }
   if (summaryVersionChanged(before, after)) {
-    throw new SummaryUnavailableError(staleAfterVersionChange(after), "version_changed");
+    throw new SummaryUnavailableError(staleAfterVersionChange(after), "version_changed", { before, after, rpcDurationMs });
   }
-  if (readError) throw readError;
-  if (!summary) throw new Error("SUMMARY_DATA_PROTOCOL_INVALID");
+  if (readError) {
+    throw new SummaryDataReadError({
+      kind: "transport",
+      dbCode: sanitizedDatabaseCode(readError),
+      before,
+      after,
+      rpcDurationMs
+    });
+  }
+  if (!summary) throw new SummaryDataReadError({ kind: "shape", before, after, rpcDurationMs });
 
-  return {
-    result: requireReadySummary<T>(summary.data, summary.error),
-    before,
-    after
-  };
+  try {
+    return {
+      result: requireReadySummary<T>(summary.data, summary.error),
+      before,
+      after,
+      rpcDurationMs
+    };
+  } catch (error) {
+    if (isSummaryDataReadError(error)) throw error.withFences(before, after, rpcDurationMs);
+    if (isSummaryUnavailableError(error)) throw error.withFences(before, after, rpcDurationMs);
+    throw error;
+  }
 }
 
 export function requireReadySummary<T>(data: unknown, error?: PostgrestErrorLike | null) {
@@ -331,19 +515,23 @@ export function requireReadySummary<T>(data: unknown, error?: PostgrestErrorLike
     if (isSummaryContractUnavailable(error)) {
       throw new SummaryUnavailableError(summaryReadState(null, error));
     }
-    const rpcError = new Error("SUMMARY_DATA_READ_FAILED") as Error & { code?: string | null };
-    rpcError.code = error.code;
-    throw rpcError;
+    throw new SummaryDataReadError({
+      kind: "rpc",
+      dbCode: sanitizedDatabaseCode(error),
+      detailsPresent: error.details !== undefined && error.details !== null && error.details !== "",
+      hintPresent: error.hint !== undefined && error.hint !== null && error.hint !== ""
+    });
   }
   const unwrapped = unwrapSummaryRpcData(data);
-  if (unwrapped === null || unwrapped === undefined) throw new Error("SUMMARY_DATA_PROTOCOL_INVALID");
+  if (unwrapped === null || unwrapped === undefined) throw new SummaryDataReadError({ kind: "shape" });
   const row = recordValue(unwrapped);
-  if (!row) throw new Error("SUMMARY_DATA_PROTOCOL_INVALID");
+  if (!row) throw new SummaryDataReadError({ kind: "shape" });
   const postReadFence = firstValue(row, ["summaryReady", "summary_ready", "ready"]);
   // State v2 is the preflight authority, while the embedded v1 flag remains a
   // required post-read fence: a business write may dirty the scope between the
   // two RPC calls. Never publish that stale page as zero/ready data.
-  if (postReadFence !== true) throw new SummaryUnavailableError(summaryReadState(row));
+  if (postReadFence === false) throw new SummaryUnavailableError(summaryReadState(row));
+  if (postReadFence !== true) throw new SummaryDataReadError({ kind: "shape" });
   return unwrapped as T;
 }
 

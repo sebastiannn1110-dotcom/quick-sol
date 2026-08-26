@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/context";
 import {
+  isSummaryDataReadError,
   isSummaryUnavailableError,
-  readBusinessSummaryWithFence,
+  readStockNeedsSnapshotWithFence,
   summaryResponseHeaders,
   summaryUnavailableHttpStatus,
   summaryUnavailablePayload
@@ -15,6 +16,7 @@ import { buildStockNeedsResult, type CoverageStatus, type StockNeedsFilters } fr
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const STOCK_NEEDS_RPC = "get_stock_needs_snapshot_page_v1";
 const COVERAGE_STATUSES = new Set<CoverageStatus>(["in_stock", "partial_stock", "no_stock", "overstock", "unknown"]);
 
 function cleanText(value: string | null, max = 120) {
@@ -44,6 +46,7 @@ function parseFilters(request: Request): StockNeedsFilters {
 }
 
 export async function GET(request: Request) {
+  const startedAt = Date.now();
   const context = await requireRole(request, ["admin", "manager", "employee"]);
   if (context instanceof NextResponse) return context;
 
@@ -59,10 +62,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const fenced = await readBusinessSummaryWithFence(
+    const fenced = await readStockNeedsSnapshotWithFence(
       context.supabase,
       { uploadBatchId: filters.uploadBatchId },
-      () => context.supabase!.rpc("get_stock_needs_page_v1", {
+      () => context.supabase!.rpc(STOCK_NEEDS_RPC, {
         p_limit: filters.limit,
         p_offset: filters.offset,
         p_q: filters.q ?? null,
@@ -79,10 +82,17 @@ export async function GET(request: Request) {
       action: "stock_needs_summary_ready",
       message: "Stock needs summary passed both readiness fences.",
       status: "completed",
+      durationMs: Date.now() - startedAt,
       metadata: {
+        rpcName: STOCK_NEEDS_RPC,
+        stage: "response",
+        preStatus: fenced.before.status,
+        postStatus: fenced.after.status,
         summaryStatus: fenced.after.status,
         currentVersion: fenced.after.currentVersion,
         requiredVersion: fenced.after.requiredVersion,
+        rpcDurationMs: fenced.rpcDurationMs,
+        totalDurationMs: Date.now() - startedAt,
         totalScopes: fenced.after.totalScopes,
         scopedUpload: Boolean(filters.uploadBatchId)
       }
@@ -93,19 +103,30 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     if (isSummaryUnavailableError(error)) {
+      const expectedHttp = summaryUnavailableHttpStatus(error.state);
       await logger.warn({
         ...logContext,
         action: `stock_needs_summary_${error.reason}`,
         message: "Stock needs summary is unavailable at a readiness fence.",
         status: "failed",
-        statusCode: summaryUnavailableHttpStatus(error.state),
+        statusCode: expectedHttp,
+        durationMs: Date.now() - startedAt,
         metadata: {
+          internalCode: "STOCK_NEEDS_READINESS_CHANGED",
+          rpcName: STOCK_NEEDS_RPC,
+          stage: error.reason,
+          preStatus: error.before?.status ?? (error.reason === "pre_read" ? error.state.status : null),
+          postStatus: error.after?.status ?? null,
           summaryStatus: error.state.status,
           currentVersion: error.state.currentVersion,
           requiredVersion: error.state.requiredVersion,
+          rpcDurationMs: error.rpcDurationMs,
+          totalDurationMs: Date.now() - startedAt,
           pendingCount: error.state.pendingCount,
           totalScopes: error.state.totalScopes,
           reason: error.reason,
+          expectedHttp,
+          retryable: error.state.retryable,
           scopedUpload: Boolean(filters.uploadBatchId)
         }
       });
@@ -114,12 +135,65 @@ export async function GET(request: Request) {
         headers: summaryResponseHeaders(error.state)
       });
     }
+    if (isSummaryDataReadError(error)) {
+      const internalCode = error.kind === "rpc"
+        ? "STOCK_NEEDS_RPC_FAILED"
+        : error.kind === "transport"
+          ? "STOCK_NEEDS_TRANSPORT_FAILED"
+          : "STOCK_NEEDS_DATA_SHAPE_INVALID";
+      await logger.error({
+        ...logContext,
+        action: error.kind === "shape"
+          ? "stock_needs_data_shape_invalid"
+          : error.kind === "transport"
+            ? "stock_needs_transport_failed"
+            : "stock_needs_rpc_failed",
+        message: error.message,
+        status: "failed",
+        statusCode: 500,
+        durationMs: Date.now() - startedAt,
+        metadata: {
+          internalCode,
+          dbCode: error.dbCode,
+          errorCategory: error.category,
+          errorClass: error.errorClass,
+          detailsPresent: error.detailsPresent,
+          hintPresent: error.hintPresent,
+          rpcName: STOCK_NEEDS_RPC,
+          stage: error.stage,
+          preStatus: error.before?.status ?? null,
+          postStatus: error.after?.status ?? null,
+          currentVersion: error.after?.currentVersion ?? error.before?.currentVersion ?? null,
+          requiredVersion: error.after?.requiredVersion ?? error.before?.requiredVersion ?? null,
+          rpcDurationMs: error.rpcDurationMs,
+          totalDurationMs: Date.now() - startedAt,
+          expectedHttp: 500,
+          retryable: error.retryable
+        },
+        error
+      });
+      return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });
+    }
     await logger.error({
       ...logContext,
       action: "stock_needs_unexpected_failure",
       message: "Unexpected stock needs summary read failure.",
       status: "failed",
       statusCode: 500,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        internalCode: "STOCK_NEEDS_UNEXPECTED_FAILURE",
+        rpcName: STOCK_NEEDS_RPC,
+        stage: "unknown",
+        preStatus: null,
+        postStatus: null,
+        currentVersion: null,
+        requiredVersion: null,
+        rpcDurationMs: null,
+        totalDurationMs: Date.now() - startedAt,
+        expectedHttp: 500,
+        retryable: false
+      },
       error
     });
     return NextResponse.json({ error: "Unable to load stock and needs." }, { status: 500 });

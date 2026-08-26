@@ -6,6 +6,7 @@ import {
   parseSummaryUnavailablePayload,
   readBusinessSummaryWithFence,
   requireReadySummary,
+  SummaryDataReadError,
   SummaryUnavailableError,
   summaryReadState,
   summaryUnavailableHttpStatus,
@@ -71,6 +72,80 @@ describe("summary readiness contract", () => {
     expect(() => requireReadySummary({ summaryReady: false, items: [] })).toThrowError(SummaryUnavailableError);
     expect(requireReadySummary({ summaryReady: true, items: [] })).toEqual({ summaryReady: true, items: [] });
     expect(summaryReadState({ summaryReady: false }).status).toBe("stale");
+  });
+
+  it("preserves only the sanitized database code on a real RPC failure", () => {
+    expect(() => requireReadySummary(null, {
+      code: "57014",
+      message: "canceling statement due to statement timeout"
+    })).toThrowError(SummaryDataReadError);
+
+    try {
+      requireReadySummary(null, { code: "57014", message: "database internals" });
+    } catch (error) {
+      expect(error).toMatchObject({
+        message: "SUMMARY_DATA_READ_FAILED",
+        kind: "rpc",
+        stage: "data_rpc",
+        dbCode: "57014",
+        category: "STATEMENT_TIMEOUT",
+        errorClass: "PostgrestError",
+        retryable: true
+      });
+      expect(error).not.toHaveProperty("details");
+      expect(error).not.toHaveProperty("hint");
+    }
+  });
+
+  it("classifies an invalid RPC payload as DATA_SHAPE_INVALID", () => {
+    expect(() => requireReadySummary({ items: [], totals: {}, meta: {} })).toThrowError(
+      "SUMMARY_DATA_SHAPE_INVALID"
+    );
+    expect(() => requireReadySummary([])).toThrowError("SUMMARY_DATA_SHAPE_INVALID");
+  });
+
+  it.each([
+    ["57014", "STATEMENT_TIMEOUT", true],
+    ["40001", "SERIALIZATION_FAILURE", true],
+    ["40P01", "DEADLOCK", true],
+    ["08006", "CONNECTION_FAILURE", true],
+    ["42501", "PERMISSION_FAILURE", false],
+    ["PGRST500", "POSTGREST_FAILURE", false],
+    ["XX000", "UNKNOWN_DB_FAILURE", false]
+  ] as const)("classifies injected database code %s as %s", (code, category, retryable) => {
+    try {
+      requireReadySummary(null, { code, message: "must not be retained" });
+      throw new Error("EXPECTED_SUMMARY_DATA_ERROR");
+    } catch (error) {
+      expect(error).toMatchObject({ dbCode: code, category, retryable });
+      expect(error).not.toHaveProperty("code");
+      expect(JSON.stringify(error)).not.toContain("must not be retained");
+    }
+  });
+
+  it("classifies an interrupted transport separately and preserves both READY fences", async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: { summaryReady: true, status: "ready", currentVersion: 4, requiredVersion: 4 }, error: null })
+      .mockResolvedValueOnce({ data: { summaryReady: true, status: "ready", currentVersion: 4, requiredVersion: 4 }, error: null });
+    const supabase = { rpc } as unknown as SupabaseClient;
+    const interrupted = Object.assign(new Error("connection payload must not be retained"), { code: "08006" });
+
+    await expect(readBusinessSummaryWithFence(
+      supabase,
+      {},
+      async () => { throw interrupted; }
+    )).rejects.toMatchObject({
+      message: "SUMMARY_DATA_READ_FAILED",
+      kind: "transport",
+      stage: "data_transport",
+      dbCode: "08006",
+      category: "CONNECTION_FAILURE",
+      errorClass: "TransportError",
+      retryable: true,
+      before: { status: "ready" },
+      after: { status: "ready" },
+      rpcDurationMs: expect.any(Number)
+    });
   });
 
   it("parses only sanitized lifecycle response bodies on the client", () => {

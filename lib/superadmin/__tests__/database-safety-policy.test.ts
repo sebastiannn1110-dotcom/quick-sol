@@ -12,15 +12,18 @@ const baseMigrationPath = "supabase/migrations/20260816120000_super_admin_databa
 const migrationPath = "supabase/migrations/20260822140000_harden_database_safety_backend_evidence.sql";
 const roundFourMigrationPath = "supabase/migrations/20260823120000_harden_import_job_pipeline.sql";
 const roundSevenMigrationPath = "supabase/migrations/20260825120000_high_volume_persistence_and_summary_pipeline.sql";
+const roundSevenFourMigrationPath = "supabase/migrations/20260826160000_stock_needs_snapshot_r74.sql";
 const baseMigration = readFileSync(path.join(process.cwd(), baseMigrationPath), "utf8");
 const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
 const roundFourMigration = readFileSync(path.join(process.cwd(), roundFourMigrationPath), "utf8");
 const roundSevenMigration = readFileSync(path.join(process.cwd(), roundSevenMigrationPath), "utf8");
+const roundSevenFourMigration = readFileSync(path.join(process.cwd(), roundSevenFourMigrationPath), "utf8");
 const normalized = migration.toLowerCase();
 
 const historicalPublicTables = [
   "admin_email_attachments", "admin_email_messages", "ai_conversations", "ai_messages", "api_rate_limits",
   "audit_logs", "business_mpn_summaries", "business_opportunity_entities", "business_records", "business_scope_counters",
+  "business_stock_needs_scopes", "business_stock_needs_snapshot_rows", "business_stock_needs_snapshot_sources",
   "business_summary_entity_stage", "business_summary_mpn_stage",
   "business_upload_versions", "chat_attachments", "chat_conversation_members", "chat_conversations", "chat_messages",
   "client_logs", "client_private_details", "client_upload_assignments", "clients", "email_alert_rules",
@@ -43,13 +46,13 @@ const newSafetyTables = [
 ].sort();
 
 describe("Database Safety Center policy", () => {
-  it("covers the exact 64 existing public tables and four protected safety tables", () => {
+  it("covers the exact 67 existing public tables and four protected safety tables", () => {
     const publicTables = DATABASE_SAFETY_TABLE_POLICY.filter((entry) => entry.schema === "public").map((entry) => entry.table);
     expect([...new Set(publicTables)].sort()).toEqual([...historicalPublicTables, ...newSafetyTables].sort());
-    expect(publicTables).toHaveLength(68);
+    expect(publicTables).toHaveLength(71);
   });
 
-  it("derives the 64-table baseline from the actual local migration corpus", () => {
+  it("derives the 67-table baseline from the actual local migration corpus", () => {
     const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
     const corpus = readdirSync(migrationsDirectory)
       .filter((name) => name.endsWith(".sql") && ![path.basename(migrationPath), path.basename(baseMigrationPath)].includes(name))
@@ -67,12 +70,15 @@ describe("Database Safety Center policy", () => {
       .map((match) => `${match[1]}.${match[2]}`);
     const roundSevenTables = [...roundSevenMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
       .map((match) => `${match[1]}.${match[2]}`);
+    const roundSevenFourTables = [...roundSevenFourMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+      .map((match) => `${match[1]}.${match[2]}`);
     const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
-    expect([...new Set([...sqlTables, ...roundFourTables, ...roundSevenTables])].sort()).toEqual([...policyTables].sort());
+    expect([...new Set([...sqlTables, ...roundFourTables, ...roundSevenTables, ...roundSevenFourTables])].sort())
+      .toEqual([...policyTables].sort());
   });
 
-  it("uses an explicit 47-table DELETE allowlist and preserves identity, security and observability", () => {
-    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(47);
+  it("uses an explicit 50-table DELETE allowlist and preserves identity, security and observability", () => {
+    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(50);
     expect(DATABASE_SAFETY_DELETE_TABLES.map((entry) => `${entry.schema}.${entry.table}`)).toContain(
       "public.import_job_staging_rows"
     );

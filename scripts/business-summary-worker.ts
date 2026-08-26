@@ -3,11 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import {
+  cleanupStockNeedsSnapshotGenerations,
   isBusinessSummaryFencedError,
   isRetryableBusinessSummaryError,
   rebuildBusinessUploadSummary,
+  rebuildStockNeedsSnapshot,
   safeBusinessSummaryErrorCode,
-  type BusinessSummaryRebuildClaim
+  type BusinessSummaryRebuildClaim,
+  type StockNeedsSnapshotRebuildClaim
 } from "@/lib/performance/business-summaries";
 import { getRequiredServerEnv, getSupabaseServiceRoleKey } from "@/lib/security/env";
 import { serverSupabaseClientOptions } from "@/lib/supabase/node-client-options";
@@ -45,6 +48,10 @@ const sourceChunkSize = Math.min(
   Math.max(Math.floor(Number(process.env.BUSINESS_SUMMARY_CHUNK_SIZE) || 500), 1),
   500
 );
+const stockNeedsChunkSize = Math.min(
+  Math.max(Math.floor(Number(process.env.STOCK_NEEDS_SNAPSHOT_CHUNK_SIZE) || 1000), 1),
+  2000
+);
 let stopping = false;
 process.on("SIGINT", () => { stopping = true; });
 process.on("SIGTERM", () => { stopping = true; });
@@ -55,6 +62,7 @@ async function main() {
   const supabase = createClient(getRequiredServerEnv("NEXT_PUBLIC_SUPABASE_URL"), key, serverSupabaseClientOptions());
 
   while (!stopping) {
+    let worked = false;
     const claim = await supabase.rpc("claim_business_summary_rebuild_v2", {
       input_worker_id: workerId,
       input_lease_seconds: leaseSeconds
@@ -62,6 +70,7 @@ async function main() {
     if (claim.error) throw claim.error;
     const job = ((claim.data ?? []) as unknown as BusinessSummaryRebuildClaim[])[0] ?? null;
     if (job) {
+      worked = true;
       try {
         await rebuildBusinessUploadSummary(supabase, job, workerId, {
           chunkSize: sourceChunkSize,
@@ -83,8 +92,38 @@ async function main() {
         }
       }
     }
+    const snapshotClaimResult = await supabase.rpc("claim_stock_needs_snapshot_rebuild_v1", {
+      input_worker_id: workerId,
+      input_lease_seconds: leaseSeconds
+    });
+    if (snapshotClaimResult.error) throw snapshotClaimResult.error;
+    const snapshot = ((snapshotClaimResult.data ?? []) as unknown as StockNeedsSnapshotRebuildClaim[])[0] ?? null;
+    if (snapshot) {
+      worked = true;
+      try {
+        await rebuildStockNeedsSnapshot(supabase, snapshot, workerId, {
+          chunkSize: stockNeedsChunkSize,
+          leaseSeconds
+        });
+      } catch (error) {
+        if (!isBusinessSummaryFencedError(error)) {
+          const failed = await supabase.rpc("fail_stock_needs_snapshot_rebuild_v1", {
+            input_scope_id: snapshot.scope_id,
+            input_worker_id: workerId,
+            input_rebuild_id: snapshot.rebuild_id,
+            input_generation: snapshot.build_generation,
+            input_fence_token: snapshot.fence_token,
+            input_error_code: safeBusinessSummaryErrorCode(error),
+            input_retryable: isRetryableBusinessSummaryError(error)
+          });
+          if (failed.error && !isBusinessSummaryFencedError(failed.error)) throw failed.error;
+        }
+      }
+    }
+    const cleanup = await cleanupStockNeedsSnapshotGenerations(supabase, 1000);
+    if (cleanup.rowsDeleted > 0) worked = true;
     if (once) break;
-    if (!job) await wait(intervalMs);
+    if (!worked) await wait(intervalMs);
   }
 }
 
