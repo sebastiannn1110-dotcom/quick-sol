@@ -28,8 +28,10 @@ declare
   success_intent uuid;
   failure_intent uuid;
   mismatch_intent uuid;
+  app_only_intent uuid;
   reused_rejected boolean := false;
   missing_rejected boolean := false;
+  app_only_rejected boolean := false;
   invalid_rejected boolean := false;
   nonexistent_rejected boolean := false;
   mismatch_rejected boolean := false;
@@ -51,7 +53,7 @@ begin
     'employee',
     'Final Department',
     'Final Region',
-    true,
+    false,
     'Final Bio',
     'Final Job'
   );
@@ -61,8 +63,18 @@ begin
     '83000000-0000-4000-8000-000000000020',
     'R83_SUCCESS@EXAMPLE.INVALID',
     pg_catalog.now(),
-    pg_catalog.jsonb_build_object('quiksol_provisioning_intent_id', success_intent),
-    '{"full_name":"tampered","role":"super_admin_dev","department":"tampered","region":"tampered"}'::jsonb
+    '{}'::jsonb,
+    pg_catalog.jsonb_build_object(
+      'quiksol_provisioning_intent_id', success_intent,
+      'full_name', 'tampered',
+      'role', 'super_admin_dev',
+      'is_active', true,
+      'department', 'evil',
+      'region', 'evil',
+      'permissions', pg_catalog.jsonb_build_array('SUPERADMIN'),
+      'source', 'evil',
+      'actor', 'evil'
+    )
   );
 
   if not exists (
@@ -77,7 +89,7 @@ begin
       and profile.region = 'Final Region'
       and profile.bio = 'Final Bio'
       and profile.job_title = 'Final Job'
-      and profile.is_active is true
+      and profile.is_active is false
       and intent.id = success_intent
       and intent.status = 'completed'
       and intent.completed_at is not null
@@ -87,7 +99,7 @@ begin
 
   -- Reuse must lose without leaving the second Auth or Profile row.
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000021',
       'r83_success@example.invalid',
@@ -100,7 +112,7 @@ begin
 
   -- Missing, malformed and nonexistent intent identifiers all fail closed.
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000022',
       'r83_missing@example.invalid',
@@ -111,8 +123,35 @@ begin
     missing_rejected := true;
   end;
 
+  -- A locator that exists only in app metadata is too late for the INSERT
+  -- contract and must not be used by the hotfixed trigger.
+  app_only_intent := public.create_user_provisioning_intent_v1(
+    'r83_app_only@example.invalid', 'App Only', 'employee', null, null, true, null, null
+  );
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (
+      id, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data
+    ) values (
+      '83000000-0000-4000-8000-000000000027',
+      'r83_app_only@example.invalid',
+      pg_catalog.now(),
+      pg_catalog.jsonb_build_object('quiksol_provisioning_intent_id', app_only_intent),
+      '{}'::jsonb
+    );
+  exception when sqlstate 'QS831' then
+    app_only_rejected := true;
+  end;
+
+  if not app_only_rejected
+     or not exists (
+       select 1 from public.user_provisioning_intents
+       where id = app_only_intent and status = 'pending' and auth_user_id is null
+     ) then
+    raise exception 'R831_APP_METADATA_DEPENDENCY_REMAINS';
+  end if;
+
+  begin
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000023',
       'r83_invalid@example.invalid',
@@ -124,7 +163,7 @@ begin
   end;
 
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000024',
       'r83_nonexistent@example.invalid',
@@ -139,7 +178,7 @@ begin
     'r83_expected@example.invalid', 'Mismatch', 'employee', null, null, true, null, null
   );
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000025',
       'r83_actual@example.invalid',
@@ -175,7 +214,7 @@ begin
     null
   );
   begin
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       '83000000-0000-4000-8000-000000000026',
       'r83_profile_failure@example.invalid',
@@ -241,6 +280,7 @@ begin
 
   if not reused_rejected
      or not missing_rejected
+     or not app_only_rejected
      or not invalid_rejected
      or not nonexistent_rejected
      or not mismatch_rejected
@@ -258,7 +298,8 @@ begin
       '83000000-0000-4000-8000-000000000023',
       '83000000-0000-4000-8000-000000000024',
       '83000000-0000-4000-8000-000000000025',
-      '83000000-0000-4000-8000-000000000026'
+      '83000000-0000-4000-8000-000000000026',
+      '83000000-0000-4000-8000-000000000027'
     )
   ) then
     raise exception 'R83_REJECTED_AUTH_ROW_PERSISTED';
@@ -290,7 +331,7 @@ begin
     seed_intent := public.create_user_provisioning_intent_v1(
       actor_email, 'Invalid Actor State', 'admin', null, null, true, null, null
     );
-    insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data)
+    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
     values (
       actor_id,
       actor_email,
@@ -387,7 +428,7 @@ begin
 
     started_at := pg_catalog.clock_timestamp();
     insert into auth.users (
-      id, email, email_confirmed_at, raw_app_meta_data
+      id, email, email_confirmed_at, raw_user_meta_data
     ) values (
       target_user_id,
       target_email,

@@ -65,11 +65,17 @@ begin
       input_user_id,
       input_email,
       pg_catalog.now(),
+      '{}'::jsonb,
       pg_catalog.jsonb_build_object(
         'quiksol_provisioning_intent_id',
-        input_intent_id
-      ),
-      '{"role":"super_admin_dev","department":"tampered"}'::jsonb
+        input_intent_id,
+        'role',
+        'super_admin_dev',
+        'is_active',
+        true,
+        'department',
+        'evil'
+      )
     );
 
     return pg_catalog.jsonb_build_object(

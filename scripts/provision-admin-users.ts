@@ -469,8 +469,8 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
         email: target.email,
         password,
         email_confirm: true,
-        user_metadata: { full_name: target.fullName },
-        app_metadata: {
+        user_metadata: {
+          full_name: target.fullName,
           quiksol_provisioning_intent_id: intentId
         }
       });

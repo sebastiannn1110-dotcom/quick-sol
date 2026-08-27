@@ -140,10 +140,10 @@ export async function POST(request: Request) {
     email: body.data.email,
     password,
     email_confirm: true,
+    // GoTrue can persist custom app_metadata after the initial auth.users
+    // INSERT, so the trigger needs this opaque locator in user_metadata.
     user_metadata: {
-      full_name: body.data.full_name
-    },
-    app_metadata: {
+      full_name: body.data.full_name,
       quiksol_provisioning_intent_id: intentId
     }
   });

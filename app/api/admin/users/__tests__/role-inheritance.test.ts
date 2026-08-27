@@ -159,8 +159,17 @@ describe("admin user management role inheritance", () => {
     );
     expect(service.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({
       email: "employee@example.test",
-      app_metadata: { quiksol_provisioning_intent_id: intentId }
+      user_metadata: {
+        full_name: "Employee",
+        quiksol_provisioning_intent_id: intentId
+      }
     }));
+    const createAttributes = service.auth.admin.createUser.mock.calls[0][0];
+    expect(createAttributes).not.toHaveProperty("app_metadata.quiksol_provisioning_intent_id");
+    expect(createAttributes.user_metadata).not.toHaveProperty("role");
+    expect(createAttributes.user_metadata).not.toHaveProperty("department");
+    expect(createAttributes.user_metadata).not.toHaveProperty("region");
+    expect(createAttributes.user_metadata).not.toHaveProperty("is_active");
     expect(service.from).not.toHaveBeenCalled();
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       expect.anything(),
@@ -211,9 +220,14 @@ describe("admin user management role inheritance", () => {
       requested_job_title: null
     });
     expect(service.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({
-      user_metadata: { full_name: "Privileged Target" },
-      app_metadata: { quiksol_provisioning_intent_id: intentId }
+      user_metadata: {
+        full_name: "Privileged Target",
+        quiksol_provisioning_intent_id: intentId
+      }
     }));
+    expect(service.auth.admin.createUser.mock.calls[0][0]).not.toHaveProperty(
+      "app_metadata.quiksol_provisioning_intent_id"
+    );
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       expect.anything(),
       "superadmin_created_privileged_user",

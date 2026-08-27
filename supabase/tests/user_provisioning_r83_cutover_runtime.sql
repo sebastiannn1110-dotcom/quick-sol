@@ -100,8 +100,14 @@ begin
     '83000000-0000-4000-8000-000000000011',
     'r83_new_a@example.invalid',
     pg_catalog.now(),
-    pg_catalog.jsonb_build_object('quiksol_provisioning_intent_id', created_intent),
-    '{"full_name":"tampered","role":"employee","department":"tampered"}'::jsonb
+    '{}'::jsonb,
+    pg_catalog.jsonb_build_object(
+      'quiksol_provisioning_intent_id', created_intent,
+      'full_name', 'tampered',
+      'role', 'super_admin_dev',
+      'department', 'evil',
+      'is_active', false
+    )
   );
 
   if not exists (
@@ -157,8 +163,13 @@ begin
     '83000000-0000-4000-8000-000000000012',
     'r83_new_b@example.invalid',
     pg_catalog.now(),
-    pg_catalog.jsonb_build_object('quiksol_provisioning_intent_id', created_intent),
-    '{"role":"super_admin_dev"}'::jsonb
+    '{}'::jsonb,
+    pg_catalog.jsonb_build_object(
+      'quiksol_provisioning_intent_id', created_intent,
+      'role', 'super_admin_dev',
+      'department', 'evil',
+      'is_active', false
+    )
   );
 
   if not exists (
