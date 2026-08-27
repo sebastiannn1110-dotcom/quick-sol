@@ -67,8 +67,8 @@ begin
   end if;
 
   if (select count(*) from public.database_safety_table_catalog_v2() where planned_action='DELETE') <> 47
-     or (select count(*) from public.database_safety_table_catalog_v2() where planned_action='PRESERVE') <> 25
-     or (select count(*) from public.database_safety_table_catalog_v2() where schema_name='public') <> 68 then
+     or (select count(*) from public.database_safety_table_catalog_v2() where planned_action='PRESERVE') <> 26
+     or (select count(*) from public.database_safety_table_catalog_v2() where schema_name='public') <> 69 then
     raise exception 'ROUND7_DATABASE_SAFETY_CATALOG_COUNT_INVALID';
   end if;
 

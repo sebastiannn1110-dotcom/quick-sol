@@ -90,6 +90,7 @@ export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] 
   deleteTable("upload_sheets", "OPERATIONAL_DATA", 40, "Upload sheet metadata."),
   deleteTable("upload_batches", "OPERATIONAL_DATA", 50, "Upload metadata and lifecycle state."),
   preserveTable("public", "profiles", "AUTH_IDENTITY", "Profiles are required to preserve authentication identities, including Super Admin Dev."),
+  preserveTable("public", "user_provisioning_intents", "AUTH_IDENTITY", "Durable authorization and completion evidence for Auth/Profile creation."),
   preserveTable("public", "opportunity_finder_tenants", "SYSTEM_CONFIG", "Tenant scope configuration required for restart."),
   preserveTable("public", "opportunity_finder_tenant_memberships", "SYSTEM_CONFIG", "Tenant authorization configuration required for restart."),
   preserveTable("public", "opportunity_finder_manufacturer_registry_versions", "SYSTEM_CONFIG", "Approved normalization configuration."),
@@ -124,7 +125,7 @@ export const DATABASE_SAFETY_PROTECTED_TABLES = DATABASE_SAFETY_TABLE_POLICY
   .filter((entry) => entry.action === "PRESERVE");
 
 export const DATABASE_DESTRUCTION_PHRASE = "ELIMINAR INFORMACION QUIKSOL";
-export const DATABASE_SAFETY_CATALOG_VERSION = "20260826160000-r74-v1";
+export const DATABASE_SAFETY_CATALOG_VERSION = "20260827180000-r83a-v1";
 export const DATABASE_BACKUP_FORMAT = "quiksol-safety-bundle-v2";
 export const DATABASE_BACKUP_MAX_AGE_MS = 30 * 60 * 1000;
 export const DATABASE_DESTRUCTION_CHALLENGE_TTL_MS = 5 * 60 * 1000;

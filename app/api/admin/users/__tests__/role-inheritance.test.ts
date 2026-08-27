@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -97,17 +98,84 @@ describe("admin user management role inheritance", () => {
     expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
-  it("lets Super Admin Dev create a privileged profile through the explicit audited API", async () => {
-    const profileBuilder = {
-      upsert: vi.fn(),
-      select: vi.fn(),
-      single: vi.fn(async () => ({
-        data: { id: "00000000-0000-4000-8000-000000000007", role: "super_admin_dev" },
-        error: null
-      }))
+  it("returns an authorization rejection before creating an intent or Auth user", async () => {
+    mocks.requireAdmin.mockResolvedValue(
+      NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    );
+
+    const response = await POST(new Request("https://app.test/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "employee@example.test",
+        full_name: "Employee",
+        role: "employee"
+      })
+    }));
+
+    expect(response.status).toBe(401);
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin provision an allowed role through intent metadata without a Profile write", async () => {
+    const intentId = "00000000-0000-4000-8000-000000000082";
+    const supabase = {
+      rpc: vi.fn(async () => ({ data: intentId, error: null }))
     };
-    profileBuilder.upsert.mockReturnValue(profileBuilder);
-    profileBuilder.select.mockReturnValue(profileBuilder);
+    const service = {
+      auth: {
+        admin: {
+          createUser: vi.fn(async () => ({
+            data: { user: { id: "00000000-0000-4000-8000-000000000006" } },
+            error: null
+          }))
+        }
+      },
+      from: vi.fn()
+    };
+    mocks.createSupabaseAdminClient.mockReturnValue(service);
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await POST(new Request("https://app.test/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: " Employee@Example.Test ",
+        full_name: " Employee ",
+        role: "manager",
+        department: "Operations"
+      })
+    }));
+
+    expect(response.status).toBe(200);
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      "create_user_provisioning_intent_v1",
+      expect.objectContaining({
+        requested_email: "employee@example.test",
+        requested_full_name: "Employee",
+        requested_role: "manager"
+      })
+    );
+    expect(service.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({
+      email: "employee@example.test",
+      app_metadata: { quiksol_provisioning_intent_id: intentId }
+    }));
+    expect(service.from).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      "admin_created_employee",
+      "profile",
+      "00000000-0000-4000-8000-000000000006",
+      expect.objectContaining({ role: "manager" })
+    );
+  });
+
+  it("lets Super Admin Dev create a privileged profile through the explicit audited API", async () => {
+    const intentId = "00000000-0000-4000-8000-000000000083";
+    const supabase = {
+      rpc: vi.fn(async () => ({ data: intentId, error: null }))
+    };
     const service = {
       auth: {
         admin: {
@@ -116,11 +184,10 @@ describe("admin user management role inheritance", () => {
             error: null
           }))
         }
-      },
-      from: vi.fn(() => profileBuilder)
+      }
     };
     mocks.createSupabaseAdminClient.mockReturnValue(service);
-    mocks.requireAdmin.mockResolvedValue(context("super_admin_dev", { isDemoMode: false }));
+    mocks.requireAdmin.mockResolvedValue(context("super_admin_dev", { isDemoMode: false, supabase }));
 
     const response = await POST(new Request("https://app.test/api/admin/users", {
       method: "POST",
@@ -133,8 +200,19 @@ describe("admin user management role inheritance", () => {
     }));
 
     expect(response.status).toBe(200);
+    expect(supabase.rpc).toHaveBeenCalledWith("create_user_provisioning_intent_v1", {
+      requested_email: "privileged@example.test",
+      requested_full_name: "Privileged Target",
+      requested_role: "super_admin_dev",
+      requested_department: null,
+      requested_region: null,
+      requested_is_active: true,
+      requested_bio: null,
+      requested_job_title: null
+    });
     expect(service.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({
-      user_metadata: { full_name: "Privileged Target" }
+      user_metadata: { full_name: "Privileged Target" },
+      app_metadata: { quiksol_provisioning_intent_id: intentId }
     }));
     expect(mocks.logAuditEvent).toHaveBeenCalledWith(
       expect.anything(),
@@ -143,6 +221,73 @@ describe("admin user management role inheritance", () => {
       "00000000-0000-4000-8000-000000000007",
       expect.objectContaining({ role: "super_admin_dev" })
     );
+  });
+
+  it("does not call Auth or emit a success audit when intent authorization loses a race", async () => {
+    const supabase = {
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "42501", message: "ADMIN_REQUIRED: private detail" }
+      }))
+    };
+    const service = {
+      auth: { admin: { createUser: vi.fn() } }
+    };
+    mocks.createSupabaseAdminClient.mockReturnValue(service);
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await POST(new Request("https://app.test/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "employee@example.test",
+        full_name: "Employee",
+        role: "employee"
+      })
+    }));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "You do not have permission to provision this user.",
+      code: "ADMIN_MUTATION_FORBIDDEN"
+    });
+    expect(service.auth.admin.createUser).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not write a Profile or emit a success audit when Auth creation fails", async () => {
+    const intentId = "00000000-0000-4000-8000-000000000084";
+    const supabase = {
+      rpc: vi.fn(async () => ({ data: intentId, error: null }))
+    };
+    const service = {
+      auth: {
+        admin: {
+          createUser: vi.fn(async () => ({
+            data: { user: null },
+            error: { message: "provider detail" }
+          }))
+        }
+      },
+      from: vi.fn()
+    };
+    mocks.createSupabaseAdminClient.mockReturnValue(service);
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await POST(new Request("https://app.test/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "employee@example.test",
+        full_name: "Employee",
+        role: "employee"
+      })
+    }));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Unable to create user." });
+    expect(service.from).not.toHaveBeenCalled();
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
   });
 
   it("routes a Super Admin Dev promotion through the audited database RPC", async () => {

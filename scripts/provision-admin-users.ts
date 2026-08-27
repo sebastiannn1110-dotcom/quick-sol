@@ -44,7 +44,8 @@ export type SafeProfileMetadata = {
 };
 
 export type ProvisioningGateway = {
-  createUser(target: AdminTarget, password: string): Promise<SafeAuthUser>;
+  createProvisioningIntent(target: AdminTarget): Promise<string>;
+  createUser(target: AdminTarget, password: string, intentId: string): Promise<SafeAuthUser>;
   getProfile(userId: string): Promise<SafeProfileMetadata | null>;
   listUsers(page: number, perPage: number): Promise<SafeAuthUser[]>;
   updateExistingUser(
@@ -307,6 +308,8 @@ export async function executeProvisioning(
   }
 
   if (existingUser) {
+    // R8.4 legacy compatibility only: reconciling a pre-existing Auth user is
+    // not a new-user lifecycle and still repairs/upserts its existing Profile.
     const rotationSecret = options.rotatePassword
       ? requireTemporarySecret(env, ADMIN_ROTATION_PASSWORD_ENV)
       : undefined;
@@ -332,13 +335,13 @@ export async function executeProvisioning(
   }
 
   const creationSecret = requireTemporarySecret(env, ADMIN_PROVISIONING_PASSWORD_ENV);
+  const intentId = await providerCall("INTENT_CREATE_FAILED", env, () =>
+    gateway.createProvisioningIntent(target)
+  );
   const createdUser = await providerCall("AUTH_CREATE_FAILED", env, () =>
-    gateway.createUser(target, creationSecret)
+    gateway.createUser(target, creationSecret, intentId)
   );
-  await providerCall("PROFILE_UPSERT_FAILED", env, () =>
-    gateway.upsertProfile(createdUser, target)
-  );
-  log(`completed: target=${target.email} action=user-created-profile-upserted`);
+  log(`completed: target=${target.email} action=user-created-profile-finalized`);
   return {
     action: "created" as const,
     changed: true,
@@ -440,12 +443,36 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
       return safeAuthUser(data.user);
     },
 
-    async createUser(target, password) {
+    async createProvisioningIntent(target) {
+      const { data, error } = await supabase.rpc(
+        "create_cli_user_provisioning_intent_v1",
+        {
+          requested_email: target.email,
+          requested_full_name: target.fullName,
+          requested_role: target.role,
+          requested_department: target.department,
+          requested_region: target.region,
+          requested_is_active: true,
+          requested_bio: null,
+          requested_job_title: null
+        }
+      );
+      if (error) throw error;
+      if (typeof data !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data)) {
+        throw new Error("missing provisioning intent id");
+      }
+      return data;
+    },
+
+    async createUser(target, password, intentId) {
       const { data, error } = await supabase.auth.admin.createUser({
         email: target.email,
         password,
         email_confirm: true,
-        user_metadata: userMetadata(target)
+        user_metadata: { full_name: target.fullName },
+        app_metadata: {
+          quiksol_provisioning_intent_id: intentId
+        }
       });
       if (error || !data.user) throw error ?? new Error("missing created Auth user");
       return safeAuthUser(data.user);

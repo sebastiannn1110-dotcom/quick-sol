@@ -13,11 +13,13 @@ const migrationPath = "supabase/migrations/20260822140000_harden_database_safety
 const roundFourMigrationPath = "supabase/migrations/20260823120000_harden_import_job_pipeline.sql";
 const roundSevenMigrationPath = "supabase/migrations/20260825120000_high_volume_persistence_and_summary_pipeline.sql";
 const roundSevenFourMigrationPath = "supabase/migrations/20260826160000_stock_needs_snapshot_r74.sql";
+const roundEightThreeMigrationPath = "supabase/migrations/20260827180000_user_provisioning_intents_r83a.sql";
 const baseMigration = readFileSync(path.join(process.cwd(), baseMigrationPath), "utf8");
 const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
 const roundFourMigration = readFileSync(path.join(process.cwd(), roundFourMigrationPath), "utf8");
 const roundSevenMigration = readFileSync(path.join(process.cwd(), roundSevenMigrationPath), "utf8");
 const roundSevenFourMigration = readFileSync(path.join(process.cwd(), roundSevenFourMigrationPath), "utf8");
+const roundEightThreeMigration = readFileSync(path.join(process.cwd(), roundEightThreeMigrationPath), "utf8");
 const normalized = migration.toLowerCase();
 
 const historicalPublicTables = [
@@ -38,6 +40,7 @@ const historicalPublicTables = [
   "opportunity_finder_results", "opportunity_finder_review_decisions", "opportunity_finder_rows",
   "opportunity_finder_supply_lots", "opportunity_finder_tenant_memberships", "opportunity_finder_tenants",
   "password_reset_codes", "performance_logs", "profiles", "security_events", "system_logs", "upload_batches", "upload_sheets",
+  "user_provisioning_intents",
   "worker_runtime_heartbeats"
 ].sort();
 
@@ -46,13 +49,13 @@ const newSafetyTables = [
 ].sort();
 
 describe("Database Safety Center policy", () => {
-  it("covers the exact 67 existing public tables and four protected safety tables", () => {
+  it("covers the exact 68 existing public tables and four protected safety tables", () => {
     const publicTables = DATABASE_SAFETY_TABLE_POLICY.filter((entry) => entry.schema === "public").map((entry) => entry.table);
     expect([...new Set(publicTables)].sort()).toEqual([...historicalPublicTables, ...newSafetyTables].sort());
-    expect(publicTables).toHaveLength(71);
+    expect(publicTables).toHaveLength(72);
   });
 
-  it("derives the 67-table baseline from the actual local migration corpus", () => {
+  it("derives the 68-table baseline from the actual local migration corpus", () => {
     const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
     const corpus = readdirSync(migrationsDirectory)
       .filter((name) => name.endsWith(".sql") && ![path.basename(migrationPath), path.basename(baseMigrationPath)].includes(name))
@@ -72,8 +75,10 @@ describe("Database Safety Center policy", () => {
       .map((match) => `${match[1]}.${match[2]}`);
     const roundSevenFourTables = [...roundSevenFourMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
       .map((match) => `${match[1]}.${match[2]}`);
+    const roundEightThreeTables = [...roundEightThreeMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+      .map((match) => `${match[1]}.${match[2]}`);
     const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
-    expect([...new Set([...sqlTables, ...roundFourTables, ...roundSevenTables, ...roundSevenFourTables])].sort())
+    expect([...new Set([...sqlTables, ...roundFourTables, ...roundSevenTables, ...roundSevenFourTables, ...roundEightThreeTables])].sort())
       .toEqual([...policyTables].sort());
   });
 
@@ -89,7 +94,7 @@ describe("Database Safety Center policy", () => {
       "public.profiles", "auth.users", "supabase_migrations.schema_migrations", "storage.objects", "storage.buckets",
       "public.database_safety_audit_events", "public.audit_logs", "public.security_events",
       "public.system_logs", "public.client_logs", "public.performance_logs", "public.api_rate_limits",
-      "public.worker_runtime_heartbeats"
+      "public.worker_runtime_heartbeats", "public.user_provisioning_intents"
     ]));
   });
 

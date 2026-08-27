@@ -16,6 +16,7 @@ const PROJECT_REF = "abcdefghijklmnopqrst";
 const SUPABASE_URL = `https://${PROJECT_REF}.supabase.co`;
 const TARGET_A = ADMIN_TARGETS[0];
 const TARGET_B = ADMIN_TARGETS[1];
+const INTENT_ID = "00000000-0000-4000-8000-000000000083";
 
 function temporarySecret() {
   return ["mock", "temporary", "credential"].join("-");
@@ -35,6 +36,7 @@ function options(
 
 function mockGateway(users: SafeAuthUser[] = []) {
   const gateway: ProvisioningGateway = {
+    createProvisioningIntent: vi.fn(async () => INTENT_ID),
     createUser: vi.fn(async (target) => ({ id: "created-user", email: target.email })),
     getProfile: vi.fn(async (userId) => ({
       id: userId,
@@ -85,6 +87,7 @@ describe("safe admin provisioning", () => {
 
     expect(result).toEqual({ action: "dry-run", changed: false });
     expect(deps.createGateway).not.toHaveBeenCalled();
+    expect(gateway.createProvisioningIntent).not.toHaveBeenCalled();
     expect(gateway.createUser).not.toHaveBeenCalled();
     expect(gateway.updateExistingUser).not.toHaveBeenCalled();
     expect(gateway.upsertProfile).not.toHaveBeenCalled();
@@ -113,6 +116,7 @@ describe("safe admin provisioning", () => {
     expect(result.action).toBe("updated");
     expect(gateway.getProfile).toHaveBeenCalledWith("existing-user");
     expect(gateway.updateExistingUser).toHaveBeenCalledTimes(1);
+    expect(gateway.createProvisioningIntent).not.toHaveBeenCalled();
     expect(gateway.updateExistingUser).toHaveBeenCalledWith(
       "existing-user",
       TARGET_A,
@@ -130,6 +134,7 @@ describe("safe admin provisioning", () => {
     ).rejects.toThrow("TEMPORARY_SECRET_REQUIRED");
     expect(gateway.updateExistingUser).not.toHaveBeenCalled();
     expect(gateway.upsertProfile).not.toHaveBeenCalled();
+    expect(gateway.createProvisioningIntent).not.toHaveBeenCalled();
   });
 
   it("rotates exactly one existing target when the temporary secret is present", async () => {
@@ -149,6 +154,7 @@ describe("safe admin provisioning", () => {
     expect(gateway.updateExistingUser).toHaveBeenCalledWith("target-a", TARGET_A, secret);
     expect(gateway.upsertProfile).toHaveBeenCalledTimes(1);
     expect(gateway.createUser).not.toHaveBeenCalled();
+    expect(gateway.createProvisioningIntent).not.toHaveBeenCalled();
   });
 
   it("never modifies target B when target A is selected", async () => {
@@ -173,6 +179,7 @@ describe("safe admin provisioning", () => {
       "TEMPORARY_SECRET_REQUIRED"
     );
     expect(gateway.createUser).not.toHaveBeenCalled();
+    expect(gateway.createProvisioningIntent).not.toHaveBeenCalled();
     expect(gateway.upsertProfile).not.toHaveBeenCalled();
   });
 
@@ -186,9 +193,11 @@ describe("safe admin provisioning", () => {
     const result = await executeProvisioning(options(), deps);
 
     expect(result.action).toBe("created");
+    expect(gateway.createProvisioningIntent).toHaveBeenCalledTimes(1);
+    expect(gateway.createProvisioningIntent).toHaveBeenCalledWith(TARGET_A);
     expect(gateway.createUser).toHaveBeenCalledTimes(1);
-    expect(gateway.createUser).toHaveBeenCalledWith(TARGET_A, secret);
-    expect(gateway.upsertProfile).toHaveBeenCalledTimes(1);
+    expect(gateway.createUser).toHaveBeenCalledWith(TARGET_A, secret, INTENT_ID);
+    expect(gateway.upsertProfile).not.toHaveBeenCalled();
     expect(gateway.updateExistingUser).not.toHaveBeenCalled();
   });
 

@@ -25,13 +25,13 @@ const updateUserSchema = z.object({
 });
 
 const inviteUserSchema = z.object({
-  email: z.string().email(),
-  full_name: z.string().min(1),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  full_name: z.string().trim().min(1),
   role: managedRoleSchema.default("employee"),
-  department: z.string().optional(),
-  region: z.string().optional(),
-  bio: z.string().trim().max(500).optional(),
-  job_title: z.string().trim().max(120).optional(),
+  department: z.string().nullable().optional(),
+  region: z.string().nullable().optional(),
+  bio: z.string().trim().max(500).nullable().optional(),
+  job_title: z.string().trim().max(120).nullable().optional(),
   password: z.string().min(8).optional()
 });
 
@@ -105,6 +105,36 @@ export async function POST(request: Request) {
   const service = createSupabaseAdminClient();
   if (!service) return NextResponse.json({ error: serviceRoleMessage }, { status: 503 });
 
+  const { data: intentId, error: intentError } = await context.supabase!.rpc(
+    "create_user_provisioning_intent_v1",
+    {
+      requested_email: body.data.email,
+      requested_full_name: body.data.full_name,
+      requested_role: body.data.role,
+      requested_department: body.data.department ?? null,
+      requested_region: body.data.region ?? null,
+      requested_is_active: true,
+      requested_bio: body.data.bio ?? null,
+      requested_job_title: body.data.job_title ?? null
+    }
+  );
+
+  if (intentError) {
+    if (intentError.code === adminMutationForbiddenSqlState) {
+      return NextResponse.json(
+        {
+          error: "You do not have permission to provision this user.",
+          code: adminMutationForbiddenPublicCode
+        },
+        { status: 403 }
+      );
+    }
+    return NextResponse.json({ error: "Unable to prepare user creation." }, { status: 500 });
+  }
+  if (typeof intentId !== "string" || !z.string().uuid().safeParse(intentId).success) {
+    return NextResponse.json({ error: "Unable to prepare user creation." }, { status: 500 });
+  }
+
   const password = body.data.password ?? temporaryPassword();
   const { data, error } = await service.auth.admin.createUser({
     email: body.data.email,
@@ -112,28 +142,27 @@ export async function POST(request: Request) {
     email_confirm: true,
     user_metadata: {
       full_name: body.data.full_name
+    },
+    app_metadata: {
+      quiksol_provisioning_intent_id: intentId
     }
   });
 
   if (error || !data.user) return NextResponse.json({ error: "Unable to create user." }, { status: 500 });
 
-  const { data: profile, error: profileError } = await service
-    .from("profiles")
-    .upsert({
-      id: data.user.id,
-      full_name: body.data.full_name,
-      email: body.data.email,
-      role: body.data.role,
-      department: body.data.department ?? null,
-      region: body.data.region ?? null,
-      bio: body.data.bio ?? null,
-      job_title: body.data.job_title ?? null,
-      is_active: true
-    })
-    .select("*")
-    .single();
-
-  if (profileError) return NextResponse.json({ error: "User was created, but profile could not be saved." }, { status: 500 });
+  // createUser only commits after the auth.users trigger has inserted this
+  // exact final profile and completed the one-use intent.
+  const profile = {
+    id: data.user.id,
+    full_name: body.data.full_name,
+    email: body.data.email,
+    role: body.data.role,
+    department: body.data.department ?? null,
+    region: body.data.region ?? null,
+    bio: body.data.bio ?? null,
+    job_title: body.data.job_title ?? null,
+    is_active: true
+  };
 
   await logAuditEvent(
     context,
