@@ -3,7 +3,7 @@ import { z } from "zod";
 import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { getDemoPlatformData } from "@/lib/platform/demoRepository";
-import { isAdmin, isSuperAdminDev } from "@/lib/auth/roles";
+import { isSuperAdminDev } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,6 +37,33 @@ const inviteUserSchema = z.object({
 
 const serviceRoleMessage =
   "Server admin access is not configured. Please add SUPABASE_SERVICE_ROLE_KEY in Render environment variables.";
+const lastEffectiveAdminSqlState = "QS821";
+const lastEffectiveAdminPublicCode = "LAST_EFFECTIVE_ADMIN_REQUIRED";
+const adminMutationForbiddenSqlState = "42501";
+const adminMutationForbiddenPublicCode = "ADMIN_MUTATION_FORBIDDEN";
+
+function adminMutationErrorResponse(error: { code?: string | null } | null, fallbackMessage: string) {
+  if (error?.code === lastEffectiveAdminSqlState) {
+    return NextResponse.json(
+      {
+        error: "At least one effective administrator must remain.",
+        code: lastEffectiveAdminPublicCode
+      },
+      { status: 409 }
+    );
+  }
+  if (error?.code === adminMutationForbiddenSqlState) {
+    return NextResponse.json(
+      {
+        error: "You do not have permission to perform this administrative change.",
+        code: adminMutationForbiddenPublicCode
+      },
+      { status: 403 }
+    );
+  }
+
+  return NextResponse.json({ error: fallbackMessage }, { status: 500 });
+}
 
 function temporaryPassword() {
   return `Quiksol-${crypto.randomUUID().slice(0, 8)}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -158,18 +185,6 @@ export async function PATCH(request: Request) {
     }
   }
 
-  if (!context.isDemoMode && ((body.data.role && body.data.role !== "admin") || body.data.is_active === false)) {
-    const { count } = await context.supabase!
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .in("role", ["admin", "super_admin_dev"])
-      .eq("is_active", true);
-
-    if ((count ?? 0) <= 1 && isAdmin(targetRole)) {
-      return NextResponse.json({ error: "Cannot deactivate or demote the last active admin." }, { status: 400 });
-    }
-  }
-
   if (context.isDemoMode) {
     return NextResponse.json({ ok: true, demo: true });
   }
@@ -194,13 +209,13 @@ export async function PATCH(request: Request) {
     if (authUpdateError) return NextResponse.json({ error: "Unable to update auth email." }, { status: 500 });
   }
 
-  const { data, error } = await context.supabase!.rpc("update_profile_admin_v1", {
+  const { data, error } = await context.supabase!.rpc("update_profile_admin_v2", {
     target_profile_id: body.data.userId,
     profile_patch: updatePayload,
     confirm_self_deactivate: body.data.confirmSelfDeactivate === true
   });
 
-  if (error) return NextResponse.json({ error: "Unable to update user." }, { status: 500 });
+  if (error) return adminMutationErrorResponse(error, "Unable to update user.");
 
   const auditActions: string[] = [];
   if (body.data.full_name) auditActions.push("admin_renamed_employee");
@@ -231,24 +246,16 @@ export async function DELETE(request: Request) {
     if (isSuperAdminDev(target.data?.role)) {
       return NextResponse.json({ error: "Super Admin Dev cannot be deactivated from the admin screen." }, { status: 403 });
     }
-    if (isAdmin(target.data?.role)) {
-      const { count } = await context.supabase!
-        .from("profiles")
-        .select("id", { count: "exact", head: true })
-        .in("role", ["admin", "super_admin_dev"])
-        .eq("is_active", true);
-      if ((count ?? 0) <= 1) return NextResponse.json({ error: "Cannot deactivate the last active admin." }, { status: 400 });
-    }
   }
 
   if (context.isDemoMode) return NextResponse.json({ ok: true, demo: true });
 
-  const { error } = await context.supabase!.rpc("update_profile_admin_v1", {
+  const { error } = await context.supabase!.rpc("update_profile_admin_v2", {
     target_profile_id: body.data.userId,
     profile_patch: { is_active: false },
     confirm_self_deactivate: false
   });
-  if (error) return NextResponse.json({ error: "Unable to deactivate user." }, { status: 500 });
+  if (error) return adminMutationErrorResponse(error, "Unable to deactivate user.");
 
   await logAuditEvent(context, "admin_deactivated_employee", "profile", body.data.userId, { softDelete: true });
   return NextResponse.json({ ok: true });

@@ -20,7 +20,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseAdminClient: mocks.createSupabaseAdminClient
 }));
 
-import { GET, PATCH, POST } from "@/app/api/admin/users/route";
+import { DELETE, GET, PATCH, POST } from "@/app/api/admin/users/route";
 
 function context(role: "admin" | "super_admin_dev", overrides: Record<string, unknown> = {}) {
   return {
@@ -177,10 +177,237 @@ describe("admin user management role inheritance", () => {
     }));
 
     expect(response.status).toBe(200);
-    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v1", {
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
       target_profile_id: "00000000-0000-4000-8000-000000000008",
       profile_patch: { role: "super_admin_dev" },
       confirm_self_deactivate: false
     });
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      "admin_changed_role",
+      "profile",
+      "00000000-0000-4000-8000-000000000008",
+      { role: "super_admin_dev" }
+    );
+  });
+
+  it("maps a rejected PATCH invariant to a stable 409 without success audit or count precheck", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "admin" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "QS821", message: "LAST_EFFECTIVE_ADMIN_REQUIRED" }
+      }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("super_admin_dev", { isDemoMode: false, supabase }));
+
+    const response = await PATCH(new Request("https://app.test/api/admin/users", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "00000000-0000-4000-8000-000000000009",
+        role: "employee"
+      })
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "At least one effective administrator must remain.",
+      code: "LAST_EFFECTIVE_ADMIN_REQUIRED"
+    });
+    expect(builder.select).toHaveBeenCalledOnce();
+    expect(builder.select).toHaveBeenCalledWith("role");
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
+      target_profile_id: "00000000-0000-4000-8000-000000000009",
+      profile_patch: { role: "employee" },
+      confirm_self_deactivate: false
+    });
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps unknown PATCH database failures sanitized as 500 without success audit", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "employee" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "XX000", message: "LAST_EFFECTIVE_ADMIN_REQUIRED: private database detail" }
+      }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await PATCH(new Request("https://app.test/api/admin/users", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "00000000-0000-4000-8000-000000000010",
+        department: "Operations"
+      })
+    }));
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Unable to update user." });
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("maps a PATCH authorization race to a sanitized 403 without success audit", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "employee" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "42501", message: "ADMIN_REQUIRED: private database detail" }
+      }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await PATCH(new Request("https://app.test/api/admin/users", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        userId: "00000000-0000-4000-8000-000000000013",
+        department: "Operations"
+      })
+    }));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "You do not have permission to perform this administrative change.",
+      code: "ADMIN_MUTATION_FORBIDDEN"
+    });
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
+      target_profile_id: "00000000-0000-4000-8000-000000000013",
+      profile_patch: { department: "Operations" },
+      confirm_self_deactivate: false
+    });
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("routes DELETE soft-deactivation through v2 and audits only after success", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "employee" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({ data: { is_active: false }, error: null }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await DELETE(new Request("https://app.test/api/admin/users", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "00000000-0000-4000-8000-000000000011" })
+    }));
+
+    expect(response.status).toBe(200);
+    expect(builder.select).toHaveBeenCalledOnce();
+    expect(builder.select).toHaveBeenCalledWith("role");
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
+      target_profile_id: "00000000-0000-4000-8000-000000000011",
+      profile_patch: { is_active: false },
+      confirm_self_deactivate: false
+    });
+    expect(mocks.logAuditEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      "admin_deactivated_employee",
+      "profile",
+      "00000000-0000-4000-8000-000000000011",
+      { softDelete: true }
+    );
+  });
+
+  it("maps a rejected DELETE invariant to 409 without a false success audit", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "admin" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "QS821", message: "LAST_EFFECTIVE_ADMIN_REQUIRED" }
+      }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await DELETE(new Request("https://app.test/api/admin/users", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "00000000-0000-4000-8000-000000000012" })
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "At least one effective administrator must remain.",
+      code: "LAST_EFFECTIVE_ADMIN_REQUIRED"
+    });
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
+      target_profile_id: "00000000-0000-4000-8000-000000000012",
+      profile_patch: { is_active: false },
+      confirm_self_deactivate: false
+    });
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("maps a DELETE authorization race to a sanitized 403 without success audit", async () => {
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      single: vi.fn(async () => ({ data: { role: "employee" }, error: null }))
+    };
+    builder.select.mockReturnValue(builder);
+    builder.eq.mockReturnValue(builder);
+    const supabase = {
+      from: vi.fn(() => builder),
+      rpc: vi.fn(async () => ({
+        data: null,
+        error: { code: "42501", message: "SUPER_ADMIN_DEV_REQUIRED: private database detail" }
+      }))
+    };
+    mocks.requireAdmin.mockResolvedValue(context("admin", { isDemoMode: false, supabase }));
+
+    const response = await DELETE(new Request("https://app.test/api/admin/users", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "00000000-0000-4000-8000-000000000014" })
+    }));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "You do not have permission to perform this administrative change.",
+      code: "ADMIN_MUTATION_FORBIDDEN"
+    });
+    expect(supabase.rpc).toHaveBeenCalledWith("update_profile_admin_v2", {
+      target_profile_id: "00000000-0000-4000-8000-000000000014",
+      profile_patch: { is_active: false },
+      confirm_self_deactivate: false
+    });
+    expect(mocks.logAuditEvent).not.toHaveBeenCalled();
   });
 });

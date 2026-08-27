@@ -3,36 +3,42 @@
 -- All synthetic writes are rolled back.
 begin;
 
-insert into auth.users (id, email, raw_user_meta_data)
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
 values
   (
     'd2000000-0000-4000-8000-000000000001',
     'employee-role-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Employee Contract","role":"super_admin_dev","department":"Forged","region":"Forged"}'::jsonb
   ),
   (
     'd2000000-0000-4000-8000-000000000002',
     'manager-role-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Manager Contract","role":"admin"}'::jsonb
   ),
   (
     'd2000000-0000-4000-8000-000000000003',
     'admin-role-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Admin Contract","role":"manager"}'::jsonb
   ),
   (
     'd2000000-0000-4000-8000-000000000004',
     'superadmin-role-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Superadmin Contract","role":"super_admin_dev"}'::jsonb
   ),
   (
     'd2000000-0000-4000-8000-000000000005',
     'target-role-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Target Contract"}'::jsonb
   ),
   (
     'd2000000-0000-4000-8000-000000000006',
     'privileged-target-contract@example.invalid',
+    pg_catalog.now(),
     '{"full_name":"Privileged Target Contract"}'::jsonb
   );
 

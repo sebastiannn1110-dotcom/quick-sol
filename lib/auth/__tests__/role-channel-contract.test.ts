@@ -26,16 +26,31 @@ describe("role x channel x capability contract", () => {
 
   it("keeps profile security behind the audited RPC instead of table updates", () => {
     const route = source("app/api/admin/users/route.ts");
-    const migration = source(
+    const roleMigration = source(
       "supabase/migrations/20260822120000_harden_profile_roles_and_superadmin_inheritance.sql"
+    );
+    const invariantMigration = source(
+      "supabase/migrations/20260827120000_last_effective_admin_invariant.sql"
     );
 
     expect(route).not.toContain('.from("profiles")\n    .update(');
-    expect(route).toContain('.rpc("update_profile_admin_v1"');
+    expect(route).not.toMatch(/count:\s*["']exact["']/);
+    expect(route).not.toContain('.rpc("update_profile_admin_v1"');
+    expect(route).toContain('.rpc("update_profile_admin_v2"');
+    expect(route).toContain('error?.code === lastEffectiveAdminSqlState');
+    expect(route).toContain('const lastEffectiveAdminSqlState = "QS821"');
+    expect(route).toContain('const lastEffectiveAdminPublicCode = "LAST_EFFECTIVE_ADMIN_REQUIRED"');
+    expect(route).toContain('error?.code === adminMutationForbiddenSqlState');
+    expect(route).toContain('const adminMutationForbiddenSqlState = "42501"');
+    expect(route).toContain('const adminMutationForbiddenPublicCode = "ADMIN_MUTATION_FORBIDDEN"');
     expect(route).toContain("Only Super Admin Dev can promote");
-    expect(migration).toContain("revoke update on table public.profiles from public, anon, authenticated");
-    expect(migration).toContain("SUPER_ADMIN_DEV_REQUIRED");
-    expect(migration).toContain("superadmin_managed_privileged_profile");
+    expect(roleMigration).toContain("revoke update on table public.profiles from public, anon, authenticated");
+    expect(roleMigration).toContain("SUPER_ADMIN_DEV_REQUIRED");
+    expect(invariantMigration).toContain("create or replace function public.update_profile_admin_v2");
+    expect(invariantMigration).toContain("pg_catalog.pg_advisory_xact_lock");
+    expect(invariantMigration).toContain("select public.update_profile_admin_v2(");
+    expect(invariantMigration).toContain("LAST_EFFECTIVE_ADMIN_REQUIRED");
+    expect(invariantMigration).toContain("superadmin_managed_privileged_profile");
   });
 
   it("keeps Storage ownership/membership rules while inheriting admin helpers", () => {
