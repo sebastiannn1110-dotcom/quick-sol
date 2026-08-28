@@ -33,6 +33,44 @@ describe("admin provisioning source security", () => {
     expect(serviceConfiguration).toBeGreaterThan(dryRunGuard);
   });
 
+  it("requires a stable idempotency key before creating the service gateway", () => {
+    const executionStart = provisioningSource.indexOf("export async function executeProvisioning");
+    const execution = provisioningSource.slice(
+      executionStart,
+      provisioningSource.indexOf("function loadEnvFile", executionStart)
+    );
+    const keyValidation = execution.indexOf("normalizeIdempotencyKey(options.idempotencyKey)");
+    const gatewayCreation = execution.indexOf("dependencies.createGateway()");
+
+    expect(provisioningSource).toContain('flagValue(args, "--idempotency-key")');
+    expect(provisioningSource).toContain("IDEMPOTENCY_KEY_REQUIRED");
+    expect(keyValidation).toBeGreaterThan(-1);
+    expect(gatewayCreation).toBeGreaterThan(keyValidation);
+  });
+
+  it("uses v2 begin without credentials and contains no generic Profile upsert", () => {
+    const beginStart = provisioningSource.indexOf("async beginProvisioning(target, idempotencyKey)");
+    const beginEnd = provisioningSource.indexOf("async createUser", beginStart);
+    const beginImplementation = provisioningSource.slice(beginStart, beginEnd);
+
+    expect(beginImplementation).toContain('"begin_cli_user_provisioning_v2"');
+    expect(beginImplementation).toContain("operation_idempotency_key: idempotencyKey");
+    expect(beginImplementation).not.toMatch(/\bpassword\b/i);
+    expect(provisioningSource).not.toContain("create_cli_user_provisioning_intent_v1");
+    expect(provisioningSource).not.toContain("upsertProfile");
+    expect(provisioningSource).not.toMatch(/\.from\s*\(\s*["']profiles["']\s*\)[\s\S]*?\.upsert\s*\(/i);
+  });
+
+  it("limits explicit rotation to a password-only Auth update", () => {
+    const updateStart = provisioningSource.indexOf("async updateExistingUser(userId, password)");
+    const updateEnd = provisioningSource.indexOf("async beginProvisioning", updateStart);
+    const updateImplementation = provisioningSource.slice(updateStart, updateEnd);
+
+    expect(updateImplementation).toMatch(/updateUserById\s*\(\s*userId\s*,\s*\{\s*password\s*\}\s*\)/);
+    expect(updateImplementation).not.toMatch(/\b(?:email|email_confirm|user_metadata|role|department|region)\b/i);
+    expect(provisioningSource).toContain("ROTATION_RECONCILIATION_REQUIRED");
+  });
+
   it("does not couple an existing-user update to a seed password", () => {
     expect(
       /updateUserById\([\s\S]*?password\s*:\s*admin\.password/.test(provisioningSource)

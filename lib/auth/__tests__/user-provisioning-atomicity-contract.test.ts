@@ -160,46 +160,46 @@ describe("R8.3 atomic Auth/Profile provisioning contract", () => {
     expect(cutover).toMatch(/exception\s+when\s+sqlstate\s+'QS831'/i);
   });
 
-  it("makes the web POST intent-first with no second Profile write", () => {
+  it("makes the web POST idempotent-intent-first with no second Profile write", () => {
     const post = withoutComments(
       api.slice(api.indexOf("export async function POST"), api.indexOf("export async function PATCH"))
     );
-    const intentIndex = post.indexOf('"create_user_provisioning_intent_v1"');
+    const intentIndex = post.indexOf('"begin_user_provisioning_v2"');
     const authIndex = post.indexOf("service.auth.admin.createUser");
 
     expect(intentIndex).toBeGreaterThanOrEqual(0);
     expect(authIndex).toBeGreaterThan(intentIndex);
     expect(post).toMatch(
-      /user_metadata\s*:\s*\{\s*full_name\s*:\s*body\.data\.full_name\s*,\s*quiksol_provisioning_intent_id\s*:\s*intentId/i
+      /user_metadata\s*:\s*\{\s*full_name\s*:\s*body\.data\.full_name\s*,\s*quiksol_provisioning_intent_id\s*:\s*begin\.decision\.intent_id/i
     );
     expect(post).not.toMatch(/app_metadata\s*:[\s\S]*?quiksol_provisioning_intent_id/i);
     expect(post).not.toMatch(
       /user_metadata\s*:\s*\{[^}]*\b(?:role|department|region|is_active)\s*:/i
     );
     expect(post).not.toMatch(/\.from\s*\(\s*["']profiles["']\s*\)[\s\S]*?\.(?:insert|upsert)\s*\(/i);
-    expect(post.indexOf("logAuditEvent")).toBeGreaterThan(authIndex);
+    expect(post).not.toMatch(/logAuditEvent/i);
+    expect(post).toMatch(/const\s+recovery\s*=\s*await\s+beginProvisioning/i);
   });
 
-  it("makes only the CLI new-user branch intent-first and leaves its legacy existing-user branch explicit", () => {
+  it("makes the CLI idempotent-intent-first and removes the legacy Profile repair bypass", () => {
     const executable = withoutComments(cli);
     const newBranch = executable.slice(
-      executable.indexOf("const creationSecret"),
+      executable.indexOf("const begin ="),
       executable.indexOf("function loadEnvFile")
     );
-    const intentIndex = newBranch.indexOf("gateway.createProvisioningIntent");
+    const intentIndex = newBranch.indexOf("gateway.beginProvisioning");
     const authIndex = newBranch.indexOf("gateway.createUser");
     const createUserImplementation = executable.slice(
       executable.indexOf("async createUser(target, password, intentId)"),
-      executable.indexOf("async upsertProfile(user, target)")
+      executable.indexOf("export function clearTemporaryProvisioningSecrets")
     );
 
     expect(intentIndex).toBeGreaterThanOrEqual(0);
     expect(authIndex).toBeGreaterThan(intentIndex);
-    expect(newBranch).not.toMatch(/gateway\.upsertProfile/i);
-    expect(executable).toMatch(
-      /if\s*\(\s*existingUser\s*\)[\s\S]*?gateway\.upsertProfile\s*\(\s*updatedUser\s*,\s*target\s*\)/i
-    );
-    expect(cli).toMatch(/R8\.4 legacy compatibility only/i);
+    expect(executable).not.toMatch(/upsertProfile/i);
+    expect(executable).not.toMatch(/create_cli_user_provisioning_intent_v1/i);
+    expect(executable).toMatch(/begin_cli_user_provisioning_v2/i);
+    expect(executable).not.toMatch(/\.from\s*\(\s*["']profiles["']\s*\)\.upsert/i);
     expect(createUserImplementation).toMatch(
       /user_metadata\s*:\s*\{\s*full_name\s*:\s*target\.fullName\s*,\s*quiksol_provisioning_intent_id\s*:\s*intentId/i
     );

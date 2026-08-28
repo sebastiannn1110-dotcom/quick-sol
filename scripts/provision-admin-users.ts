@@ -24,6 +24,7 @@ export type ProvisioningMode = "dry-run" | "inspect" | "apply";
 
 export type ProvisioningOptions = {
   mode: ProvisioningMode;
+  idempotencyKey?: string;
   projectRef?: string;
   rotatePassword: boolean;
   targetEmail?: string;
@@ -43,17 +44,21 @@ export type SafeProfileMetadata = {
   is_active: boolean | null;
 };
 
+export type BeginProvisioningResult = {
+  state: "NEW" | "EXISTING_PENDING" | "EXISTING_COMPLETED";
+  intentId: string;
+  authUserId: string | null;
+  role: AdminTarget["role"];
+  status: "pending" | "completed";
+  attemptCount: number;
+};
+
 export type ProvisioningGateway = {
-  createProvisioningIntent(target: AdminTarget): Promise<string>;
+  beginProvisioning(target: AdminTarget, idempotencyKey: string): Promise<BeginProvisioningResult>;
   createUser(target: AdminTarget, password: string, intentId: string): Promise<SafeAuthUser>;
   getProfile(userId: string): Promise<SafeProfileMetadata | null>;
   listUsers(page: number, perPage: number): Promise<SafeAuthUser[]>;
-  updateExistingUser(
-    userId: string,
-    target: AdminTarget,
-    password?: string
-  ): Promise<SafeAuthUser>;
-  upsertProfile(user: SafeAuthUser, target: AdminTarget): Promise<void>;
+  updateExistingUser(userId: string, password: string): Promise<SafeAuthUser>;
 };
 
 type ExecutionDependencies = {
@@ -91,6 +96,21 @@ function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeIdempotencyKey(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error(
+      "IDEMPOTENCY_KEY_REQUIRED: --idempotency-key=<UUID> is required for user creation."
+    );
+  }
+  if (!uuidPattern.test(normalized)) {
+    throw new Error("IDEMPOTENCY_KEY_INVALID: --idempotency-key must be a UUID.");
+  }
+  return normalized;
+}
+
 function flagValue(args: string[], flagName: string) {
   const prefix = `${flagName}=`;
   const values = args
@@ -115,6 +135,7 @@ export function parseProvisioningArgs(args: string[]): ProvisioningOptions {
   for (const argument of args) {
     if (
       allowedFlags.has(argument) ||
+      argument.startsWith("--idempotency-key=") ||
       argument.startsWith("--target-email=") ||
       argument.startsWith("--project-ref=")
     ) {
@@ -126,6 +147,7 @@ export function parseProvisioningArgs(args: string[]): ProvisioningOptions {
   const apply = args.includes("--apply");
   const explicitDryRun = args.includes("--dry-run");
   const inspect = args.includes("--inspect");
+  const rawIdempotencyKey = flagValue(args, "--idempotency-key");
   const rotatePassword = args.includes("--rotate-password");
   const targetEmail = flagValue(args, "--target-email");
   const projectRef = flagValue(args, "--project-ref");
@@ -145,7 +167,14 @@ export function parseProvisioningArgs(args: string[]): ProvisioningOptions {
     throw new Error("PROJECT_REF_REQUIRED: provide --project-ref=<exact Supabase project ref>.");
   }
 
-  return { mode, projectRef, rotatePassword, targetEmail };
+  const idempotencyKey = rawIdempotencyKey
+    ? normalizeIdempotencyKey(rawIdempotencyKey)
+    : undefined;
+  if (mode === "apply" && !rotatePassword && !idempotencyKey) {
+    normalizeIdempotencyKey(undefined);
+  }
+
+  return { mode, idempotencyKey, projectRef, rotatePassword, targetEmail };
 }
 
 export function resolveAdminTarget(targetEmail: string) {
@@ -263,6 +292,25 @@ function requireTemporarySecret(env: NodeJS.ProcessEnv, variableName: string) {
   return value;
 }
 
+function rotationTargetIsConsistent(
+  user: SafeAuthUser,
+  profile: SafeProfileMetadata | null,
+  target: AdminTarget
+) {
+  return Boolean(
+    profile &&
+      profile.id === user.id &&
+      user.email &&
+      normalizeEmail(user.email) === normalizeEmail(target.email) &&
+      profile.email &&
+      normalizeEmail(profile.email) === normalizeEmail(target.email) &&
+      profile.role === target.role &&
+      profile.is_active === true &&
+      user.authActive === true &&
+      user.emailConfirmed === true
+  );
+}
+
 export async function executeProvisioning(
   options: ProvisioningOptions,
   dependencies: ExecutionDependencies
@@ -284,73 +332,115 @@ export async function executeProvisioning(
   const actualProjectRef = validateProjectRef(options.projectRef ?? "", dependencies.supabaseUrl);
   log(`validated: project_ref=${actualProjectRef} target=${target.email}`);
 
+  const idempotencyKey = options.mode === "apply" && !options.rotatePassword
+    ? normalizeIdempotencyKey(options.idempotencyKey)
+    : undefined;
   const gateway = dependencies.createGateway();
-  const existingUser = await findExactUser(gateway, target.email, env);
-  const profile = existingUser
-    ? await providerCall("PROFILE_LOOKUP_FAILED", env, () => gateway.getProfile(existingUser.id))
-    : null;
 
-  log(
-    existingUser
-      ? `inspection: target=${target.email} auth_user=yes user_id=${existingUser.id} auth_active=${existingUser.authActive ?? "unknown"} email_confirmed=${existingUser.emailConfirmed ?? "unknown"} profile=${profile ? "yes" : "no"} profile_active=${profile?.is_active ?? "unknown"} role=${profile?.role ?? "unknown"}`
-      : `inspection: target=${target.email} auth_user=no profile=not-applicable`
-  );
+  if (options.mode === "inspect" || options.rotatePassword) {
+    const existingUser = await findExactUser(gateway, target.email, env);
+    const profile = existingUser
+      ? await providerCall("PROFILE_LOOKUP_FAILED", env, () => gateway.getProfile(existingUser.id))
+      : null;
 
-  if (options.mode === "inspect") {
-    log("INSPECT ONLY / NO CHANGES");
-    return {
-      action: "inspect" as const,
-      changed: false,
-      existingUser,
-      profile,
-      target
-    };
-  }
-
-  if (existingUser) {
-    // R8.4 legacy compatibility only: reconciling a pre-existing Auth user is
-    // not a new-user lifecycle and still repairs/upserts its existing Profile.
-    const rotationSecret = options.rotatePassword
-      ? requireTemporarySecret(env, ADMIN_ROTATION_PASSWORD_ENV)
-      : undefined;
-    const updatedUser = await providerCall("AUTH_UPDATE_FAILED", env, () =>
-      gateway.updateExistingUser(existingUser.id, target, rotationSecret)
-    );
-    await providerCall("PROFILE_UPSERT_FAILED", env, () =>
-      gateway.upsertProfile(updatedUser, target)
-    );
     log(
-      `completed: target=${target.email} action=${options.rotatePassword ? "profile-updated-password-rotated" : "profile-updated-password-preserved"}`
+      existingUser
+        ? `inspection: target=${target.email} auth_user=yes user_id=${existingUser.id} auth_active=${existingUser.authActive ?? "unknown"} email_confirmed=${existingUser.emailConfirmed ?? "unknown"} profile=${profile ? "yes" : "no"} profile_active=${profile?.is_active ?? "unknown"} role=${profile?.role ?? "unknown"}`
+        : `inspection: target=${target.email} auth_user=no profile=not-applicable`
     );
+
+    if (options.mode === "inspect") {
+      log("INSPECT ONLY / NO CHANGES");
+      return {
+        action: "inspect" as const,
+        changed: false,
+        existingUser,
+        profile,
+        target
+      };
+    }
+
+    if (!existingUser) {
+      throw new Error("ROTATION_TARGET_MISSING: rotation is only valid for an existing Auth user.");
+    }
+    if (!rotationTargetIsConsistent(existingUser, profile, target)) {
+      throw new Error(
+        "ROTATION_RECONCILIATION_REQUIRED: Auth and Profile must be active, confirmed, present, and exactly match the allowlisted target."
+      );
+    }
+
+    const rotationSecret = requireTemporarySecret(env, ADMIN_ROTATION_PASSWORD_ENV);
+    const updatedUser = await providerCall("AUTH_UPDATE_FAILED", env, () =>
+      gateway.updateExistingUser(existingUser.id, rotationSecret)
+    );
+    log(`completed: target=${target.email} action=password-rotated-profile-unchanged`);
     return {
-      action: options.rotatePassword ? ("rotated" as const) : ("updated" as const),
+      action: "rotated" as const,
       changed: true,
       target,
       userId: updatedUser.id
     };
   }
 
-  if (options.rotatePassword) {
-    throw new Error("ROTATION_TARGET_MISSING: rotation is only valid for an existing Auth user.");
+  const begin = await providerCall("INTENT_BEGIN_FAILED", env, () =>
+    gateway.beginProvisioning(target, idempotencyKey!)
+  );
+  if (begin.state === "EXISTING_COMPLETED") {
+    log(`completed: target=${target.email} action=user-creation-reused`);
+    return {
+      action: "created" as const,
+      changed: false,
+      reused: true,
+      target,
+      userId: begin.authUserId!
+    };
   }
 
   const creationSecret = requireTemporarySecret(env, ADMIN_PROVISIONING_PASSWORD_ENV);
-  const intentId = await providerCall("INTENT_CREATE_FAILED", env, () =>
-    gateway.createProvisioningIntent(target)
-  );
-  const createdUser = await providerCall("AUTH_CREATE_FAILED", env, () =>
-    gateway.createUser(target, creationSecret, intentId)
-  );
+  let createdUser: SafeAuthUser;
+  try {
+    createdUser = await providerCall("AUTH_CREATE_FAILED", env, () =>
+      gateway.createUser(target, creationSecret, begin.intentId)
+    );
+  } catch (authError) {
+    let recovery: BeginProvisioningResult;
+    try {
+      recovery = await providerCall("INTENT_RECOVERY_FAILED", env, () =>
+        gateway.beginProvisioning(target, idempotencyKey!)
+      );
+    } catch (recoveryError) {
+      throw new Error(
+        `PROVISIONING_RETRYABLE: Auth result and intent state are ambiguous. auth=${sanitizeProviderError(authError, env)} recovery=${sanitizeProviderError(recoveryError, env)}`
+      );
+    }
+
+    if (recovery.state === "EXISTING_COMPLETED") {
+      log(`completed: target=${target.email} action=user-creation-recovered`);
+      return {
+        action: "created" as const,
+        changed: false,
+        recovered: true,
+        reused: true,
+        target,
+        userId: recovery.authUserId!
+      };
+    }
+
+    throw new Error(
+      `PROVISIONING_RETRYABLE: provisioning intent remains pending after Auth error. ${sanitizeProviderError(authError, env)}`
+    );
+  }
   log(`completed: target=${target.email} action=user-created-profile-finalized`);
   return {
     action: "created" as const,
     changed: true,
+    reused: begin.state === "EXISTING_PENDING",
     target,
     userId: createdUser.id
   };
 }
 
-function loadEnvFile(fileName: string) {
+export function loadEnvFile(fileName: string) {
   const filePath = path.resolve(process.cwd(), fileName);
   if (!fs.existsSync(filePath)) return;
 
@@ -388,15 +478,6 @@ function serviceConfiguration() {
   return { serviceRoleKey, supabaseUrl };
 }
 
-function userMetadata(target: AdminTarget) {
-  return {
-    full_name: target.fullName,
-    role: target.role,
-    department: target.department,
-    region: target.region
-  };
-}
-
 function safeAuthUser(user: User): SafeAuthUser {
   const bannedUntil = user.banned_until ? Date.parse(user.banned_until) : Number.NaN;
   return {
@@ -404,6 +485,59 @@ function safeAuthUser(user: User): SafeAuthUser {
     email: user.email,
     authActive: !Number.isFinite(bannedUntil) || bannedUntil <= Date.now(),
     emailConfirmed: Boolean(user.email_confirmed_at)
+  };
+}
+
+function parseBeginProvisioningResult(
+  data: unknown,
+  target: AdminTarget
+): BeginProvisioningResult {
+  const candidate = Array.isArray(data) && data.length === 1 ? data[0] : data;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error("invalid begin provisioning result");
+  }
+
+  const row = candidate as Record<string, unknown>;
+  const state = row.state;
+  const intentId = row.intent_id;
+  const authUserId = row.auth_user_id;
+  const role = row.role;
+  const status = row.status;
+  const attemptCount = row.attempt_count;
+  const stateIsValid =
+    state === "NEW" || state === "EXISTING_PENDING" || state === "EXISTING_COMPLETED";
+  const authUserIdIsValid = authUserId === null || (
+    typeof authUserId === "string" && uuidPattern.test(authUserId)
+  );
+
+  if (
+    !stateIsValid ||
+    typeof intentId !== "string" ||
+    !uuidPattern.test(intentId) ||
+    !authUserIdIsValid ||
+    role !== target.role ||
+    (status !== "pending" && status !== "completed") ||
+    typeof attemptCount !== "number" ||
+    !Number.isInteger(attemptCount) ||
+    attemptCount < 0
+  ) {
+    throw new Error("invalid begin provisioning result");
+  }
+
+  if (
+    (state === "EXISTING_COMPLETED" && (status !== "completed" || authUserId === null)) ||
+    (state !== "EXISTING_COMPLETED" && (status !== "pending" || authUserId !== null))
+  ) {
+    throw new Error("inconsistent begin provisioning result");
+  }
+
+  return {
+    state,
+    intentId,
+    authUserId,
+    role: target.role,
+    status,
+    attemptCount
   };
 }
 
@@ -425,28 +559,17 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
       return data as SafeProfileMetadata | null;
     },
 
-    async updateExistingUser(userId, target, password) {
-      const attributes: {
-        email: string;
-        email_confirm: boolean;
-        password?: string;
-        user_metadata: ReturnType<typeof userMetadata>;
-      } = {
-        email: target.email,
-        email_confirm: true,
-        user_metadata: userMetadata(target)
-      };
-      if (password) attributes.password = password;
-
-      const { data, error } = await supabase.auth.admin.updateUserById(userId, attributes);
+    async updateExistingUser(userId, password) {
+      const { data, error } = await supabase.auth.admin.updateUserById(userId, { password });
       if (error || !data.user) throw error ?? new Error("missing updated Auth user");
       return safeAuthUser(data.user);
     },
 
-    async createProvisioningIntent(target) {
+    async beginProvisioning(target, idempotencyKey) {
       const { data, error } = await supabase.rpc(
-        "create_cli_user_provisioning_intent_v1",
+        "begin_cli_user_provisioning_v2",
         {
+          operation_idempotency_key: idempotencyKey,
           requested_email: target.email,
           requested_full_name: target.fullName,
           requested_role: target.role,
@@ -458,10 +581,7 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
         }
       );
       if (error) throw error;
-      if (typeof data !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data)) {
-        throw new Error("missing provisioning intent id");
-      }
-      return data;
+      return parseBeginProvisioningResult(data, target);
     },
 
     async createUser(target, password, intentId) {
@@ -476,19 +596,6 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
       });
       if (error || !data.user) throw error ?? new Error("missing created Auth user");
       return safeAuthUser(data.user);
-    },
-
-    async upsertProfile(user, target) {
-      const { error } = await supabase.from("profiles").upsert({
-        id: user.id,
-        full_name: target.fullName,
-        email: target.email,
-        role: target.role,
-        department: target.department,
-        region: target.region,
-        is_active: true
-      });
-      if (error) throw error;
     }
   };
 }

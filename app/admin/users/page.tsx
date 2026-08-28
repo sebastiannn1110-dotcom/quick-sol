@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useProfile } from "@/components/ProfileProvider";
@@ -18,6 +18,16 @@ type UserForm = {
   bio: string;
   job_title: string;
   password: string;
+};
+
+type UserMutationResponse = {
+  error?: string;
+  code?: string;
+  created?: boolean;
+  reused?: boolean;
+  recovered?: boolean;
+  temporaryPasswordAvailable?: boolean;
+  temporaryPassword?: string;
 };
 
 const EMPTY_FORM: UserForm = {
@@ -41,6 +51,9 @@ export default function AdminUsersPage() {
   const [modalMode, setModalMode] = useState<"create" | "edit" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const createOperationKeyRef = useRef<string | null>(null);
+  const submitLockRef = useRef(false);
 
   async function loadUsers() {
     const response = await fetch("/api/admin/users", { cache: "no-store" });
@@ -62,13 +75,16 @@ export default function AdminUsersPage() {
   );
 
   function openCreate() {
+    if (submitLockRef.current) return;
     setForm(EMPTY_FORM);
     setMessage(null);
     setError(null);
+    createOperationKeyRef.current = crypto.randomUUID();
     setModalMode("create");
   }
 
   function openEdit(user: Profile) {
+    if (submitLockRef.current) return;
     setForm({
       id: user.id,
       full_name: user.full_name,
@@ -82,13 +98,29 @@ export default function AdminUsersPage() {
     });
     setMessage(null);
     setError(null);
+    createOperationKeyRef.current = null;
     setModalMode("edit");
+  }
+
+  function closeModal() {
+    if (submitLockRef.current) return;
+    createOperationKeyRef.current = null;
+    setModalMode(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitLockRef.current || !modalMode) return;
+
+    submitLockRef.current = true;
+    setIsSubmitting(true);
     setMessage(null);
     setError(null);
+
+    const submissionMode = modalMode;
+    const operationKey = submissionMode === "create"
+      ? (createOperationKeyRef.current ??= crypto.randomUUID())
+      : null;
 
     const payload = {
       full_name: form.full_name.trim(),
@@ -101,23 +133,66 @@ export default function AdminUsersPage() {
       ...(form.password.trim() ? { password: form.password.trim() } : {})
     };
 
-    const response = await fetch("/api/admin/users", {
-      method: modalMode === "create" ? "POST" : "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(modalMode === "create" ? payload : { userId: form.id, ...payload })
-    });
-    const result = (await response.json()) as { error?: string; temporaryPassword?: string };
-    if (!response.ok) {
-      setError(result.error ?? "Unable to save employee.");
-      return;
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: submissionMode === "create" ? "POST" : "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(operationKey ? { "Idempotency-Key": operationKey } : {})
+        },
+        body: JSON.stringify(submissionMode === "create" ? payload : { userId: form.id, ...payload })
+      });
+
+      let result: UserMutationResponse = {};
+      try {
+        result = (await response.json()) as UserMutationResponse;
+      } catch {
+        // Keep the stable operation key when an upstream response is malformed.
+      }
+
+      if (!response.ok) {
+        setError(
+          result.code === "PROVISIONING_RETRYABLE"
+            ? "The creation result is uncertain. Retry this form; the same operation will be reused."
+            : result.error ?? "Unable to save employee."
+        );
+        return;
+      }
+
+      if (submissionMode === "create" && result.created !== true) {
+        setError("The creation result is uncertain. Retry this form; the same operation will be reused.");
+        return;
+      }
+
+      if (submissionMode === "create") {
+        if (result.recovered || result.reused) {
+          setMessage(
+            result.temporaryPasswordAvailable && result.temporaryPassword
+              ? `Employee creation resumed. Temporary password: ${result.temporaryPassword}`
+              : "Employee creation recovered from a retry. The temporary password cannot be recovered; use the credential recovery flow."
+          );
+        } else if (result.temporaryPasswordAvailable && result.temporaryPassword) {
+          setMessage(`Employee created. Temporary password: ${result.temporaryPassword}`);
+        } else {
+          setMessage("Employee created.");
+        }
+        createOperationKeyRef.current = null;
+      } else {
+        setMessage("Employee saved.");
+      }
+
+      setModalMode(null);
+      void loadUsers();
+    } catch {
+      setError(
+        submissionMode === "create"
+          ? "The creation result is uncertain. Retry this form; the same operation will be reused."
+          : "Unable to save employee."
+      );
+    } finally {
+      submitLockRef.current = false;
+      setIsSubmitting(false);
     }
-    setMessage(
-      modalMode === "create" && result.temporaryPassword
-        ? `Employee created. Temporary password: ${result.temporaryPassword}`
-        : "Employee saved."
-    );
-    setModalMode(null);
-    loadUsers();
   }
 
   async function setActive(user: Profile, isActive: boolean) {
@@ -144,7 +219,7 @@ export default function AdminUsersPage() {
             <p className="text-sm font-medium text-orange-700">{t("nav.admin")}</p>
             <h1 className="text-2xl font-semibold text-slate-950">{t("admin.usersTitle")}</h1>
           </div>
-          <button type="button" onClick={openCreate} className="focus-ring rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
+          <button type="button" onClick={openCreate} disabled={isSubmitting} className="focus-ring rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">
             Create Employee
           </button>
         </div>
@@ -184,7 +259,7 @@ export default function AdminUsersPage() {
                       <div className="flex flex-wrap justify-end gap-2">
                         {user.role !== "super_admin_dev" || hasPrivilegedRoleManagement ? (
                           <>
-                            <button onClick={() => openEdit(user)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
+                            <button onClick={() => openEdit(user)} disabled={isSubmitting} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                               Edit
                             </button>
                             <button onClick={() => setActive(user, !user.is_active)} className="focus-ring rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700">
@@ -218,7 +293,7 @@ export default function AdminUsersPage() {
                   <p className="text-sm font-medium text-orange-700">{modalMode === "create" ? "Create Employee" : "Edit Employee"}</p>
                   <h2 className="text-xl font-semibold text-slate-950">{form.full_name || "New employee"}</h2>
                 </div>
-                <button type="button" onClick={() => setModalMode(null)} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">
+                <button type="button" onClick={closeModal} disabled={isSubmitting} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {t("table.close")}
                 </button>
               </div>
@@ -263,8 +338,10 @@ export default function AdminUsersPage() {
                   <textarea value={form.bio} maxLength={500} rows={4} onChange={(event) => setForm((current) => ({ ...current, bio: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
                 </label>
                 <div className="sm:col-span-2 flex justify-end">
-                  <button type="submit" className="focus-ring rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700">
-                    {modalMode === "create" ? "Create Employee" : "Save Employee"}
+                  <button type="submit" disabled={isSubmitting} className="focus-ring rounded-md bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {isSubmitting
+                      ? modalMode === "create" ? "Creating..." : "Saving..."
+                      : modalMode === "create" ? "Create Employee" : "Save Employee"}
                   </button>
                 </div>
               </form>
