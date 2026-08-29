@@ -14,11 +14,15 @@ const r741MigrationPath = path.join(
 
 const r74Migration = readFileSync(r74MigrationPath, "utf8");
 const r741Migration = readFileSync(r741MigrationPath, "utf8");
+// Git stores migrations with LF. Windows may materialize an otherwise clean
+// checkout with CRLF when core.autocrlf predates the repository attributes.
+// Hash the Git-canonical text so the immutability gate remains cross-platform.
+const canonicalR74Migration = r74Migration.replace(/\r\n/g, "\n");
 const normalizedR741 = r741Migration.replace(/\s+/g, " ").trim().toLowerCase();
 
 describe("R7.4.1 Stock Needs snapshot chunk index contract", () => {
-  it("keeps the applied R7.4 migration byte-for-byte unchanged", () => {
-    expect(createHash("sha256").update(r74Migration).digest("hex")).toBe(
+  it("keeps the applied R7.4 migration Git-canonical bytes unchanged", () => {
+    expect(createHash("sha256").update(canonicalR74Migration).digest("hex")).toBe(
       "2411dc162c2f6b60ac68c4b6e67276d7a5ab77b23fe5f95edb88063c10b77ef6"
     );
   });

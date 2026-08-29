@@ -2,9 +2,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  DATABASE_SAFETY_CATALOG_VERSION,
   DATABASE_DESTRUCTION_PHRASE,
   DATABASE_SAFETY_DELETE_TABLES,
   DATABASE_SAFETY_PROTECTED_TABLES,
+  DATABASE_SAFETY_STORAGE_POLICY,
   DATABASE_SAFETY_TABLE_POLICY
 } from "@/lib/superadmin/database-safety-policy";
 
@@ -14,12 +16,14 @@ const roundFourMigrationPath = "supabase/migrations/20260823120000_harden_import
 const roundSevenMigrationPath = "supabase/migrations/20260825120000_high_volume_persistence_and_summary_pipeline.sql";
 const roundSevenFourMigrationPath = "supabase/migrations/20260826160000_stock_needs_snapshot_r74.sql";
 const roundEightThreeMigrationPath = "supabase/migrations/20260827180000_user_provisioning_intents_r83a.sql";
+const demoSafetyMigrationPath = "supabase/migrations/20260829170000_demo_database_safety_catalog.sql";
 const baseMigration = readFileSync(path.join(process.cwd(), baseMigrationPath), "utf8");
 const migration = readFileSync(path.join(process.cwd(), migrationPath), "utf8");
 const roundFourMigration = readFileSync(path.join(process.cwd(), roundFourMigrationPath), "utf8");
 const roundSevenMigration = readFileSync(path.join(process.cwd(), roundSevenMigrationPath), "utf8");
 const roundSevenFourMigration = readFileSync(path.join(process.cwd(), roundSevenFourMigrationPath), "utf8");
 const roundEightThreeMigration = readFileSync(path.join(process.cwd(), roundEightThreeMigrationPath), "utf8");
+const demoSafetyMigration = readFileSync(path.join(process.cwd(), demoSafetyMigrationPath), "utf8");
 const normalized = migration.toLowerCase();
 
 const historicalPublicTables = [
@@ -48,14 +52,26 @@ const newSafetyTables = [
   "database_backup_manifests", "database_destruction_operations", "database_safety_audit_events", "database_safety_state"
 ].sort();
 
+const demoPreservedTables = [
+  "commerce_catalog_products", "commerce_client_details", "commerce_quote_events", "commerce_quote_items",
+  "commerce_quote_shares", "commerce_quotes", "commerce_rfq_items", "commerce_rfqs",
+  "commercial_price_approvals", "employee_compensation", "organization_members",
+  "sourcing_offer_attachments", "sourcing_offers", "sourcing_requests"
+].sort();
+
+const demoPreserveReason =
+  "Demo schema preserved pending a separately authorized backup/purge policy review.";
+
 describe("Database Safety Center policy", () => {
-  it("covers the exact 68 existing public tables and four protected safety tables", () => {
+  it("covers the exact 82 application public tables and four protected safety tables", () => {
     const publicTables = DATABASE_SAFETY_TABLE_POLICY.filter((entry) => entry.schema === "public").map((entry) => entry.table);
-    expect([...new Set(publicTables)].sort()).toEqual([...historicalPublicTables, ...newSafetyTables].sort());
-    expect(publicTables).toHaveLength(72);
+    expect([...new Set(publicTables)].sort()).toEqual(
+      [...historicalPublicTables, ...demoPreservedTables, ...newSafetyTables].sort()
+    );
+    expect(publicTables).toHaveLength(86);
   });
 
-  it("derives the 68-table baseline from the actual local migration corpus", () => {
+  it("derives the 82-table application baseline from the actual local migration corpus", () => {
     const migrationsDirectory = path.join(process.cwd(), "supabase/migrations");
     const corpus = readdirSync(migrationsDirectory)
       .filter((name) => name.endsWith(".sql") && ![path.basename(migrationPath), path.basename(baseMigrationPath)].includes(name))
@@ -63,7 +79,7 @@ describe("Database Safety Center policy", () => {
       .join("\n");
     const discovered = [...corpus.matchAll(/create table(?: if not exists)? public\.([a-z0-9_]+)/gi)]
       .map((match) => match[1]);
-    expect([...new Set(discovered)].sort()).toEqual(historicalPublicTables);
+    expect([...new Set(discovered)].sort()).toEqual([...historicalPublicTables, ...demoPreservedTables].sort());
   });
 
   it("keeps the TypeScript and SQL catalogs synchronized", () => {
@@ -77,8 +93,17 @@ describe("Database Safety Center policy", () => {
       .map((match) => `${match[1]}.${match[2]}`);
     const roundEightThreeTables = [...roundEightThreeMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
       .map((match) => `${match[1]}.${match[2]}`);
+    const demoSafetyTables = [...demoSafetyMigration.matchAll(/select '([^']+)','([^']+)','[^']+','(?:DELETE|PRESERVE)'/g)]
+      .map((match) => `${match[1]}.${match[2]}`);
     const policyTables = DATABASE_SAFETY_TABLE_POLICY.map((entry) => `${entry.schema}.${entry.table}`);
-    expect([...new Set([...sqlTables, ...roundFourTables, ...roundSevenTables, ...roundSevenFourTables, ...roundEightThreeTables])].sort())
+    expect([...new Set([
+      ...sqlTables,
+      ...roundFourTables,
+      ...roundSevenTables,
+      ...roundSevenFourTables,
+      ...roundEightThreeTables,
+      ...demoSafetyTables
+    ])].sort())
       .toEqual([...policyTables].sort());
   });
 
@@ -96,6 +121,51 @@ describe("Database Safety Center policy", () => {
       "public.system_logs", "public.client_logs", "public.performance_logs", "public.api_rate_limits",
       "public.worker_runtime_heartbeats", "public.user_provisioning_intents"
     ]));
+  });
+
+  it("fail-closes all 14 demo tables as preserved BUSINESS_DATA", () => {
+    const policies = new Map(DATABASE_SAFETY_TABLE_POLICY.map((entry) => [entry.table, entry]));
+    for (const table of demoPreservedTables) {
+      expect(policies.get(table)).toMatchObject({
+        schema: "public",
+        category: "BUSINESS_DATA",
+        action: "PRESERVE",
+        deleteOrder: null,
+        reason: demoPreserveReason
+      });
+      expect(demoSafetyMigration).toContain(
+        `'public','${table}','BUSINESS_DATA','PRESERVE',null,'${demoPreserveReason}'`
+      );
+      expect(demoSafetyMigration).not.toContain(
+        `'public','${table}','BUSINESS_DATA','DELETE'`
+      );
+    }
+    expect(DATABASE_SAFETY_DELETE_TABLES).toHaveLength(50);
+  });
+
+  it("preserves sourcing-private until a separately authorized storage purge review", () => {
+    expect(DATABASE_SAFETY_STORAGE_POLICY.find((entry) => entry.bucket === "sourcing-private")).toEqual({
+      bucket: "sourcing-private",
+      action: "PRESERVE",
+      reason: demoPreserveReason
+    });
+    expect(demoSafetyMigration).toContain(
+      `('sourcing-private','PRESERVE','${demoPreserveReason}')`
+    );
+    expect(demoSafetyMigration).not.toContain("('sourcing-private','BUSINESS_DELETE'");
+  });
+
+  it("keeps profiles, R8 provisioning evidence, Auth identities and migration history preserved", () => {
+    const policies = new Map(
+      DATABASE_SAFETY_TABLE_POLICY.map((entry) => [`${entry.schema}.${entry.table}`, entry.action])
+    );
+    expect(policies.get("public.profiles")).toBe("PRESERVE");
+    expect(policies.get("public.user_provisioning_intents")).toBe("PRESERVE");
+    expect(policies.get("auth.users")).toBe("PRESERVE");
+    expect(policies.get("supabase_migrations.schema_migrations")).toBe("PRESERVE");
+    expect(DATABASE_SAFETY_CATALOG_VERSION).toBe("20260829170000-demo-preserve-v1");
+    expect(demoSafetyMigration).toContain("'user_provisioning_intents','AUTH_IDENTITY','PRESERVE',null");
+    expect(demoSafetyMigration).toContain("select '20260829170000-demo-preserve-v1'::text");
   });
 
   it("orders representative FK children before their parents", () => {

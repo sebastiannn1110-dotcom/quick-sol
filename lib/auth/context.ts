@@ -27,6 +27,7 @@ export const DEMO_PROFILE: Profile = {
   full_name: "Demo Admin",
   email: "admin@quiksol.local",
   role: "admin",
+  business_rank: "owner",
   department: "Operations",
   region: "Global",
   is_active: true,

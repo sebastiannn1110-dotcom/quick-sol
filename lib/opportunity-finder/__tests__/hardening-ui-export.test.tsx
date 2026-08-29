@@ -16,7 +16,7 @@ import OpportunityFinder, {
 import {
   buildOpportunityCsv,
   buildOpportunityExportWorkbook
-} from "@/app/api/opportunity-finder/jobs/[id]/export/route";
+} from "@/lib/opportunity-finder/export";
 import {
   OPPORTUNITY_RESULT_SELECT,
   resultDatabaseRow

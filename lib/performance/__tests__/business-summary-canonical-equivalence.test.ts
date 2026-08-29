@@ -76,5 +76,9 @@ describe("Ronda 7 canonical BEFORE/AFTER equivalence", () => {
       expect(report.hashes.canonicalWarningsAfter).toBe(reference.hashes.canonicalWarningsAfter);
       expect(report.hashes.canonicalFullAfter).toBe(reference.hashes.canonicalFullAfter);
     }
-  }, 30_000);
+  // The five 10k-row canonical audits take ~28s in isolation and ~47s when
+  // the full Windows suite is scheduling workers. Keep the proof identical
+  // while allowing deterministic CI contention instead of treating it as a
+  // data-equivalence failure.
+  }, 90_000);
 });

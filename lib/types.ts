@@ -39,6 +39,15 @@ export const SELECTABLE_UPLOAD_CATEGORIES = [
 export type BusinessCategory = (typeof BUSINESS_CATEGORIES)[number];
 export type UploadCategory = (typeof SELECTABLE_UPLOAD_CATEGORIES)[number];
 export type UserRole = "admin" | "manager" | "employee" | "super_admin_dev";
+export type BusinessRank =
+  | "owner"
+  | "executive"
+  | "director"
+  | "manager"
+  | "salesperson"
+  | "sourcing_manager"
+  | "sourcing_specialist"
+  | "individual_contributor";
 export type UploadStatus =
   | "pending"
   | "pending_upload"
@@ -72,6 +81,8 @@ export interface Profile {
   full_name: string;
   email: string;
   role: UserRole;
+  /** Business responsibility is intentionally separate from the Auth/R8 technical role. */
+  business_rank?: BusinessRank | null;
   department: string | null;
   region: string | null;
   bio?: string | null;

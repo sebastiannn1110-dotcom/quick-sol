@@ -1,6 +1,6 @@
 # Prueba funcional de 50 preguntas — resultado posterior
 
-Generado: 2026-08-25T18:46:07.471Z
+Generado: 2026-08-29T09:23:37.734Z
 
 ## Resultado ejecutivo
 

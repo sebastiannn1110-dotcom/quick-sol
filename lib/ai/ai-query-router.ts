@@ -9,6 +9,7 @@ import {
   getConversationMemorySet,
   getDashboardSummary,
   getImportErrors,
+  getLatestUploadAttribution,
   getLatestUpload,
   getMissingMpnRecords,
   getOpportunitiesSummary,
@@ -39,6 +40,12 @@ import {
   type AssistantResponsePlan
 } from "@/lib/ai/response-plan";
 import type { OpportunityFinderAiMode } from "@/lib/ai/opportunity-finder-tool";
+import {
+  getClientQuoteSummary,
+  getEmployeeQuoteMetrics,
+  getQuoteSummary,
+  getSourcingLookup
+} from "@/lib/ai/commerce-tools";
 import {
   logSafeAiEvent,
   sanitizeQuestionForLogs
@@ -285,6 +292,17 @@ async function executeDetectedIntent(input: {
   if (intent === "stock_shortage") return getStockShortageSummary(context);
   if (intent === "zero_stock") return getZeroStockSummary(context);
   if (intent === "stock_concept_help") return getStockConceptHelp(context);
+  if (intent === "quote_summary") return getQuoteSummary(context);
+  if (intent === "employee_quote_metrics") {
+    return getEmployeeQuoteMetrics(context, question);
+  }
+  if (intent === "client_quote_summary") return getClientQuoteSummary(context);
+  if (intent === "sourcing_lookup") {
+    return getSourcingLookup(context, input.mpn ?? "");
+  }
+  if (intent === "latest_upload_attribution") {
+    return getLatestUploadAttribution(context);
+  }
   if (intent === "latest_upload") return getLatestUpload(context);
   if (intent === "upload_summary" || intent === "latest_upload_columns") {
     return getUploadPresentationSummary(context, question);

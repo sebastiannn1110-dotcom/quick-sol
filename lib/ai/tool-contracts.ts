@@ -95,6 +95,18 @@ function safeUploadRow(value: unknown) {
   });
 }
 
+function safeLatestUploadAttribution(value: unknown) {
+  const item = record(record(value).item);
+  return {
+    item: compactObject({
+      fileName: text(item.fileName, 260),
+      uploadedAt: text(item.uploadedAt, 40),
+      status: text(item.status, 40),
+      uploaderDisplayName: text(item.uploaderDisplayName, 160)
+    })
+  };
+}
+
 function safeStockItem(value: unknown) {
   const row = record(value);
   return compactObject({
@@ -215,6 +227,74 @@ function safeDashboard(value: unknown) {
   });
 }
 
+function safeQuoteMetric(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    name: text(row.name, 160),
+    businessTitle: text(row.businessTitle, 160),
+    region: text(row.region, 100),
+    quotesCreated: numberValue(row.quotesCreated),
+    quotesSent: numberValue(row.quotesSent),
+    quotesAccepted: numberValue(row.quotesAccepted),
+    quotesRejected: numberValue(row.quotesRejected),
+    quoteConversionRate: numberValue(row.quoteConversionRate),
+    quotedValue: numberValue(row.quotedValue),
+    acceptedQuoteValue: numberValue(row.acceptedQuoteValue),
+    customersServed: numberValue(row.customersServed),
+    newCustomers: numberValue(row.newCustomers)
+  });
+}
+
+function safeRecentQuote(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    number: text(row.number, 80),
+    sellerName: text(row.sellerName, 160),
+    clientName: text(row.clientName, 200),
+    status: text(row.status, 20),
+    total: numberValue(row.total),
+    currency: text(row.currency, 3),
+    createdAt: text(row.createdAt, 40),
+    validUntil: text(row.validUntil, 40)
+  });
+}
+
+function safeQuoteStatusCounts(value: unknown) {
+  const row = record(value);
+  return {
+    draft: numberValue(row.draft),
+    sent: numberValue(row.sent),
+    accepted: numberValue(row.accepted),
+    rejected: numberValue(row.rejected),
+    expired: numberValue(row.expired)
+  };
+}
+
+function safeClientQuoteMetric(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    name: text(row.name, 200),
+    openQuoteCount: numberValue(row.openQuoteCount),
+    openQuoteValue: numberValue(row.openQuoteValue),
+    draftQuotes: numberValue(row.draftQuotes),
+    sentQuotes: numberValue(row.sentQuotes)
+  });
+}
+
+function safeSourcingApproval(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    mpn: text(row.mpn, 160),
+    manufacturer: text(row.manufacturer, 160),
+    authorizedUnitPrice: numberValue(row.authorizedUnitPrice),
+    currency: text(row.currency, 3),
+    coarseAvailability: text(row.coarseAvailability, 30),
+    leadTimeDays: numberValue(row.leadTimeDays),
+    minimumOrderQuantity: numberValue(row.minimumOrderQuantity),
+    validUntil: text(row.validUntil, 40)
+  });
+}
+
 function safeToolData(tool: string, value: unknown): unknown {
   const source = record(value);
   switch (tool) {
@@ -241,6 +321,8 @@ function safeToolData(tool: string, value: unknown): unknown {
         profiles: array(source.profiles).map(safeProfile).slice(0, 3),
         safeColumns: array(source.safeColumns).map((item) => text(item, 80)).filter(Boolean).slice(0, 30)
       };
+    case "getLatestUploadAttribution":
+      return safeLatestUploadAttribution(value);
     case "getStockNeedsSummary":
     case "getStockShortageSummary":
     case "getZeroStockSummary":
@@ -276,6 +358,37 @@ function safeToolData(tool: string, value: unknown): unknown {
       return array(value).map(safeImportError).slice(0, 50);
     case "getDashboardSummary":
       return safeDashboard(value);
+    case "quote_summary":
+      return {
+        currency: text(source.currency, 3),
+        quoteCount: numberValue(source.quoteCount),
+        statusCounts: safeQuoteStatusCounts(source.statusCounts),
+        quotedValue: numberValue(source.quotedValue),
+        acceptedQuoteValue: numberValue(source.acceptedQuoteValue),
+        openQuoteValue: numberValue(source.openQuoteValue),
+        recentQuotes: array(source.recentQuotes).map(safeRecentQuote).slice(0, 10)
+      };
+    case "employee_quote_metrics":
+      return {
+        analyticsScope: text(source.analyticsScope, 20),
+        currency: text(source.currency, 3),
+        queryMode: text(source.queryMode, 20),
+        selectedEmployee: safeQuoteMetric(source.selectedEmployee),
+        ranking: array(source.ranking).map(safeQuoteMetric).slice(0, 10),
+        totals: safeQuoteMetric(source.totals)
+      };
+    case "client_quote_summary":
+      return {
+        currency: text(source.currency, 3),
+        topClient: safeClientQuoteMetric(source.topClient),
+        clients: array(source.clients).map(safeClientQuoteMetric).slice(0, 25)
+      };
+    case "sourcing_lookup":
+      return {
+        accessMode: "seller_safe",
+        mpn: text(source.mpn, 160),
+        approvals: array(source.approvals).map(safeSourcingApproval).slice(0, 50)
+      };
     case "getMpnPriceComparison":
     case "getLowGpRecords":
       return { reasonCode: "sensitive_fields_restricted" };
@@ -311,7 +424,11 @@ function sourceTypeForTool(tool: string): ToolSourceType {
     ].includes(tool)
   ) return "opportunity_finder";
   if (tool === "getOpportunitiesSummary") return "historical_opportunities";
-  if (tool === "getUploadPresentationSummary" || tool === "getLatestUpload") return "upload_metadata";
+  if (
+    tool === "getUploadPresentationSummary" ||
+    tool === "getLatestUploadAttribution" ||
+    tool === "getLatestUpload"
+  ) return "upload_metadata";
   if (
     [
       "sensitiveDataPermissionDenied",

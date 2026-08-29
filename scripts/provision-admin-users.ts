@@ -68,6 +68,35 @@ type ExecutionDependencies = {
   supabaseUrl: string;
 };
 
+export type ProvisionedAuthUserInput = {
+  email: string;
+  password: string;
+  user_metadata: Record<string, unknown> & {
+    full_name: string;
+    quiksol_provisioning_intent_id: string;
+  };
+};
+
+/**
+ * The single CLI boundary for creating an Auth identity after an R8
+ * provisioning intent has been acquired. Other guarded seed/provisioning
+ * scripts call this helper instead of adding another direct createUser
+ * integration point.
+ */
+export async function createProvisionedAuthUser(
+  supabase: SupabaseClient,
+  input: ProvisionedAuthUserInput
+): Promise<User> {
+  const { data, error } = await supabase.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+    user_metadata: input.user_metadata
+  });
+  if (error || !data.user) throw error ?? new Error("missing created Auth user");
+  return data.user;
+}
+
 export const ADMIN_TARGETS: readonly AdminTarget[] = Object.freeze([
   Object.freeze({
     email: "admin@quiksol.local",
@@ -585,17 +614,15 @@ function createSupabaseGateway(supabase: SupabaseClient): ProvisioningGateway {
     },
 
     async createUser(target, password, intentId) {
-      const { data, error } = await supabase.auth.admin.createUser({
+      const user = await createProvisionedAuthUser(supabase, {
         email: target.email,
         password,
-        email_confirm: true,
         user_metadata: {
           full_name: target.fullName,
           quiksol_provisioning_intent_id: intentId
         }
       });
-      if (error || !data.user) throw error ?? new Error("missing created Auth user");
-      return safeAuthUser(data.user);
+      return safeAuthUser(user);
     }
   };
 }

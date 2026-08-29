@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { REQUEST_HEADER, TRACE_HEADER, createRequestId, createTraceId } from "@/lib/logger/context";
 import { logger } from "@/lib/logger/logger";
 import { canAccessAdmin, canAccessAdminDev } from "@/lib/auth/roles";
+import { canManageSourcing } from "@/lib/sourcing/permissions";
 
 const PUBLIC_PATHS = ["/login", "/forgot-password", "/reset-password"];
 const PROTECTED_PREFIXES = [
@@ -59,6 +60,10 @@ function isPublicPath(pathname: string) {
 
 function managerCanAccessAdminPath(pathname: string) {
   return MANAGER_ADMIN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function isSourcingAdminPath(pathname: string) {
+  return pathname === "/admin/sourcing" || pathname.startsWith("/admin/sourcing/");
 }
 
 function isAdminPath(pathname: string) {
@@ -219,7 +224,7 @@ export async function proxy(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, role, is_active")
+    .select("id, role, business_rank, is_active")
     .eq("id", user.id)
     .single();
 
@@ -260,7 +265,8 @@ export async function proxy(request: NextRequest) {
   if (
     isAdminPath(pathname) &&
     !canAccessAdmin(profile.role) &&
-    !(profile.role === "manager" && managerCanAccessAdminPath(pathname))
+    !(profile.role === "manager" && managerCanAccessAdminPath(pathname)) &&
+    !(isSourcingAdminPath(pathname) && canManageSourcing(profile))
   ) {
     await logger.security({
       ...baseLog,

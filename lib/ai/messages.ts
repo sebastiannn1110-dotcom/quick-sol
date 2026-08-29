@@ -59,6 +59,56 @@ function count(value: unknown, key: string) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function safeText(value: unknown, max = 160) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function localizedUploadStatus(value: unknown, language: AssistantLanguage) {
+  const status = safeText(value, 40);
+  const labels: Record<string, Record<AssistantLanguage, string>> = {
+    pending: { es: "pendiente", en: "pending", zh: "\u5f85\u5904\u7406" },
+    pending_upload: { es: "pendiente de carga", en: "pending upload", zh: "\u5f85\u4e0a\u4f20" },
+    uploading: { es: "cargando", en: "uploading", zh: "\u4e0a\u4f20\u4e2d" },
+    uploaded: { es: "cargado", en: "uploaded", zh: "\u5df2\u4e0a\u4f20" },
+    queued: { es: "en cola", en: "queued", zh: "\u5df2\u6392\u961f" },
+    retrying: { es: "reintentando", en: "retrying", zh: "\u91cd\u8bd5\u4e2d" },
+    processing: { es: "procesando", en: "processing", zh: "\u5904\u7406\u4e2d" },
+    completed: { es: "completado", en: "completed", zh: "\u5df2\u5b8c\u6210" },
+    completed_with_warnings: {
+      es: "completado con advertencias",
+      en: "completed with warnings",
+      zh: "\u5df2\u5b8c\u6210\uff0c\u4f46\u6709\u8b66\u544a"
+    },
+    failed: { es: "fallido", en: "failed", zh: "\u5931\u8d25" },
+    cancelled: { es: "cancelado", en: "cancelled", zh: "\u5df2\u53d6\u6d88" }
+  };
+  return labels[status]?.[language] ?? status.replace(/_/g, " ");
+}
+
+function localizedUploadDate(value: unknown, language: AssistantLanguage) {
+  const raw = safeText(value, 40);
+  const parsed = new Date(raw);
+  if (!raw || Number.isNaN(parsed.getTime())) return "";
+  const locale = language === "es" ? "es-CO" : language === "zh" ? "zh-CN" : "en-US";
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC"
+  }).format(parsed);
+}
+
+function localizedMoney(value: unknown, language: AssistantLanguage, currency = "USD") {
+  const parsed = Number(value ?? 0);
+  const amount = Number.isFinite(parsed) ? parsed : 0;
+  const locale = language === "es" ? "es-CO" : language === "zh" ? "zh-CN" : "en-US";
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : "USD",
+    maximumFractionDigits: 2
+  }).format(amount);
+}
+
 export function assistantMessage(language: AssistantLanguage, key: CopyKey) {
   return COPY[language][key];
 }
@@ -121,6 +171,79 @@ export function localizeToolSummary(toolResult: AiToolResult, language: Assistan
     if (language === "zh") return `历史汇总中有 ${opportunityTotal} 个授权商机。此结果不属于当前的商机查找比较。`;
     if (language === "es") return `El agregado histórico contiene ${opportunityTotal} oportunidades autorizadas y es independiente de la comparación actual del Buscador de oportunidades.`;
     return `The historical aggregate contains ${opportunityTotal} authorized opportunities. This is separate from the current Opportunity Finder comparison.`;
+  }
+  if (toolResult.tool === "quote_summary") {
+    const quoteCount = count(data, "quoteCount");
+    const statusCounts = record(data.statusCounts);
+    const accepted = count(statusCounts, "accepted");
+    const open = count(statusCounts, "draft") + count(statusCounts, "sent");
+    const quotedValue = localizedMoney(data.quotedValue, language, String(data.currency ?? "USD"));
+    const acceptedValue = localizedMoney(data.acceptedQuoteValue, language, String(data.currency ?? "USD"));
+    if (language === "zh") return `\u6388\u6743\u8303\u56f4\u5185\u5171\u6709 ${quoteCount} \u4efd\u62a5\u4ef7\uff0c${open} \u4efd\u672a\u7ed3\uff0c${accepted} \u4efd\u5df2\u63a5\u53d7\u3002\u62a5\u4ef7\u603b\u989d\u4e3a ${quotedValue}\uff0c\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u4e3a ${acceptedValue}\u3002`;
+    if (language === "es") return `En tu alcance autorizado hay ${quoteCount} cotizaciones: ${open} abiertas y ${accepted} aceptadas. El valor cotizado es ${quotedValue} y el Accepted Quote Value es ${acceptedValue}.`;
+    return `Your authorized scope contains ${quoteCount} quotes: ${open} open and ${accepted} accepted. Quoted value is ${quotedValue}, and Accepted Quote Value is ${acceptedValue}.`;
+  }
+  if (toolResult.tool === "employee_quote_metrics") {
+    const selected = record(data.selectedEmployee);
+    const name = safeText(selected.name, 160);
+    if (!name) return assistantMessage(language, "noData");
+    const created = count(selected, "quotesCreated");
+    const sent = count(selected, "quotesSent");
+    const accepted = count(selected, "quotesAccepted");
+    const acceptedValue = localizedMoney(selected.acceptedQuoteValue, language, String(data.currency ?? "USD"));
+    const ranking = data.queryMode === "ranking";
+    if (language === "zh") return ranking
+      ? `${name} \u7684\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff0c\u4e3a ${acceptedValue}\uff1b\u5171\u521b\u5efa ${created} \u4efd\u62a5\u4ef7\uff0c${accepted} \u4efd\u5df2\u63a5\u53d7\u3002`
+      : `${name} \u5171\u6709 ${created} \u4efd\u62a5\u4ef7\uff0c${sent} \u4efd\u5df2\u53d1\u9001\uff0c${accepted} \u4efd\u5df2\u63a5\u53d7\uff0c\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u4e3a ${acceptedValue}\u3002`;
+    if (language === "es") return ranking
+      ? `${name} tiene el mayor Accepted Quote Value: ${acceptedValue}. Ha creado ${created} cotizaciones y ${accepted} fueron aceptadas.`
+      : `${name} tiene ${created} cotizaciones: ${sent} enviadas y ${accepted} aceptadas. Su Accepted Quote Value es ${acceptedValue}.`;
+    return ranking
+      ? `${name} has the highest Accepted Quote Value at ${acceptedValue}. ${created} quotes were created and ${accepted} were accepted.`
+      : `${name} has ${created} quotes: ${sent} sent and ${accepted} accepted. Accepted Quote Value is ${acceptedValue}.`;
+  }
+  if (toolResult.tool === "client_quote_summary") {
+    const client = record(data.topClient);
+    const name = safeText(client.name, 200);
+    if (!name) return assistantMessage(language, "noData");
+    const openCount = count(client, "openQuoteCount");
+    const openValue = localizedMoney(client.openQuoteValue, language, String(data.currency ?? "USD"));
+    if (language === "zh") return `${name} \u7684\u672a\u7ed3\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff0c\u5171 ${openCount} \u4efd\uff0c\u603b\u989d\u4e3a ${openValue}\u3002\u672a\u7ed3\u62a5\u4ef7\u6307\u8349\u7a3f\u6216\u5df2\u53d1\u9001\u72b6\u6001\u3002`;
+    if (language === "es") return `${name} es el cliente con mayor valor de cotizaciones abiertas: ${openValue} en ${openCount} cotizaciones. Abiertas significa draft o sent.`;
+    return `${name} has the highest open quote value: ${openValue} across ${openCount} quotes. Open means draft or sent.`;
+  }
+  if (toolResult.tool === "sourcing_lookup") {
+    const approvals = Array.isArray(data.approvals) ? data.approvals.map(record) : [];
+    const first = approvals[0] ?? {};
+    const mpn = safeText(data.mpn ?? first.mpn, 160);
+    if (!mpn || !approvals.length) return assistantMessage(language, "noData");
+    const price = localizedMoney(first.authorizedUnitPrice, language, String(first.currency ?? "USD"));
+    const availability = safeText(first.coarseAvailability, 30) || "contact_us";
+    const leadTime = Number(first.leadTimeDays ?? 0);
+    if (language === "zh") return `${mpn} \u6709 ${approvals.length} \u4e2a\u5df2\u6388\u6743\u7684\u5546\u4e1a\u9009\u9879\u3002\u6388\u6743\u5355\u4ef7\u4e3a ${price}\uff0c\u53ef\u7528\u6027\u4e3a ${availability}${leadTime ? `\uff0c\u4ea4\u671f ${leadTime} \u5929` : ""}\u3002\u4f9b\u5e94\u5546\u6210\u672c\u548c\u7cbe\u786e\u5e93\u5b58\u672a\u5305\u542b\u5728\u6b64 AI \u56de\u7b54\u4e2d\u3002`;
+    if (language === "es") return `Hay ${approvals.length} opci\u00f3n comercial autorizada para ${mpn}. El precio autorizado es ${price}, la disponibilidad es ${availability}${leadTime ? ` y el lead time es ${leadTime} d\u00edas` : ""}. La IA no incluye costo de proveedor ni cantidad interna exacta.`;
+    return `${mpn} has ${approvals.length} authorized commercial option. Authorized unit price is ${price}, availability is ${availability}${leadTime ? `, and lead time is ${leadTime} days` : ""}. Supplier cost and exact internal quantity are not included in this AI response.`;
+  }
+  if (toolResult.tool === "getLatestUploadAttribution") {
+    const item = record(data.item);
+    const fileName = safeText(item.fileName, 260);
+    if (!fileName) return assistantMessage(language, "noData");
+    const uploader = safeText(item.uploaderDisplayName, 160) || (
+      language === "es"
+        ? "un usuario autorizado"
+        : language === "zh"
+          ? "\u4e00\u540d\u5df2\u6388\u6743\u7528\u6237"
+          : "an authorized user"
+    );
+    const uploadedAt = localizedUploadDate(item.uploadedAt, language);
+    const status = localizedUploadStatus(item.status, language);
+    if (language === "zh") {
+      return `\u6700\u8fd1\u4e00\u6b21\u6388\u6743\u4e0a\u4f20\u7531 ${uploader} \u5b8c\u6210\uff0c\u6587\u4ef6\u540d\u4e3a ${fileName}${uploadedAt ? `\uff0c\u4e0a\u4f20\u65f6\u95f4\u4e3a ${uploadedAt}` : ""}${status ? `\uff0c\u72b6\u6001\u4e3a ${status}` : ""}\u3002`;
+    }
+    if (language === "es") {
+      return `La carga autorizada m\u00e1s reciente la realiz\u00f3 ${uploader}: ${fileName}${uploadedAt ? `, el ${uploadedAt}` : ""}${status ? `, con estado ${status}` : ""}.`;
+    }
+    return `The latest authorized upload was made by ${uploader}: ${fileName}${uploadedAt ? `, on ${uploadedAt}` : ""}${status ? `, with status ${status}` : ""}.`;
   }
   if (toolResult.tool === "getLatestUpload") {
     const upload = record(toolResult.data);

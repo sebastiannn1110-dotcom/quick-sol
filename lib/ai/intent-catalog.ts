@@ -44,6 +44,11 @@ export type AssistantIntentId =
   | "stock_shortage"
   | "zero_stock"
   | "stock_concept_help"
+  | "quote_summary"
+  | "employee_quote_metrics"
+  | "client_quote_summary"
+  | "sourcing_lookup"
+  | "latest_upload_attribution"
   | "latest_upload"
   | "latest_upload_columns"
   | "upload_summary"
@@ -71,6 +76,11 @@ export type CatalogToolName =
   | "getStockShortageSummary"
   | "getZeroStockSummary"
   | "getStockConceptHelp"
+  | "quote_summary"
+  | "employee_quote_metrics"
+  | "client_quote_summary"
+  | "sourcing_lookup"
+  | "getLatestUploadAttribution"
   | "getLatestUpload"
   | "getUploadPresentationSummary"
   | "getImportErrors"
@@ -175,15 +185,17 @@ export const ASSISTANT_INTENT_CATALOG: AssistantIntentDefinition[] = [
     ]
   }, { answerMode: "deny" }),
   entry("sensitive_request", "sensitiveDataPermissionDenied", 115, {
-    es: ["costos", "precios", "gp", "margen", "comision", "orden de compra"],
-    en: ["cost", "prices", "gross profit", "margin", "commission", "purchase order"],
+    es: ["costos", "precios", "gp", "margen", "comision", "orden de compra", "salario", "compensacion"],
+    en: ["cost", "prices", "gross profit", "margin", "commission", "purchase order", "salary", "compensation"],
     zh: [
       "\u6210\u672c",
       "\u4ef7\u683c",
       "\u6bdb\u5229",
       "\u5229\u6da6\u7387",
       "\u4f63\u91d1",
-      "\u91c7\u8d2d\u8ba2\u5355"
+      "\u91c7\u8d2d\u8ba2\u5355",
+      "\u85aa\u8d44",
+      "\u85aa\u916c"
     ]
   }, { answerMode: "deny" }),
   entry("conversation_memory_set", "conversationMemorySet", 148, {
@@ -261,6 +273,84 @@ export const ASSISTANT_INTENT_CATALOG: AssistantIntentDefinition[] = [
     en: ["difference between total stock and usable availability", "total stock versus usable availability"],
     zh: ["总库存和可用库存之间的区别", "总库存与可用数量"]
   }, { answerMode: "concept_explanation" }),
+  entry("sourcing_lookup", "sourcing_lookup", 139, {
+    es: [
+      "que ofertas tenemos para",
+      "ofertas para el mpn",
+      "ofertas de sourcing para",
+      "costos de ofertas para"
+    ],
+    en: [
+      "what offers do we have for",
+      "offers for mpn",
+      "sourcing offers for",
+      "raw cost offers for"
+    ],
+    zh: [
+      "\u8fd9\u4e2a mpn \u6709\u54ea\u4e9b\u62a5\u4ef7",
+      "\u6211\u4eec\u6709\u54ea\u4e9b\u91c7\u8d2d\u62a5\u4ef7",
+      "\u67e5\u8be2 mpn \u7684\u91c7\u8d2d\u62a5\u4ef7"
+    ]
+  }, { parameters: ["mpn"], answerMode: "item_detail" }),
+  entry("employee_quote_metrics", "employee_quote_metrics", 138, {
+    es: [
+      "quien tiene el mayor accepted quote value",
+      "quien tiene el mayor valor de cotizaciones aceptadas",
+      "cuantas cotizaciones tiene",
+      "cotizaciones de"
+    ],
+    en: [
+      "who has the highest accepted quote value",
+      "highest accepted quote value",
+      "how many quotes does",
+      "quotes for"
+    ],
+    zh: [
+      "\u8c01\u7684\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8",
+      "\u5458\u5de5\u62a5\u4ef7\u6392\u540d",
+      "\u6709\u591a\u5c11\u4efd\u62a5\u4ef7"
+    ]
+  }, { answerMode: "summary" }),
+  entry("client_quote_summary", "client_quote_summary", 137, {
+    es: [
+      "cliente con mayor valor de cotizaciones abiertas",
+      "que cliente tiene el mayor valor en cotizaciones abiertas",
+      "resumen de cotizaciones abiertas por cliente"
+    ],
+    en: [
+      "which client has the highest open quote value",
+      "client with the highest value in open quotes",
+      "open quote summary by client"
+    ],
+    zh: [
+      "\u54ea\u4e2a\u5ba2\u6237\u7684\u672a\u7ed3\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8",
+      "\u6309\u5ba2\u6237\u6c47\u603b\u672a\u7ed3\u62a5\u4ef7"
+    ]
+  }, { answerMode: "summary" }),
+  entry("quote_summary", "quote_summary", 136, {
+    es: ["resumen de cotizaciones", "estado de las cotizaciones", "cuantas cotizaciones hay"],
+    en: ["quote summary", "quote status summary", "how many quotes are there"],
+    zh: ["\u62a5\u4ef7\u6c47\u603b", "\u62a5\u4ef7\u72b6\u6001\u6c47\u603b", "\u6709\u591a\u5c11\u4efd\u62a5\u4ef7"]
+  }, { answerMode: "summary" }),
+  entry("latest_upload_attribution", "getLatestUploadAttribution", 134, {
+    es: [
+      "quien subio el ultimo archivo y que archivo fue",
+      "quien hizo la ultima subida de un archivo y que subio",
+      "quien subio la ultima carga y que subio",
+      "quien subio el archivo mas reciente"
+    ],
+    en: [
+      "who uploaded the latest file and what was it",
+      "who made the last upload and which file was it",
+      "who uploaded the last file",
+      "who uploaded the most recent file"
+    ],
+    zh: [
+      "\u8c01\u4e0a\u4f20\u4e86\u6700\u65b0\u6587\u4ef6\uff0c\u6587\u4ef6\u540d\u662f\u4ec0\u4e48",
+      "\u6700\u8fd1\u4e00\u6b21\u4e0a\u4f20\u662f\u8c01\u4e0a\u4f20\u7684\uff0c\u4e0a\u4f20\u4e86\u4ec0\u4e48\u6587\u4ef6",
+      "\u8c01\u4e0a\u4f20\u4e86\u6700\u8fd1\u7684\u6587\u4ef6"
+    ]
+  }, { answerMode: "item_detail" }),
   entry("latest_upload_columns", "getUploadPresentationSummary", 133, {
     es: ["que columnas fueron detectadas en la ultima carga", "columnas detectadas en la ultima carga"],
     en: ["what columns were detected in the latest upload", "columns detected in the latest upload"],

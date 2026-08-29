@@ -113,6 +113,139 @@ describe("assistant core", () => {
     expect(result.speechText).not.toContain("Supplier A");
   });
 
+  it("uses the same server router for latest-upload attribution in text and voice", async () => {
+    routeAssistantDatabaseQuery.mockResolvedValue({
+      permissionDenied: false,
+      intent: "latest_upload_attribution",
+      confidence: 1,
+      ambiguous: false,
+      plan: {
+        intent: "latest_upload_attribution",
+        confidence: 1,
+        tool: "getLatestUploadAttribution",
+        answerMode: "item_detail",
+        language: "es",
+        entity: "upload",
+        metric: null,
+        mpn: null,
+        requiresClarification: false,
+        policyDecision: "allow"
+      },
+      toolResult: {
+        ok: true,
+        tool: "getLatestUploadAttribution",
+        scope: "own",
+        total: 1,
+        rows: [{ fileName: "DEMO_UPLOAD.xlsx" }],
+        data: {
+          item: {
+            fileName: "DEMO_UPLOAD.xlsx",
+            uploadedAt: "2026-08-29T12:00:00.000Z",
+            status: "completed",
+            uploaderDisplayName: "Maya Torres"
+          }
+        },
+        summary: "Latest upload attribution.",
+        empty: false,
+        truncated: false,
+        deterministic: true
+      }
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const input = {
+      context: authContext("employee"),
+      message: "\u00bfQui\u00e9n subi\u00f3 el \u00faltimo archivo y qu\u00e9 archivo fue?",
+      language: "es" as const
+    };
+    const textResult = await answerAssistantQuestion({ ...input, channel: "text" });
+    const voiceResult = await answerAssistantQuestion({ ...input, channel: "voice" });
+
+    expect(textResult.answer).toContain("Maya Torres");
+    expect(textResult.answer).toContain("DEMO_UPLOAD.xlsx");
+    expect(voiceResult.speechText).toContain("Maya Torres");
+    expect(voiceResult.speechText).toContain("DEMO UPLOAD");
+    expect(voiceResult.speechText).toContain("xlsx");
+    expect(routeAssistantDatabaseQuery).toHaveBeenCalledTimes(2);
+    for (const call of routeAssistantDatabaseQuery.mock.calls) {
+      expect(call).toEqual([
+        expect.any(Object),
+        input.message,
+        { language: "es", jobId: undefined, history: [] }
+      ]);
+    }
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses the same read-only commerce router for text and voice", async () => {
+    routeAssistantDatabaseQuery.mockResolvedValue({
+      permissionDenied: false,
+      intent: "employee_quote_metrics",
+      confidence: 1,
+      ambiguous: false,
+      plan: {
+        intent: "employee_quote_metrics",
+        confidence: 1,
+        tool: "employee_quote_metrics",
+        answerMode: "summary",
+        language: "en",
+        entity: "employee_quote_metrics",
+        metric: "Accepted Quote Value",
+        mpn: null,
+        requiresClarification: false,
+        policyDecision: "allow"
+      },
+      toolResult: {
+        ok: true,
+        tool: "employee_quote_metrics",
+        scope: "team",
+        total: 1,
+        rows: [],
+        data: {
+          analyticsScope: "subtree",
+          currency: "USD",
+          queryMode: "ranking",
+          selectedEmployee: {
+            name: "Maya Torres",
+            quotesCreated: 4,
+            quotesSent: 3,
+            quotesAccepted: 2,
+            quotesRejected: 1,
+            acceptedQuoteValue: 500
+          },
+          ranking: [],
+          totals: {}
+        },
+        summary: "Authorized employee quote metrics.",
+        empty: false,
+        truncated: false,
+        deterministic: true
+      }
+    });
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const input = {
+      context: authContext("manager"),
+      message: "Who has the highest Accepted Quote Value?",
+      language: "en" as const
+    };
+    const textResult = await answerAssistantQuestion({ ...input, channel: "text" });
+    const voiceResult = await answerAssistantQuestion({ ...input, channel: "voice" });
+
+    expect(textResult.answer).toContain("Maya Torres");
+    expect(textResult.answer).toContain("highest Accepted Quote Value");
+    expect(voiceResult.speechText).toContain("Maya Torres");
+    expect(routeAssistantDatabaseQuery).toHaveBeenCalledTimes(2);
+    for (const call of routeAssistantDatabaseQuery.mock.calls) {
+      expect(call).toEqual([
+        expect.any(Object),
+        input.message,
+        { language: "en", jobId: undefined, history: [] }
+      ]);
+    }
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
   it("raises a localized 504 when data lookup times out", async () => {
     routeAssistantDatabaseQuery.mockRejectedValueOnce({
       code: "57014",
