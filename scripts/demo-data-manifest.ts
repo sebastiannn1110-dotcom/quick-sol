@@ -6,19 +6,21 @@ export const DEMO_APPLY_CONFIRMATION = "QUIKSOL_DEMO_DATA_ONLY";
 export type DemoTechnicalRole = "admin" | "manager" | "employee";
 export type DemoProfileBusinessRank =
   | "owner"
+  | "executive"
   | "manager"
   | "salesperson"
   | "sourcing_manager"
-  | "sourcing_specialist";
-export type DemoOrganizationRank =
-  | "owner"
-  | "manager"
-  | "salesperson"
-  | "sourcing_manager"
-  | "sourcing_specialist";
+  | "sourcing_specialist"
+  | "individual_contributor";
+export type DemoOrganizationRank = DemoProfileBusinessRank;
+export type DemoPersonKey =
+  | "olivia" | "jason" | "daniel" | "maya" | "jordan" | "sofia" | "lucas" | "emma"
+  | "priya" | "ethan" | "liNa" | "haruto" | "minJun" | "chloe" | "lukas" | "hannah"
+  | "camille" | "oliver" | "lucia" | "lin" | "aya" | "chen" | "weiMing" | "zhaoLian"
+  | "meiChen" | "yuki" | "noah" | "isabella";
 
 export type DemoPerson = {
-  key: "olivia" | "daniel" | "maya" | "jordan" | "lin" | "aya" | "chen";
+  key: DemoPersonKey;
   idempotencyKey: string;
   email: string;
   fullName: string;
@@ -31,136 +33,318 @@ export type DemoPerson = {
   country: string;
   location: string;
   responsibilities: string;
-  managerKey: DemoPerson["key"] | null;
+  managerKey: DemoPersonKey | null;
+  compensationAnnualUsd: number;
 };
 
-const people: readonly DemoPerson[] = [
-  {
-    key: "olivia",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000001",
-    email: "olivia.mercer@quiksol.demo.invalid",
-    fullName: "Olivia Mercer — DEMO",
-    technicalRole: "admin",
-    profileBusinessRank: "owner",
-    title: "Owner — DEMO",
-    organizationRank: "owner",
-    department: "Executive — DEMO",
-    region: "Global — DEMO",
-    country: "United States",
-    location: "Miami — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: demo organization oversight.`,
-    managerKey: null
-  },
-  {
-    key: "daniel",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000002",
-    email: "daniel.brooks@quiksol.demo.invalid",
-    fullName: "Daniel Brooks — DEMO",
-    technicalRole: "manager",
-    profileBusinessRank: "manager",
-    title: "Sales Manager Americas — DEMO",
-    organizationRank: "manager",
-    department: "Sales — DEMO",
-    region: "Americas — DEMO",
-    country: "United States",
-    location: "Miami — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: demo sales team coordination.`,
-    managerKey: "olivia"
-  },
-  {
-    key: "maya",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000003",
-    email: "maya.torres@quiksol.demo.invalid",
-    fullName: "Maya Torres — DEMO",
-    technicalRole: "employee",
-    profileBusinessRank: "salesperson",
-    title: "Sales Representative — DEMO",
-    organizationRank: "salesperson",
-    department: "Sales — DEMO",
-    region: "Americas — DEMO",
-    country: "Colombia",
-    location: "Bogotá — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: owns the NovaCircuit demo RFQ and quote.`,
-    managerKey: "daniel"
-  },
-  {
-    key: "jordan",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000004",
-    email: "jordan.lee@quiksol.demo.invalid",
-    fullName: "Jordan Lee — DEMO",
-    technicalRole: "employee",
-    profileBusinessRank: "salesperson",
-    title: "Sales Representative — DEMO",
-    organizationRank: "salesperson",
-    department: "Sales — DEMO",
-    region: "Americas — DEMO",
-    country: "United States",
-    location: "Austin — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: demo commercial coverage.`,
-    managerKey: "daniel"
-  },
-  {
-    key: "lin",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000005",
-    email: "lin.wei@quiksol.demo.invalid",
-    fullName: "Lin Wei — DEMO",
-    technicalRole: "manager",
-    profileBusinessRank: "sourcing_manager",
-    title: "Sourcing Manager Asia — DEMO",
-    organizationRank: "sourcing_manager",
-    department: "Sourcing — DEMO",
-    region: "APAC — DEMO",
-    country: "Singapore",
-    location: "Singapore — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: approves the fictional supplier offer.`,
-    managerKey: "olivia"
-  },
-  {
-    key: "aya",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000006",
-    email: "aya.nakamura@quiksol.demo.invalid",
-    fullName: "Aya Nakamura — DEMO",
-    technicalRole: "employee",
-    profileBusinessRank: "sourcing_specialist",
-    title: "Sourcing Specialist — DEMO",
-    organizationRank: "sourcing_specialist",
-    department: "Sourcing — DEMO",
-    region: "APAC — DEMO",
-    country: "Singapore",
-    location: "Singapore — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: demo supplier research.`,
-    managerKey: "lin"
-  },
-  {
-    key: "chen",
-    idempotencyKey: "d1000000-0000-4000-8000-000000000007",
-    email: "chen.rui@quiksol.demo.invalid",
-    fullName: "Chen Rui — DEMO",
-    technicalRole: "employee",
-    profileBusinessRank: "sourcing_specialist",
-    title: "Sourcing Specialist — DEMO",
-    organizationRank: "sourcing_specialist",
-    department: "Sourcing — DEMO",
-    region: "APAC — DEMO",
-    country: "Singapore",
-    location: "Singapore — DEMO",
-    responsibilities: `${DEMO_SEED_MARKER}: demo order operations.`,
-    managerKey: "lin"
-  }
-] as const;
+export type DemoClient = {
+  key: string;
+  id: string;
+  externalId: string;
+  name: string;
+  description: string;
+  industry: string;
+  region: string;
+  contactName: string;
+  contactEmail: string;
+  country: string;
+  city: string;
+  language: "es" | "en" | "zh";
+  sellerKey: DemoPersonKey;
+};
 
-const rfqFingerprint = createHash("sha256")
-  .update(
-    JSON.stringify({
-      externalRfqId: "RFQ-DEMO-0001",
-      customer: "NovaCircuit Systems S.A.S. — DEMO",
-      mpn: "QKS-DEMO-MCU-042",
-      quantity: 1200,
-      targetPrice: 4.8,
-      currency: "USD"
-    })
-  )
-  .digest("hex");
+export type DemoRfq = {
+  key: string;
+  id: string;
+  itemId: string;
+  externalId: string;
+  fingerprint: string;
+  clientKey: string;
+  sellerKey: DemoPersonKey;
+  mpn: string;
+  manufacturer: string;
+  description: string;
+  quantity: number;
+  targetPrice: number;
+};
+
+export type DemoQuoteStatus = "draft" | "sent" | "accepted" | "rejected" | "expired";
+export type DemoQuote = {
+  key: string;
+  id: string;
+  itemId: string;
+  number: string;
+  clientKey: string;
+  rfqKey: string;
+  sellerKey: DemoPersonKey;
+  status: DemoQuoteStatus;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+  taxRate: number;
+  tax: number;
+  total: number;
+  version: number;
+  createdAt: string;
+  sentAt: string | null;
+  validUntil: string;
+};
+
+const suffix = " \u2014 DEMO";
+
+function demoPerson(
+  key: DemoPersonKey,
+  idempotencyIndex: number,
+  email: string,
+  name: string,
+  technicalRole: DemoTechnicalRole,
+  rank: DemoProfileBusinessRank,
+  title: string,
+  department: string,
+  region: string,
+  country: string,
+  location: string,
+  managerKey: DemoPersonKey | null,
+  compensationAnnualUsd: number
+): DemoPerson {
+  return Object.freeze({
+    key,
+    idempotencyKey: `d1000000-0000-4000-8000-${String(idempotencyIndex).padStart(12, "0")}`,
+    email,
+    fullName: `${name}${suffix}`,
+    technicalRole,
+    profileBusinessRank: rank,
+    title: `${title}${suffix}`,
+    organizationRank: rank,
+    department,
+    region,
+    country,
+    location: `${location}${suffix}`,
+    responsibilities: `${DEMO_SEED_MARKER}: ${title.toLowerCase()} responsibilities in the fictional demo organization.`,
+    managerKey,
+    compensationAnnualUsd
+  });
+}
+
+// Olivia intentionally remains first: she is the sole CLI bootstrap identity.
+// Hierarchy order is independent; Jason is the only root and owner.
+const people = [
+  demoPerson("olivia", 1, "olivia.mercer@quiksol.demo.invalid", "Olivia Mercer", "admin", "executive", "Chief Operating Officer / Executive Director", "Executive", "Global", "United States", "Miami", "jason", 180000),
+  demoPerson("jason", 8, "jasonBoss@quiksol.com", "Jason Boss", "admin", "owner", "Chief Executive Officer", "Executive", "Global", "Singapore", "Singapore", null, 220000),
+  demoPerson("daniel", 2, "daniel.brooks@quiksol.demo.invalid", "Daniel Brooks", "manager", "manager", "Sales Manager Americas", "Sales", "Americas", "United States", "Miami", "olivia", 142000),
+  demoPerson("maya", 3, "maya.torres@quiksol.demo.invalid", "Maya Torres", "employee", "salesperson", "Sales Representative", "Sales", "Americas", "Colombia", "Bogot\u00e1", "daniel", 88000),
+  demoPerson("jordan", 4, "jordan.lee@quiksol.demo.invalid", "Jordan Lee", "employee", "salesperson", "Account Executive", "Sales", "Americas", "United States", "Austin", "daniel", 82000),
+  demoPerson("sofia", 9, "sofia.ramirez@quiksol.demo.invalid", "Sofia Ramirez", "employee", "salesperson", "Sales Representative Mexico", "Sales", "Americas", "Mexico", "Monterrey", "daniel", 76000),
+  demoPerson("lucas", 10, "lucas.almeida@quiksol.demo.invalid", "Lucas Almeida", "employee", "salesperson", "Sales Representative Brazil", "Sales", "Americas", "Brazil", "S\u00e3o Paulo", "daniel", 74000),
+  demoPerson("emma", 11, "emma.clarke@quiksol.demo.invalid", "Emma Clarke", "employee", "salesperson", "Account Executive Canada", "Sales", "Americas", "Canada", "Toronto", "daniel", 90000),
+  demoPerson("priya", 12, "priya.nair@quiksol.demo.invalid", "Priya Nair", "manager", "manager", "Sales Manager APAC", "Sales", "APAC", "Singapore", "Singapore", "olivia", 138000),
+  demoPerson("ethan", 13, "ethan.tan@quiksol.demo.invalid", "Ethan Tan", "employee", "salesperson", "Account Executive Singapore", "Sales", "APAC", "Singapore", "Singapore", "priya", 93000),
+  demoPerson("liNa", 14, "li.na@quiksol.demo.invalid", "Li Na", "employee", "salesperson", "Sales Representative China", "Sales", "APAC", "China", "Shenzhen", "priya", 81000),
+  demoPerson("haruto", 15, "haruto.sato@quiksol.demo.invalid", "Haruto Sato", "employee", "salesperson", "Account Executive Japan", "Sales", "APAC", "Japan", "Tokyo", "priya", 87000),
+  demoPerson("minJun", 16, "minjun.park@quiksol.demo.invalid", "Min-jun Park", "employee", "salesperson", "Sales Representative South Korea", "Sales", "APAC", "South Korea", "Seoul", "priya", 79000),
+  demoPerson("chloe", 17, "chloe.wilson@quiksol.demo.invalid", "Chloe Wilson", "employee", "salesperson", "Account Executive Australia", "Sales", "APAC", "Australia", "Sydney", "priya", 95000),
+  demoPerson("lukas", 18, "lukas.weber@quiksol.demo.invalid", "Lukas Weber", "manager", "manager", "Sales Manager Europe", "Sales", "Europe", "Germany", "Munich", "olivia", 135000),
+  demoPerson("hannah", 19, "hannah.fischer@quiksol.demo.invalid", "Hannah Fischer", "employee", "salesperson", "Account Executive Germany", "Sales", "Europe", "Germany", "Berlin", "lukas", 92000),
+  demoPerson("camille", 20, "camille.laurent@quiksol.demo.invalid", "Camille Laurent", "employee", "salesperson", "Sales Representative France", "Sales", "Europe", "France", "Paris", "lukas", 78000),
+  demoPerson("oliver", 21, "oliver.bennett@quiksol.demo.invalid", "Oliver Bennett", "employee", "salesperson", "Account Executive United Kingdom", "Sales", "Europe", "United Kingdom", "London", "lukas", 96000),
+  demoPerson("lucia", 22, "lucia.garcia@quiksol.demo.invalid", "Lucia Garcia", "employee", "salesperson", "Sales Representative Spain", "Sales", "Europe", "Spain", "Madrid", "lukas", 77000),
+  demoPerson("lin", 5, "lin.wei@quiksol.demo.invalid", "Lin Wei", "manager", "sourcing_manager", "Sourcing Manager Asia", "Sourcing", "APAC", "Singapore", "Singapore", "olivia", 132000),
+  demoPerson("aya", 6, "aya.nakamura@quiksol.demo.invalid", "Aya Nakamura", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 82000),
+  demoPerson("chen", 7, "chen.rui@quiksol.demo.invalid", "Chen Rui", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 76000),
+  demoPerson("weiMing", 23, "wei.ming@quiksol.demo.invalid", "Wei Ming", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 84000),
+  demoPerson("zhaoLian", 24, "zhao.lian@quiksol.demo.invalid", "Zhao Lian", "employee", "sourcing_specialist", "Sourcing Specialist China", "Sourcing", "APAC", "China", "Shanghai", "lin", 79000),
+  demoPerson("meiChen", 25, "mei.chen@quiksol.demo.invalid", "Mei Chen", "employee", "sourcing_specialist", "Sourcing Specialist Taiwan", "Sourcing", "APAC", "Taiwan", "Taipei", "lin", 81000),
+  demoPerson("yuki", 26, "yuki.tanaka@quiksol.demo.invalid", "Yuki Tanaka", "employee", "sourcing_specialist", "Sourcing Specialist Japan", "Sourcing", "APAC", "Japan", "Osaka", "lin", 86000),
+  demoPerson("noah", 27, "noah.williams@quiksol.demo.invalid", "Noah Williams", "employee", "individual_contributor", "Operations Lead", "Operations", "Global", "Netherlands", "Rotterdam", "olivia", 98000),
+  demoPerson("isabella", 28, "isabella.rossi@quiksol.demo.invalid", "Isabella Rossi", "employee", "individual_contributor", "Customer Success Lead", "Customer Success", "Global", "Italy", "Milan", "olivia", 102000)
+] as const satisfies readonly DemoPerson[];
+
+const originalIds = Object.freeze({
+  client: "d0000000-0000-4000-8000-000000000001",
+  catalogProduct: "d0000000-0000-4000-8000-000000000002",
+  rfq: "d0000000-0000-4000-8000-000000000003",
+  rfqItem: "d0000000-0000-4000-8000-000000000004",
+  sourcingRequest: "d0000000-0000-4000-8000-000000000005",
+  sourcingOffer: "d0000000-0000-4000-8000-000000000006",
+  priceApproval: "d0000000-0000-4000-8000-000000000007",
+  quote: "d0000000-0000-4000-8000-000000000008",
+  quoteItem: "d0000000-0000-4000-8000-000000000009"
+});
+
+function deterministicUuid(prefix: string, index: number) {
+  return `${prefix}-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+function demoClient(
+  index: number,
+  key: string,
+  externalId: string,
+  name: string,
+  industry: string,
+  region: string,
+  contactName: string,
+  contactEmail: string,
+  country: string,
+  city: string,
+  language: DemoClient["language"],
+  sellerKey: DemoPersonKey
+): DemoClient {
+  return Object.freeze({
+    key,
+    id: index === 1 ? originalIds.client : deterministicUuid("d3000000", index),
+    externalId,
+    name: `${name}${suffix}`,
+    description: `${DEMO_SEED_MARKER}: fictional customer for commercial demonstrations.`,
+    industry: `${industry}${suffix}`,
+    region,
+    contactName,
+    contactEmail,
+    country,
+    city,
+    language,
+    sellerKey
+  });
+}
+
+const clients = [
+  demoClient(1, "novaCircuit", "DEMO-NOVACIRCUIT", "NovaCircuit Systems S.A.S.", "Electronics manufacturing", "LATAM", "Adrian Vega", "adrian.vega@novacircuit.demo.invalid", "Colombia", "Bogot\u00e1", "es", "maya"),
+  demoClient(2, "atlasRobotics", "DEMO-ATLAS-ROBOTICS", "Atlas Robotics", "Industrial robotics", "North America", "Nora Hayes", "nora.hayes@atlasrobotics.demo.invalid", "United States", "Boston", "en", "maya"),
+  demoClient(3, "andinaControls", "DEMO-ANDINA-CONTROLS", "Andina Controls", "Industrial automation", "LATAM", "Diego Pardo", "diego.pardo@andinacontrols.demo.invalid", "Colombia", "Medell\u00edn", "es", "maya"),
+  demoClient(4, "northStarDevices", "DEMO-NORTHSTAR-DEVICES", "NorthStar Devices", "Medical electronics", "North America", "Avery Reed", "avery.reed@northstardevices.demo.invalid", "United States", "Denver", "en", "maya"),
+  demoClient(5, "pacificaEnergy", "DEMO-PACIFICA-ENERGY", "Pacifica Energy Systems", "Energy controls", "North America", "Megan Cole", "megan.cole@pacificaenergy.demo.invalid", "United States", "San Diego", "en", "maya"),
+  demoClient(6, "mapleGrid", "DEMO-MAPLEGRID", "MapleGrid Automation", "Grid automation", "North America", "Evan Scott", "evan.scott@maplegrid.demo.invalid", "Canada", "Toronto", "en", "jordan"),
+  demoClient(7, "blueMesa", "DEMO-BLUEMESA", "BlueMesa Embedded", "Embedded systems", "North America", "Taylor Morgan", "taylor.morgan@bluemesa.demo.invalid", "United States", "Phoenix", "en", "jordan"),
+  demoClient(8, "libertyMotion", "DEMO-LIBERTY-MOTION", "Liberty Motion Controls", "Motion control", "North America", "Casey Brooks", "casey.brooks@libertymotion.demo.invalid", "United States", "Chicago", "en", "jordan"),
+  demoClient(9, "lionCity", "DEMO-LIONCITY", "LionCity Industrial", "Industrial automation", "APAC", "Amelia Lim", "amelia.lim@lioncity.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
+  demoClient(10, "pearlRiver", "DEMO-PEARLRIVER", "Pearl River Controls", "Factory controls", "APAC", "Tao Xu", "tao.xu@pearlriver.demo.invalid", "China", "Shenzhen", "zh", "ethan"),
+  demoClient(11, "meridianSemi", "DEMO-MERIDIAN-SEMI", "Meridian Semiconductor Labs", "Semiconductors", "APAC", "Grace Ong", "grace.ong@meridiansemi.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
+  demoClient(12, "rheinWerk", "DEMO-RHEINWERK", "RheinWerk Systems", "Industrial machinery", "Europe", "Jonas Keller", "jonas.keller@rheinwerk.demo.invalid", "Germany", "Munich", "en", "hannah"),
+  demoClient(13, "hexagon", "DEMO-HEXAGON", "Hexagon Electronique", "Transportation electronics", "Europe", "Claire Martin", "claire.martin@hexagon.demo.invalid", "France", "Lyon", "en", "hannah"),
+  demoClient(14, "euroNova", "DEMO-EURONOVA", "EuroNova Manufacturing", "Advanced manufacturing", "Europe", "Marco Bianchi", "marco.bianchi@euronova.demo.invalid", "Italy", "Turin", "en", "hannah"),
+  demoClient(15, "azteca", "DEMO-AZTECA", "Azteca Embedded", "Embedded electronics", "LATAM", "Valeria Cruz", "valeria.cruz@azteca.demo.invalid", "Mexico", "Monterrey", "es", "sofia"),
+  demoClient(16, "sakura", "DEMO-SAKURA", "Sakura Motion", "Precision motion", "APAC", "Ren Ito", "ren.ito@sakuramotion.demo.invalid", "Japan", "Tokyo", "en", "haruto"),
+  demoClient(17, "britannia", "DEMO-BRITANNIA", "Britannia Controls", "Building controls", "Europe", "Emily Ward", "emily.ward@britannia.demo.invalid", "United Kingdom", "Manchester", "en", "oliver"),
+  demoClient(18, "iberia", "DEMO-IBERIA", "Iberia Motion", "Renewable energy", "Europe", "Pablo Sanz", "pablo.sanz@iberia.demo.invalid", "Spain", "Madrid", "es", "lucia"),
+  demoClient(19, "southernCross", "DEMO-SOUTHERN-CROSS", "Southern Cross Systems", "Mining automation", "APAC", "Ruby Evans", "ruby.evans@southerncross.demo.invalid", "Australia", "Perth", "en", "chloe")
+] as const satisfies readonly DemoClient[];
+
+const product = Object.freeze({
+  mpn: "QKS-DEMO-MCU-042",
+  normalizedMpn: "QKSDEMO042",
+  manufacturer: `Asterion Microdevices${suffix}`,
+  description: `Industrial control MCU${suffix} / ${DEMO_SEED_MARKER}`,
+  demandQuantity: 1200,
+  targetUnitPrice: 4.8,
+  authorizedUnitPrice: 4.65,
+  currency: "USD" as const,
+  availableQuantity: 1500,
+  minimumOrderQuantity: 500,
+  leadTimeDays: 7
+});
+
+const rfqs = clients.map((target, zeroIndex): DemoRfq => {
+  const index = zeroIndex + 1;
+  const mpn = index === 1 ? product.mpn : `QKS-DEMO-PART-${String(index).padStart(3, "0")}`;
+  const quantity = index === 1 ? product.demandQuantity : 500 + index * 75;
+  const targetPrice = index === 1 ? product.targetUnitPrice : Number((3.25 + index * 0.37).toFixed(2));
+  const externalId = `RFQ-DEMO-${String(index).padStart(4, "0")}`;
+  return Object.freeze({
+    key: `rfq${index}`,
+    id: index === 1 ? originalIds.rfq : deterministicUuid("d4000000", index),
+    itemId: index === 1 ? originalIds.rfqItem : deterministicUuid("d4100000", index),
+    externalId,
+    fingerprint: createHash("sha256").update(JSON.stringify({ externalRfqId: externalId, customer: target.name, mpn, quantity, targetPrice, currency: "USD" })).digest("hex"),
+    clientKey: target.key,
+    sellerKey: target.sellerKey,
+    mpn,
+    manufacturer: index === 1 ? product.manufacturer : `QuikSol Demo Components${suffix}`,
+    description: index === 1 ? product.description : `${DEMO_SEED_MARKER}: fictional requested component ${index}.`,
+    quantity,
+    targetPrice
+  });
+});
+
+type RawQuote = readonly [DemoPersonKey, string, DemoQuoteStatus, number];
+const rawQuotes: readonly RawQuote[] = [
+  ["maya", "novaCircuit", "accepted", 5580], ["maya", "atlasRobotics", "accepted", 12400],
+  ["maya", "andinaControls", "accepted", 28750], ["maya", "northStarDevices", "accepted", 9500],
+  ["maya", "pacificaEnergy", "accepted", 44200], ["maya", "novaCircuit", "accepted", 18500],
+  ["maya", "atlasRobotics", "accepted", 62400], ["maya", "andinaControls", "rejected", 22000],
+  ["maya", "northStarDevices", "rejected", 7800], ["maya", "pacificaEnergy", "sent", 15800],
+  ["maya", "novaCircuit", "draft", 3900], ["maya", "atlasRobotics", "draft", 51200],
+  ["jordan", "mapleGrid", "accepted", 7200], ["jordan", "blueMesa", "accepted", 16800],
+  ["jordan", "libertyMotion", "accepted", 35500], ["jordan", "mapleGrid", "accepted", 7900],
+  ["jordan", "blueMesa", "rejected", 12800], ["jordan", "libertyMotion", "rejected", 48200],
+  ["jordan", "mapleGrid", "rejected", 6700], ["jordan", "blueMesa", "sent", 24600],
+  ["jordan", "libertyMotion", "draft", 4200], ["ethan", "lionCity", "accepted", 8400],
+  ["ethan", "pearlRiver", "accepted", 19600], ["ethan", "meridianSemi", "accepted", 33100],
+  ["ethan", "lionCity", "accepted", 47000], ["ethan", "pearlRiver", "accepted", 7600],
+  ["ethan", "meridianSemi", "accepted", 25800], ["ethan", "lionCity", "rejected", 14800],
+  ["ethan", "pearlRiver", "expired", 39200], ["ethan", "meridianSemi", "sent", 9100],
+  ["ethan", "lionCity", "draft", 3100], ["hannah", "rheinWerk", "accepted", 15600],
+  ["hannah", "hexagon", "accepted", 27400], ["hannah", "euroNova", "accepted", 9200],
+  ["hannah", "rheinWerk", "rejected", 18600], ["hannah", "hexagon", "expired", 55000],
+  ["hannah", "euroNova", "sent", 11200], ["hannah", "rheinWerk", "draft", 5300],
+  ["sofia", "azteca", "accepted", 13400], ["sofia", "azteca", "rejected", 8700],
+  ["haruto", "sakura", "accepted", 6900], ["haruto", "sakura", "expired", 31600],
+  ["oliver", "britannia", "sent", 17800], ["lucia", "iberia", "sent", 12800],
+  ["chloe", "southernCross", "draft", 4800]
+];
+
+function addMinutes(iso: string, minutes: number) {
+  return new Date(Date.parse(iso) + minutes * 60_000).toISOString();
+}
+
+const quotes = rawQuotes.map(([sellerKey, clientKey, status, subtotal], zeroIndex): DemoQuote => {
+  const index = zeroIndex + 1;
+  const targetRfq = rfqs.find((candidate) => candidate.clientKey === clientKey)!;
+  const tax = Number((subtotal * 0.07).toFixed(2));
+  const createdAt = index === 1 ? "2026-08-29T12:00:00.000Z" : new Date(Date.UTC(2026, 5, index, 12)).toISOString();
+  return Object.freeze({
+    key: `quote${index}`,
+    id: index === 1 ? originalIds.quote : deterministicUuid("d5000000", index),
+    itemId: index === 1 ? originalIds.quoteItem : deterministicUuid("d5100000", index),
+    number: `QKS-DEMO-${String(index).padStart(4, "0")}`,
+    clientKey,
+    rfqKey: targetRfq.key,
+    sellerKey,
+    status,
+    quantity: index === 1 ? 1200 : 100,
+    unitPrice: index === 1 ? 4.65 : Number((subtotal / 100).toFixed(4)),
+    subtotal,
+    taxRate: 7,
+    tax,
+    total: Number((subtotal + tax).toFixed(2)),
+    version: status === "draft" ? 1 : status === "sent" ? 2 : 3,
+    createdAt,
+    sentAt: status === "draft" ? null : addMinutes(createdAt, 5),
+    validUntil: index === 1 ? "2099-12-31" : status === "expired" ? "2026-08-01" : "2026-12-31"
+  });
+});
+
+const expectedMetrics = Object.freeze({
+  employees: 28,
+  countries: 17,
+  departments: 5,
+  clients: 19,
+  rfqs: 19,
+  createdQuotes: 45,
+  quoteItems: 45,
+  quoteEvents: 117,
+  sentQuotes: 39,
+  acceptedQuotes: 22,
+  rejectedQuotes: 8,
+  expiredQuotes: 3,
+  draftQuotes: 6,
+  openSentQuotes: 6,
+  activeSellers: 9,
+  conversionRatePercent: 56.41,
+  quotedValueUsd: 954365.1,
+  acceptedQuoteValueUsd: 495121.1,
+  customersServed: 19,
+  newCustomers: 19,
+  compensationRows: 28
+});
 
 export const DEMO_DATA_MANIFEST = Object.freeze({
   marker: DEMO_SEED_MARKER,
@@ -168,106 +352,123 @@ export const DEMO_DATA_MANIFEST = Object.freeze({
   validUntil: "2099-12-31T23:59:59.000Z",
   quoteValidUntil: "2099-12-31",
   people,
-  ids: Object.freeze({
-    client: "d0000000-0000-4000-8000-000000000001",
-    catalogProduct: "d0000000-0000-4000-8000-000000000002",
-    rfq: "d0000000-0000-4000-8000-000000000003",
-    rfqItem: "d0000000-0000-4000-8000-000000000004",
-    sourcingRequest: "d0000000-0000-4000-8000-000000000005",
-    sourcingOffer: "d0000000-0000-4000-8000-000000000006",
-    priceApproval: "d0000000-0000-4000-8000-000000000007",
-    quote: "d0000000-0000-4000-8000-000000000008",
-    quoteItem: "d0000000-0000-4000-8000-000000000009"
-  }),
-  customer: Object.freeze({
-    externalId: "DEMO-NOVACIRCUIT",
-    name: "NovaCircuit Systems S.A.S. — DEMO",
-    description: `${DEMO_SEED_MARKER}: fictional customer for commercial demonstrations.`,
-    industry: "Electronics manufacturing — DEMO",
-    region: "LATAM — DEMO",
-    contactName: "Adrian Vega",
-    contactEmail: "adrian.vega@novacircuit.demo.invalid",
-    country: "Colombia",
-    city: "Bogotá",
-    language: "es"
-  }),
-  product: Object.freeze({
-    mpn: "QKS-DEMO-MCU-042",
-    normalizedMpn: "QKSDEMO042",
-    manufacturer: "Asterion Microdevices — DEMO",
-    description: `Industrial control MCU — ${DEMO_SEED_MARKER}`,
-    demandQuantity: 1200,
-    targetUnitPrice: 4.8,
-    authorizedUnitPrice: 4.65,
-    currency: "USD",
-    availableQuantity: 1500,
-    minimumOrderQuantity: 500,
-    leadTimeDays: 7
-  }),
+  clients,
+  customer: clients[0],
+  rfqs,
+  rfq: rfqs[0],
+  quotes,
+  quote: quotes[0],
+  compensations: people.map((person) => Object.freeze({ personKey: person.key, amount: person.compensationAnnualUsd, currency: "USD" as const, periodicity: "annual" as const })),
+  ids: originalIds,
+  product,
   supplierOffer: Object.freeze({
-    supplierName: "Pacific Demo Components Pte. Ltd. — fictional DEMO",
+    supplierName: `Pacific Demo Components Pte. Ltd.${suffix}`,
     reference: "DEMO-OFFER-0001",
     rawUnitCost: 3.1,
     countryOfOrigin: "Singapore",
-    condition: "New — DEMO"
+    condition: `New${suffix}`
   }),
-  rfq: Object.freeze({
-    externalId: "RFQ-DEMO-0001",
-    fingerprint: rfqFingerprint
-  }),
-  quote: Object.freeze({
-    number: "QKS-DEMO-0001",
-    quantity: 1200,
-    unitPrice: 4.65,
-    subtotal: 5580,
-    taxRate: 7,
-    tax: 390.6,
-    total: 5970.6,
-    version: 3,
-    status: "accepted"
-  }),
-  expectedMetrics: Object.freeze({
-    createdQuotes: 1,
-    sentQuotes: 1,
-    acceptedQuotes: 1,
-    conversionRatePercent: 100,
-    acceptedQuoteValueUsd: 5970.6
-  })
+  expectedMetrics
 });
 
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 export function validateDemoManifest() {
   const manifest = DEMO_DATA_MANIFEST;
-  const allIds = [...Object.values(manifest.ids), ...manifest.people.map((person) => person.idempotencyKey)];
+  const allIds = [
+    manifest.ids.catalogProduct, manifest.ids.sourcingRequest, manifest.ids.sourcingOffer, manifest.ids.priceApproval,
+    ...manifest.people.map((person) => person.idempotencyKey),
+    ...manifest.clients.map((target) => target.id),
+    ...manifest.rfqs.flatMap((rfq) => [rfq.id, rfq.itemId]),
+    ...manifest.quotes.flatMap((quote) => [quote.id, quote.itemId])
+  ];
   if (new Set(allIds).size !== allIds.length || allIds.some((id) => !uuidV4Pattern.test(id))) {
     throw new Error("DEMO_MANIFEST_INVALID_IDS");
   }
 
-  if (manifest.people.some((person) => !person.email.endsWith(".demo.invalid"))) {
+  const personKeys = new Set(manifest.people.map((person) => person.key));
+  const emails = manifest.people.map((person) => person.email.trim().toLowerCase());
+  if (manifest.people.length !== 28 || personKeys.size !== manifest.people.length || new Set(emails).size !== emails.length) {
+    throw new Error("DEMO_MANIFEST_DUPLICATE_PERSON");
+  }
+  if (manifest.people.some((person) => person.key === "jason"
+    ? person.email.trim().toLowerCase() !== "jasonboss@quiksol.com"
+    : !person.email.endsWith(".demo.invalid"))) {
     throw new Error("DEMO_MANIFEST_EMAIL_DOMAIN_REQUIRED");
   }
-  if (!manifest.customer.contactEmail.endsWith(".demo.invalid")) {
-    throw new Error("DEMO_MANIFEST_CUSTOMER_EMAIL_DOMAIN_REQUIRED");
+  if (manifest.people.some((person) => !["admin", "manager", "employee"].includes(person.technicalRole))) {
+    throw new Error("DEMO_MANIFEST_TECHNICAL_ROLE_INVALID");
   }
-  if (!/^[a-f0-9]{64}$/.test(manifest.rfq.fingerprint)) {
-    throw new Error("DEMO_MANIFEST_INVALID_RFQ_FINGERPRINT");
-  }
-
-  const subtotal = Number((manifest.quote.quantity * manifest.quote.unitPrice).toFixed(2));
-  const tax = Number((subtotal * (manifest.quote.taxRate / 100)).toFixed(2));
-  const total = Number((subtotal + tax).toFixed(2));
-  if (subtotal !== manifest.quote.subtotal || tax !== manifest.quote.tax || total !== manifest.quote.total) {
-    throw new Error("DEMO_MANIFEST_INVALID_TOTALS");
-  }
-
-  const personKeys = new Set(manifest.people.map((person) => person.key));
   if (manifest.people.some((person) => person.managerKey && !personKeys.has(person.managerKey))) {
     throw new Error("DEMO_MANIFEST_INVALID_MANAGER");
   }
-  if (manifest.people.filter((person) => person.organizationRank === "owner").length !== 1) {
-    throw new Error("DEMO_MANIFEST_REQUIRES_ONE_OWNER");
+
+  const byPersonKey = new Map(manifest.people.map((person) => [person.key, person]));
+  const roots = manifest.people.filter((person) => person.managerKey === null);
+  const owners = manifest.people.filter((person) => person.organizationRank === "owner");
+  if (roots.length !== 1 || roots[0]?.key !== "jason" || owners.length !== 1 || owners[0]?.key !== "jason") {
+    throw new Error("DEMO_MANIFEST_REQUIRES_JASON_ROOT_OWNER");
+  }
+  const olivia = byPersonKey.get("olivia");
+  if (!olivia || olivia.managerKey !== "jason" || olivia.technicalRole !== "admin" || olivia.organizationRank !== "executive") {
+    throw new Error("DEMO_MANIFEST_OLIVIA_EXECUTIVE_INVALID");
+  }
+  for (const person of manifest.people) {
+    const visited = new Set<DemoPersonKey>();
+    let current: DemoPerson | undefined = person;
+    while (current?.managerKey) {
+      if (visited.has(current.key)) throw new Error("DEMO_MANIFEST_ORGANIZATION_CYCLE");
+      visited.add(current.key);
+      current = byPersonKey.get(current.managerKey);
+    }
+    if (current?.key !== "jason") throw new Error("DEMO_MANIFEST_ORGANIZATION_DISCONNECTED");
   }
 
+  if (manifest.compensations.length !== 28 || new Set(manifest.compensations.map((row) => row.personKey)).size !== 28 ||
+      manifest.compensations.some((row) => row.currency !== "USD" || row.periodicity !== "annual" || row.amount < 60000 || row.amount > 220000)) {
+    throw new Error("DEMO_MANIFEST_COMPENSATION_INVALID");
+  }
+
+  const clientKeys = new Set(manifest.clients.map((target) => target.key));
+  if (manifest.clients.length !== 19 || clientKeys.size !== 19 || new Set(manifest.clients.map((target) => target.externalId)).size !== 19 ||
+      manifest.clients.some((target) => !target.contactEmail.endsWith(".demo.invalid") || !personKeys.has(target.sellerKey))) {
+    throw new Error("DEMO_MANIFEST_CLIENTS_INVALID");
+  }
+  const rfqKeys = new Set(manifest.rfqs.map((rfq) => rfq.key));
+  if (manifest.rfqs.length !== 19 || rfqKeys.size !== 19 || new Set(manifest.rfqs.map((rfq) => rfq.externalId)).size !== 19 ||
+      manifest.rfqs.some((rfq) => !clientKeys.has(rfq.clientKey) || !/^[a-f0-9]{64}$/.test(rfq.fingerprint))) {
+    throw new Error("DEMO_MANIFEST_RFQS_INVALID");
+  }
+  if (manifest.quotes.length !== 45 || new Set(manifest.quotes.map((quote) => quote.number)).size !== 45 ||
+      manifest.quotes.some((quote) => !clientKeys.has(quote.clientKey) || !rfqKeys.has(quote.rfqKey))) {
+    throw new Error("DEMO_MANIFEST_QUOTES_INVALID");
+  }
+  for (const quote of manifest.quotes) {
+    const targetClient = manifest.clients.find((target) => target.key === quote.clientKey);
+    const targetRfq = manifest.rfqs.find((rfq) => rfq.key === quote.rfqKey);
+    if (!targetClient || !targetRfq || targetClient.sellerKey !== quote.sellerKey || targetRfq.clientKey !== quote.clientKey ||
+        round(quote.subtotal * quote.taxRate / 100) !== quote.tax || round(quote.subtotal + quote.tax) !== quote.total ||
+        (quote.status === "draft") !== (quote.sentAt === null)) {
+      throw new Error("DEMO_MANIFEST_QUOTE_RELATION_INVALID");
+    }
+  }
+
+  const statusCount = (status: DemoQuoteStatus) => manifest.quotes.filter((quote) => quote.status === status).length;
+  const sentQuotes = manifest.quotes.filter((quote) => quote.status !== "draft").length;
+  const acceptedQuotes = statusCount("accepted");
+  const activeSellers = new Set(manifest.quotes.map((quote) => quote.sellerKey)).size;
+  const quotedValueUsd = round(manifest.quotes.reduce((sum, quote) => sum + quote.total, 0));
+  const acceptedQuoteValueUsd = round(manifest.quotes.filter((quote) => quote.status === "accepted").reduce((sum, quote) => sum + quote.total, 0));
+  const eventCount = manifest.quotes.reduce((count, quote) => count + 1 + (quote.status === "draft" ? 0 : 1) + (["accepted", "rejected", "expired"].includes(quote.status) ? 1 : 0), 0);
+  if (statusCount("accepted") !== 22 || statusCount("rejected") !== 8 || statusCount("expired") !== 3 ||
+      statusCount("sent") !== 6 || statusCount("draft") !== 6 || sentQuotes !== 39 || activeSellers !== 9 ||
+      round(acceptedQuotes / sentQuotes * 100) !== 56.41 || quotedValueUsd !== 954365.1 ||
+      acceptedQuoteValueUsd !== 495121.1 || eventCount !== 117) {
+    throw new Error("DEMO_MANIFEST_METRICS_INVALID");
+  }
+  if (manifest.quote.number !== "QKS-DEMO-0001" || manifest.quote.total !== 5970.6 || manifest.quote.status !== "accepted") {
+    throw new Error("DEMO_MANIFEST_ORIGINAL_QUOTE_INVALID");
+  }
   return manifest;
 }

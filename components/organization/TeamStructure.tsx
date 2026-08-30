@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { ChevronDown, Pencil, RefreshCw, Save, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, Pencil, RefreshCw, Save, Search, Users, X } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import UserAvatar from "@/components/chat/UserAvatar";
 import {
@@ -13,9 +13,16 @@ import type { Language } from "@/lib/i18n";
 import {
   BUSINESS_RANKS,
   type BusinessRank,
+  type EmployeeCompensation,
   type OrganizationDirectory,
   type OrganizationMember
 } from "@/lib/organization/contracts";
+import {
+  emptyTeamStructureFilters,
+  filterOrganizationMembers,
+  organizationFilterOptions,
+  type TeamStructureFilters
+} from "@/lib/organization/filters";
 import { allowedManagerIds } from "@/lib/organization/scope";
 import type { UserRole } from "@/lib/types";
 
@@ -33,6 +40,17 @@ type TeamCopy = {
   updated: string;
   tree: string;
   noMembers: string;
+  searchEmployee: string;
+  searchPlaceholder: string;
+  countryFilter: string;
+  allCountries: string;
+  departmentFilter: string;
+  allDepartments: string;
+  businessRankFilter: string;
+  allBusinessRanks: string;
+  teamFilter: string;
+  allTeams: string;
+  clearFilters: string;
   titlePending: string;
   noDepartment: string;
   countryPending: string;
@@ -51,6 +69,10 @@ type TeamCopy = {
   acceptedQuoteValue: string;
   quoteConversionRate: string;
   noAnalytics: string;
+  currentCompensation: string;
+  compensationLoading: string;
+  compensationUnavailable: string;
+  compensationNotRecorded: string;
   editTitle: string;
   cancelEdit: string;
   businessTitle: string;
@@ -60,6 +82,7 @@ type TeamCopy = {
   selectMember: string;
   ranks: Record<BusinessRank, string>;
   roles: Record<UserRole, string>;
+  periodicities: Record<EmployeeCompensation["periodicity"], string>;
 };
 
 const COPY: Record<Language, TeamCopy> = {
@@ -75,6 +98,17 @@ const COPY: Record<Language, TeamCopy> = {
     updated: "Team member updated.",
     tree: "Organization tree",
     noMembers: "No organization members are visible in your scope.",
+    searchEmployee: "Search employee",
+    searchPlaceholder: "Name, email, title, country, or department",
+    countryFilter: "Country filter",
+    allCountries: "All countries",
+    departmentFilter: "Department filter",
+    allDepartments: "All departments",
+    businessRankFilter: "Business rank filter",
+    allBusinessRanks: "All business ranks",
+    teamFilter: "Manager / team filter",
+    allTeams: "All teams",
+    clearFilters: "Clear filters",
     titlePending: "Title pending",
     noDepartment: "No department",
     countryPending: "Country pending",
@@ -93,6 +127,10 @@ const COPY: Record<Language, TeamCopy> = {
     acceptedQuoteValue: "Accepted Quote Value",
     quoteConversionRate: "Quote Conversion Rate",
     noAnalytics: "No analytics available in your current scope.",
+    currentCompensation: "Current compensation",
+    compensationLoading: "Loading compensation...",
+    compensationUnavailable: "Compensation could not be loaded.",
+    compensationNotRecorded: "No current compensation is recorded.",
     editTitle: "Edit organization member",
     cancelEdit: "Cancel edit",
     businessTitle: "Business title",
@@ -110,7 +148,8 @@ const COPY: Record<Language, TeamCopy> = {
       sourcing_specialist: "Sourcing Specialist",
       individual_contributor: "Individual contributor"
     },
-    roles: { admin: "Admin", manager: "Manager", employee: "Employee", super_admin_dev: "Super Admin Dev" }
+    roles: { admin: "Admin", manager: "Manager", employee: "Employee", super_admin_dev: "Super Admin Dev" },
+    periodicities: { hourly: "hour", monthly: "month", annual: "year" }
   },
   es: {
     eyebrow: "Organización",
@@ -124,6 +163,17 @@ const COPY: Record<Language, TeamCopy> = {
     updated: "Miembro del equipo actualizado.",
     tree: "Árbol organizacional",
     noMembers: "No hay miembros visibles en tu alcance.",
+    searchEmployee: "Buscar empleado",
+    searchPlaceholder: "Nombre, correo, cargo, país o departamento",
+    countryFilter: "Filtro de país",
+    allCountries: "Todos los países",
+    departmentFilter: "Filtro de departamento",
+    allDepartments: "Todos los departamentos",
+    businessRankFilter: "Filtro de rango empresarial",
+    allBusinessRanks: "Todos los rangos empresariales",
+    teamFilter: "Filtro de responsable / equipo",
+    allTeams: "Todos los equipos",
+    clearFilters: "Limpiar filtros",
     titlePending: "Cargo pendiente",
     noDepartment: "Sin departamento",
     countryPending: "País pendiente",
@@ -142,6 +192,10 @@ const COPY: Record<Language, TeamCopy> = {
     acceptedQuoteValue: "Valor de cotizaciones aceptadas",
     quoteConversionRate: "Tasa de conversión de cotizaciones",
     noAnalytics: "No hay analítica disponible en tu alcance actual.",
+    currentCompensation: "Compensación actual",
+    compensationLoading: "Cargando compensación...",
+    compensationUnavailable: "No se pudo cargar la compensación.",
+    compensationNotRecorded: "No hay una compensación actual registrada.",
     editTitle: "Editar miembro de la organización",
     cancelEdit: "Cancelar edición",
     businessTitle: "Cargo empresarial",
@@ -159,7 +213,8 @@ const COPY: Record<Language, TeamCopy> = {
       sourcing_specialist: "Especialista de abastecimiento",
       individual_contributor: "Colaborador individual"
     },
-    roles: { admin: "Administrador", manager: "Gerente", employee: "Empleado", super_admin_dev: "Super Admin Dev" }
+    roles: { admin: "Administrador", manager: "Gerente", employee: "Empleado", super_admin_dev: "Super Admin Dev" },
+    periodicities: { hourly: "hora", monthly: "mes", annual: "año" }
   },
   zh: {
     eyebrow: "组织",
@@ -173,6 +228,17 @@ const COPY: Record<Language, TeamCopy> = {
     updated: "团队成员已更新。",
     tree: "组织树",
     noMembers: "当前范围内没有可见的组织成员。",
+    searchEmployee: "搜索员工",
+    searchPlaceholder: "姓名、邮箱、职位、国家或部门",
+    countryFilter: "国家筛选",
+    allCountries: "所有国家",
+    departmentFilter: "部门筛选",
+    allDepartments: "所有部门",
+    businessRankFilter: "业务层级筛选",
+    allBusinessRanks: "所有业务层级",
+    teamFilter: "经理 / 团队筛选",
+    allTeams: "所有团队",
+    clearFilters: "清除筛选",
     titlePending: "职位待定",
     noDepartment: "未分配部门",
     countryPending: "国家待定",
@@ -191,6 +257,10 @@ const COPY: Record<Language, TeamCopy> = {
     acceptedQuoteValue: "已接受报价金额",
     quoteConversionRate: "报价转化率",
     noAnalytics: "当前范围内没有可用分析。",
+    currentCompensation: "当前薪酬",
+    compensationLoading: "正在加载薪酬...",
+    compensationUnavailable: "无法加载薪酬。",
+    compensationNotRecorded: "尚未记录当前薪酬。",
     editTitle: "编辑组织成员",
     cancelEdit: "取消编辑",
     businessTitle: "业务职位",
@@ -208,7 +278,8 @@ const COPY: Record<Language, TeamCopy> = {
       sourcing_specialist: "采购专员",
       individual_contributor: "个人贡献者"
     },
-    roles: { admin: "管理员", manager: "经理", employee: "员工", super_admin_dev: "超级开发管理员" }
+    roles: { admin: "管理员", manager: "经理", employee: "员工", super_admin_dev: "超级开发管理员" },
+    periodicities: { hourly: "小时", monthly: "月", annual: "年" }
   }
 };
 
@@ -297,6 +368,9 @@ export default function TeamStructure() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [filters, setFilters] = useState<TeamStructureFilters>(emptyTeamStructureFilters);
+  const [compensation, setCompensation] = useState<EmployeeCompensation | null>(null);
+  const [compensationStatus, setCompensationStatus] = useState<"idle" | "loading" | "missing" | "error">("idle");
 
   const load = useCallback(async ({ signal, trigger }: VisiblePollingContext) => {
     if (trigger === "initial" || trigger === "manual") setLoading(true);
@@ -327,8 +401,16 @@ export default function TeamStructure() {
 
   const { refresh } = useVisiblePolling(load, { intervalMs: 12_000 });
 
-  const selected = directory?.members.find((member) => member.profileId === selectedId) || null;
-  const tree = useMemo(() => forest(directory?.members || []), [directory]);
+  const filtered = useMemo(
+    () => filterOrganizationMembers(directory?.members || [], filters),
+    [directory, filters]
+  );
+  const filterOptions = useMemo(
+    () => organizationFilterOptions(directory?.members || []),
+    [directory]
+  );
+  const selected = filtered.members.find((member) => member.profileId === selectedId) || null;
+  const tree = useMemo(() => forest(filtered.members), [filtered.members]);
   const manager = directory?.members.find((member) => member.profileId === selected?.managerId) || null;
   const reports = directory?.members.filter((member) => member.managerId === selected?.profileId) || [];
   const selectedAnalytics = analytics?.metrics.find((metric) => metric.employeeId === selected?.profileId) || null;
@@ -337,6 +419,71 @@ export default function TeamStructure() {
     const allowed = allowedManagerIds(directory.actor, selected.profileId, directory.members);
     return directory.members.filter((member) => allowed.has(member.profileId));
   }, [directory, selected]);
+
+  useEffect(() => {
+    if (!directory) return;
+    const selectedIsVisible = filtered.members.some((member) => member.profileId === selectedId);
+    const selectedIsMatch = filtered.matchedIds.has(selectedId);
+    if (selectedIsVisible && (!filtered.hasActiveFilters || selectedIsMatch)) return;
+
+    const next = directory.members.find((member) => filtered.matchedIds.has(member.profileId))
+      ?? filtered.members[0]
+      ?? null;
+    const nextId = next?.profileId ?? "";
+    if (nextId === selectedId) return;
+    setSelectedId(nextId);
+    setEditing(false);
+    setForm(null);
+    setMessage("");
+  }, [directory, filtered, selectedId]);
+
+  const canReadCompensation = directory?.actor.canReadCompensation === true;
+  const selectedProfileId = selected?.profileId ?? "";
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setCompensation(null);
+    setCompensationStatus("idle");
+
+    if (!canReadCompensation || !selectedProfileId) {
+      return () => controller.abort();
+    }
+
+    setCompensationStatus("loading");
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/organization/compensation/${encodeURIComponent(selectedProfileId)}`,
+          { cache: "no-store", signal: controller.signal }
+        );
+        const payload = (await response.json().catch(() => null)) as {
+          compensation?: EmployeeCompensation;
+        } | null;
+        if (!active || controller.signal.aborted) return;
+        if (response.status === 404) {
+          setCompensationStatus("missing");
+          return;
+        }
+        if (
+          !response.ok
+          || !payload?.compensation
+          || payload.compensation.employeeId !== selectedProfileId
+        ) {
+          setCompensationStatus("error");
+          return;
+        }
+        setCompensation(payload.compensation);
+        setCompensationStatus("idle");
+      } catch {
+        if (active && !controller.signal.aborted) setCompensationStatus("error");
+      }
+    })();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [canReadCompensation, selectedProfileId]);
 
   function beginEdit() {
     if (!selected?.canEdit) return;
@@ -405,6 +552,57 @@ export default function TeamStructure() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
         <section className="min-h-[640px] overflow-auto rounded-md border border-slate-200 bg-slate-50 p-5 shadow-sm">
           <div className="mb-5 flex items-center gap-2"><Users className="h-5 w-5 text-brand-600" /><h2 className="font-semibold text-slate-950">{copy.tree}</h2></div>
+          <div className="mb-6 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-2">
+            <label className="grid gap-1 text-xs font-semibold text-slate-600 md:col-span-2">
+              {copy.searchEmployee}
+              <span className="relative">
+                <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="search"
+                  value={filters.search}
+                  onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+                  placeholder={copy.searchPlaceholder}
+                  className="focus-ring h-11 w-full rounded-md border border-slate-300 pl-9 pr-3 text-sm font-normal text-slate-900"
+                />
+              </span>
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-slate-600">
+              {copy.countryFilter}
+              <select value={filters.country} onChange={(event) => setFilters((current) => ({ ...current, country: event.target.value }))} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                <option value="">{copy.allCountries}</option>
+                {filterOptions.countries.map((country) => <option key={country} value={country}>{country}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-slate-600">
+              {copy.departmentFilter}
+              <select value={filters.department} onChange={(event) => setFilters((current) => ({ ...current, department: event.target.value }))} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                <option value="">{copy.allDepartments}</option>
+                {filterOptions.departments.map((department) => <option key={department} value={department}>{department}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-slate-600">
+              {copy.businessRankFilter}
+              <select value={filters.businessRank} onChange={(event) => setFilters((current) => ({ ...current, businessRank: event.target.value as BusinessRank | "" }))} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                <option value="">{copy.allBusinessRanks}</option>
+                {filterOptions.businessRanks.map((rank) => <option key={rank} value={rank}>{copy.ranks[rank]}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-semibold text-slate-600">
+              {copy.teamFilter}
+              <select value={filters.teamManagerId} onChange={(event) => setFilters((current) => ({ ...current, teamManagerId: event.target.value }))} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                <option value="">{copy.allTeams}</option>
+                {filterOptions.teamManagers.map((member) => <option key={member.profileId} value={member.profileId}>{member.name} · {member.businessTitle}</option>)}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => setFilters(emptyTeamStructureFilters())}
+              disabled={!filtered.hasActiveFilters}
+              className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 md:col-span-2"
+            >
+              <X className="h-4 w-4" /> {copy.clearFilters}
+            </button>
+          </div>
           {tree.length ? <ul className="space-y-4">{tree.map((node) => <TreeNode key={node.profileId} node={node} selectedId={selectedId} copy={copy} onSelect={(member) => { setSelectedId(member.profileId); setEditing(false); setForm(null); setMessage(""); }} />)}</ul> : <p className="text-sm text-slate-500">{copy.noMembers}</p>}
         </section>
 
@@ -428,6 +626,19 @@ export default function TeamStructure() {
                   </dl>
                   <div><h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{copy.responsibilities}</h3><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{selected.responsibilities || copy.noResponsibilities}</p></div>
                   <div><h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{copy.employeeAnalytics}</h3>{selectedAnalytics ? <div className="mt-2 grid grid-cols-2 gap-2 text-sm"><div className="rounded-md bg-orange-50 p-3"><p className="text-xs text-orange-700">{copy.acceptedQuoteValue}</p><p className="mt-1 font-semibold text-slate-950">{new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(selectedAnalytics.acceptedQuoteValue)}</p></div><div className="rounded-md bg-slate-50 p-3"><p className="text-xs text-slate-500">{copy.quoteConversionRate}</p><p className="mt-1 font-semibold text-slate-950">{selectedAnalytics.quoteConversionRate.toFixed(2)}%</p></div></div> : <p className="mt-2 text-sm text-slate-500">{copy.noAnalytics}</p>}</div>
+                  {canReadCompensation ? (
+                    <div aria-live="polite">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{copy.currentCompensation}</h3>
+                      {compensationStatus === "loading" ? <p className="mt-2 text-sm text-slate-500">{copy.compensationLoading}</p> : null}
+                      {compensationStatus === "missing" ? <p className="mt-2 text-sm text-slate-500">{copy.compensationNotRecorded}</p> : null}
+                      {compensationStatus === "error" ? <p className="mt-2 text-sm text-red-700">{copy.compensationUnavailable}</p> : null}
+                      {compensation?.employeeId === selectedProfileId ? (
+                        <p className="mt-2 rounded-md bg-emerald-50 p-3 text-base font-semibold text-slate-950">
+                          US$ {new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(compensation.amount)} / {copy.periodicities[compensation.periodicity]}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </>
               ) : form ? (
                 <form onSubmit={save} className="space-y-4">

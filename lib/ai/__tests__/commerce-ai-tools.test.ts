@@ -341,6 +341,51 @@ describe("read-only commerce AI tools", () => {
     }
   );
 
+  it("returns an explicit empty ranking when visible employees have no quote activity", async () => {
+    const zeroMetric: EmployeeQuoteMetrics = {
+      ...METRICS.employee,
+      quotesCreated: 0,
+      quotesSent: 0,
+      quotesAccepted: 0,
+      quotesRejected: 0,
+      quoteConversionRate: 0,
+      quotedValue: 0,
+      acceptedQuoteValue: 0,
+      customersServed: 0,
+      newCustomers: 0
+    };
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce({
+      ...analyticsFor("employee"),
+      metrics: [zeroMetric],
+      ranking: [],
+      totals: {
+        quotesCreated: 0,
+        quotesSent: 0,
+        quotesAccepted: 0,
+        quotesRejected: 0,
+        quoteConversionRate: 0,
+        quotedValue: 0,
+        acceptedQuoteValue: 0,
+        customersServed: 0,
+        newCustomers: 0
+      }
+    });
+
+    const output = await getEmployeeQuoteMetrics(
+      contextFor("employee"),
+      "Who has the highest Accepted Quote Value?"
+    );
+
+    expect(output).toEqual(expect.objectContaining({
+      ok: false,
+      empty: true,
+      total: 0,
+      rows: []
+    }));
+    expect(output.data).toHaveProperty("selectedEmployee", null);
+    expect(JSON.stringify(output.data)).not.toMatch(/salary|compensation/i);
+  });
+
   it.each(["employee", "manager", "admin", "super_admin_dev"] as const)(
     "returns only seller-safe sourcing fields for %s",
     async (role) => {

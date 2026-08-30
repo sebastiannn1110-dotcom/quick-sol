@@ -71,11 +71,12 @@ describe("organization and analytics contract", () => {
     expect(sharedTypes).not.toMatch(/export type UserRole[^\n]*sourcing_manager/);
   });
 
-  it("isolates read-only USD compensation from normal tree and analytics payloads", () => {
+  it("isolates read-only USD compensation behind its dedicated authorized endpoint", () => {
     expect(migration).toMatch(/currency text not null default 'USD' check \(currency = 'USD'\)/i);
     expect(migration).toContain("organization_can_read_compensation_v1");
-    expect(tree.toLowerCase()).not.toContain("salary");
-    expect(tree.toLowerCase()).not.toContain("compensation");
+    expect(tree).toContain("directory?.actor.canReadCompensation === true");
+    expect(tree).toContain("/api/organization/compensation/");
+    expect(tree).not.toContain("employee_compensation");
     expect(analyticsUi.toLowerCase()).not.toContain("salary");
     expect(analyticsUi.toLowerCase()).not.toContain("compensation");
     expect(compensationRoute).toContain("export async function GET");

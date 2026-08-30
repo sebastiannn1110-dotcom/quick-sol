@@ -216,7 +216,7 @@ export async function getEmployeeQuoteMetrics(context: AuthContext, question: st
     data,
     selected ? [safeMetric(selected)] : ranking,
     "Authorized employee quote metrics loaded from the current organization scope.",
-    analytics.metrics.length === 0
+    asksForRanking ? analytics.ranking.length === 0 : analytics.metrics.length === 0
   );
 }
 

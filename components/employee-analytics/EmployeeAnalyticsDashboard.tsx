@@ -1,17 +1,20 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { BarChart3, RefreshCw, Trophy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3, RefreshCw, SlidersHorizontal, Trophy } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   useVisiblePolling,
   type VisiblePollingContext
 } from "@/components/useVisiblePolling";
 import type {
+  AnalyticsQuoteStatus,
+  EmployeeAnalyticsFilters,
   EmployeeAnalyticsPayload,
   EmployeeQuoteMetrics
 } from "@/lib/employee-analytics/contracts";
 import type { Language } from "@/lib/i18n";
+import type { BusinessRank } from "@/lib/organization/contracts";
 
 const METRIC_LABELS = [
   "Quotes Created",
@@ -36,6 +39,40 @@ const COMPARISON_LABELS = [
 type MetricLabel = (typeof METRIC_LABELS)[number];
 type ComparisonLabel = (typeof COMPARISON_LABELS)[number];
 
+const FILTER_PARAM_ORDER = [
+  "country",
+  "region",
+  "department",
+  "businessRank",
+  "teamManagerId",
+  "sellerId",
+  "quoteStatus"
+] as const satisfies ReadonlyArray<keyof EmployeeAnalyticsFilters>;
+
+export function buildEmployeeAnalyticsEndpoint(filters: EmployeeAnalyticsFilters) {
+  const searchParams = new URLSearchParams();
+  for (const key of FILTER_PARAM_ORDER) {
+    const value = filters[key];
+    if (value) searchParams.set(key, value);
+  }
+  const query = searchParams.toString();
+  return `/api/employee-analytics${query ? `?${query}` : ""}`;
+}
+
+export function reconcileEmployeeComparison(
+  metrics: EmployeeQuoteMetrics[],
+  current: { firstId: string; secondId: string }
+) {
+  const ids = new Set(metrics.map((metric) => metric.employeeId));
+  const firstId = ids.has(current.firstId)
+    ? current.firstId
+    : metrics[0]?.employeeId ?? "";
+  const secondId = ids.has(current.secondId) && current.secondId !== firstId
+    ? current.secondId
+    : metrics.find((metric) => metric.employeeId !== firstId)?.employeeId ?? firstId;
+  return { firstId, secondId };
+}
+
 const COPY: Record<Language, {
   eyebrow: string;
   title: string;
@@ -44,6 +81,21 @@ const COPY: Record<Language, {
   refresh: string;
   loading: string;
   loadError: string;
+  filters: string;
+  filtersHelp: string;
+  country: string;
+  region: string;
+  department: string;
+  businessRank: string;
+  team: string;
+  seller: string;
+  quoteStatus: string;
+  all: string;
+  global: string;
+  clearFilters: string;
+  teamLabel: (name: string) => string;
+  ranks: Record<BusinessRank, string>;
+  statuses: Record<AnalyticsQuoteStatus, string>;
   metrics: Record<MetricLabel, string>;
   ranking: string;
   employee: string;
@@ -67,6 +119,36 @@ const COPY: Record<Language, {
     refresh: "Refresh",
     loading: "Loading Employee Analytics...",
     loadError: "Employee Analytics could not be loaded.",
+    filters: "Filters",
+    filtersHelp: "Combine organization and current quote-status filters.",
+    country: "Country",
+    region: "Region",
+    department: "Department",
+    businessRank: "Business Rank",
+    team: "Team / Manager",
+    seller: "Seller",
+    quoteStatus: "Quote status",
+    all: "All",
+    global: "Global",
+    clearFilters: "Clear filters",
+    teamLabel: (name) => `Team ${name}`,
+    ranks: {
+      owner: "Owner",
+      executive: "Executive",
+      director: "Director",
+      manager: "Manager",
+      salesperson: "Salesperson",
+      sourcing_manager: "Sourcing Manager",
+      sourcing_specialist: "Sourcing Specialist",
+      individual_contributor: "Individual contributor"
+    },
+    statuses: {
+      draft: "Draft",
+      sent: "Sent",
+      accepted: "Accepted",
+      rejected: "Rejected",
+      expired: "Expired"
+    },
     metrics: {
       "Quotes Created": "Quotes Created",
       "Quotes Sent": "Quotes Sent",
@@ -107,6 +189,36 @@ const COPY: Record<Language, {
     refresh: "Actualizar",
     loading: "Cargando analítica de empleados...",
     loadError: "No se pudo cargar la analítica de empleados.",
+    filters: "Filtros",
+    filtersHelp: "Combina filtros de organización y del estado actual de las cotizaciones.",
+    country: "País",
+    region: "Región",
+    department: "Departamento",
+    businessRank: "Rango empresarial",
+    team: "Equipo / responsable",
+    seller: "Vendedor",
+    quoteStatus: "Estado de cotización",
+    all: "Todos",
+    global: "Global",
+    clearFilters: "Limpiar filtros",
+    teamLabel: (name) => `Equipo de ${name}`,
+    ranks: {
+      owner: "Propietario",
+      executive: "Ejecutivo",
+      director: "Director",
+      manager: "Gerente",
+      salesperson: "Vendedor",
+      sourcing_manager: "Gerente de abastecimiento",
+      sourcing_specialist: "Especialista de abastecimiento",
+      individual_contributor: "Colaborador individual"
+    },
+    statuses: {
+      draft: "Borrador",
+      sent: "Enviada",
+      accepted: "Aceptada",
+      rejected: "Rechazada",
+      expired: "Expirada"
+    },
     metrics: {
       "Quotes Created": "Cotizaciones creadas",
       "Quotes Sent": "Cotizaciones enviadas",
@@ -147,6 +259,36 @@ const COPY: Record<Language, {
     refresh: "刷新",
     loading: "正在加载员工分析...",
     loadError: "无法加载员工分析。",
+    filters: "筛选条件",
+    filtersHelp: "可组合组织信息与报价当前状态筛选。",
+    country: "国家",
+    region: "区域",
+    department: "部门",
+    businessRank: "业务职级",
+    team: "团队 / 经理",
+    seller: "销售人员",
+    quoteStatus: "报价状态",
+    all: "全部",
+    global: "全球",
+    clearFilters: "清除筛选",
+    teamLabel: (name) => `${name} 团队`,
+    ranks: {
+      owner: "所有者",
+      executive: "高管",
+      director: "总监",
+      manager: "经理",
+      salesperson: "销售人员",
+      sourcing_manager: "采购经理",
+      sourcing_specialist: "采购专员",
+      individual_contributor: "个人贡献者"
+    },
+    statuses: {
+      draft: "草稿",
+      sent: "已发送",
+      accepted: "已接受",
+      rejected: "已拒绝",
+      expired: "已过期"
+    },
     metrics: {
       "Quotes Created": "已创建报价",
       "Quotes Sent": "已发送报价",
@@ -231,16 +373,30 @@ function comparisonValue(
 export default function EmployeeAnalyticsDashboard() {
   const { language, locale } = useLanguage();
   const copy = COPY[language];
-  const [analytics, setAnalytics] = useState<EmployeeAnalyticsPayload | null>(null);
+  const [filters, setFilters] = useState<EmployeeAnalyticsFilters>({});
+  const endpoint = useMemo(() => buildEmployeeAnalyticsEndpoint(filters), [filters]);
+  const endpointRef = useRef(endpoint);
+  useEffect(() => {
+    endpointRef.current = endpoint;
+  }, [endpoint]);
+  const [analyticsSnapshot, setAnalyticsSnapshot] = useState<{
+    endpoint: string;
+    analytics: EmployeeAnalyticsPayload;
+  } | null>(null);
+  const analytics = analyticsSnapshot?.endpoint === endpoint
+    ? analyticsSnapshot.analytics
+    : null;
+  const optionAnalytics = analyticsSnapshot?.analytics ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [firstId, setFirstId] = useState("");
-  const [secondId, setSecondId] = useState("");
+  const [comparison, setComparison] = useState({ firstId: "", secondId: "" });
+  const filterRefreshReady = useRef(false);
 
   const load = useCallback(async ({ signal, trigger }: VisiblePollingContext) => {
+    const requestEndpoint = endpoint;
     if (trigger === "initial" || trigger === "manual") setLoading(true);
     try {
-      const response = await fetch("/api/employee-analytics", {
+      const response = await fetch(requestEndpoint, {
         cache: "no-store",
         signal
       });
@@ -248,24 +404,52 @@ export default function EmployeeAnalyticsDashboard() {
         analytics?: EmployeeAnalyticsPayload;
       } | null;
 
-      if (signal.aborted) return;
+      if (signal.aborted || endpointRef.current !== requestEndpoint) return;
       if (!response.ok || !payload?.analytics) {
         setError(copy.loadError);
         return;
       }
 
       setError("");
-      setAnalytics(payload.analytics);
-      setFirstId((current) => current || payload.analytics!.metrics[0]?.employeeId || "");
-      setSecondId((current) => current || payload.analytics!.metrics[1]?.employeeId || payload.analytics!.metrics[0]?.employeeId || "");
+      setAnalyticsSnapshot({ endpoint: requestEndpoint, analytics: payload.analytics });
+      setComparison((current) => reconcileEmployeeComparison(payload.analytics!.metrics, current));
     } catch {
-      if (!signal.aborted) setError(copy.loadError);
+      if (!signal.aborted && endpointRef.current === requestEndpoint) setError(copy.loadError);
     } finally {
-      if (!signal.aborted) setLoading(false);
+      if (!signal.aborted && endpointRef.current === requestEndpoint) setLoading(false);
     }
-  }, [copy.loadError]);
+  }, [copy.loadError, endpoint]);
 
   const { refresh } = useVisiblePolling(load, { intervalMs: 12_000 });
+
+  useEffect(() => {
+    if (!filterRefreshReady.current) {
+      filterRefreshReady.current = true;
+      return;
+    }
+    void refresh();
+  }, [endpoint, refresh]);
+
+  const firstId = comparison.firstId;
+  const secondId = comparison.secondId;
+  const hasFilters = Object.values(filters).some(Boolean);
+
+  function updateFilter(key: keyof EmployeeAnalyticsFilters, value: string) {
+    setLoading(true);
+    setError("");
+    setFilters((current) => {
+      const next = { ...current } as Record<string, string | undefined>;
+      if (value) next[key] = value;
+      else delete next[key];
+      return next as EmployeeAnalyticsFilters;
+    });
+  }
+
+  function clearFilters() {
+    setLoading(true);
+    setError("");
+    setFilters({});
+  }
 
   const first = useMemo(
     () => analytics?.metrics.find((metric) => metric.employeeId === firstId) || null,
@@ -276,7 +460,7 @@ export default function EmployeeAnalyticsDashboard() {
     [analytics, secondId]
   );
 
-  if (loading && !analytics) {
+  if (loading && !analyticsSnapshot) {
     return <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{copy.loading}</div>;
   }
 
@@ -287,7 +471,7 @@ export default function EmployeeAnalyticsDashboard() {
           <p className="text-sm font-medium text-orange-700">{copy.eyebrow}</p>
           <h1 className="text-2xl font-semibold text-slate-950">{copy.title}</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            {copy.description} <span className="font-semibold">{copy.scope[analytics?.scope || "self"]}</span>.
+            {copy.description} <span className="font-semibold">{copy.scope[analytics?.scope || optionAnalytics?.scope || "self"]}</span>.
           </p>
         </div>
         <button type="button" onClick={() => void refresh()} disabled={loading} className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50">
@@ -296,6 +480,84 @@ export default function EmployeeAnalyticsDashboard() {
       </header>
 
       {error ? <p className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p> : null}
+
+      {optionAnalytics ? (
+          <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm" aria-label={copy.filters}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-2">
+                <SlidersHorizontal className="mt-0.5 h-5 w-5 text-brand-600" />
+                <div>
+                  <h2 className="font-semibold text-slate-950">{copy.filters}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{copy.filtersHelp}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={clearFilters}
+                disabled={!hasFilters || loading}
+                className="focus-ring min-h-10 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 disabled:opacity-50"
+              >
+                {copy.clearFilters}
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.country}
+                <select aria-label={copy.country} value={filters.country ?? ""} onChange={(event) => updateFilter("country", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.countries.map((country) => <option key={country} value={country}>{country}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.region}
+                <select aria-label={copy.region} value={filters.region ?? ""} onChange={(event) => updateFilter("region", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.global}</option>
+                  {optionAnalytics.filterOptions.regions.map((region) => <option key={region} value={region}>{region}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.department}
+                <select aria-label={copy.department} value={filters.department ?? ""} onChange={(event) => updateFilter("department", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.departments.map((department) => <option key={department} value={department}>{department}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.businessRank}
+                <select aria-label={copy.businessRank} value={filters.businessRank ?? ""} onChange={(event) => updateFilter("businessRank", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.businessRanks.map((rank) => <option key={rank} value={rank}>{copy.ranks[rank]}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.team}
+                <select aria-label={copy.team} value={filters.teamManagerId ?? ""} onChange={(event) => updateFilter("teamManagerId", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.teams.map((team) => <option key={team.managerId} value={team.managerId}>{copy.teamLabel(team.name)} ({team.memberCount})</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.seller}
+                <select aria-label={copy.seller} value={filters.sellerId ?? ""} onChange={(event) => updateFilter("sellerId", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.sellers.map((seller) => <option key={seller.employeeId} value={seller.employeeId}>{seller.name}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                {copy.quoteStatus}
+                <select aria-label={copy.quoteStatus} value={filters.quoteStatus ?? ""} onChange={(event) => updateFilter("quoteStatus", event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">
+                  <option value="">{copy.all}</option>
+                  {optionAnalytics.filterOptions.quoteStatuses.map((status) => <option key={status} value={status}>{copy.statuses[status]}</option>)}
+                </select>
+              </label>
+            </div>
+          </section>
+      ) : null}
+
+      {!analytics && loading ? (
+        <div className="rounded-md bg-white p-6 text-sm text-slate-500 shadow-sm">{copy.loading}</div>
+      ) : null}
 
       {analytics ? (
         <>
@@ -335,8 +597,11 @@ export default function EmployeeAnalyticsDashboard() {
             <article className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-brand-600" /><h2 className="font-semibold text-slate-950">{copy.compare}</h2></div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                {[{ value: firstId, set: setFirstId, label: copy.employeeA }, { value: secondId, set: setSecondId, label: copy.employeeB }].map((selector) => (
-                  <label key={selector.label} className="grid gap-1 text-xs font-semibold text-slate-600">{selector.label}<select value={selector.value} onChange={(event) => selector.set(event.target.value)} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">{analytics.metrics.map((metric) => <option key={metric.employeeId} value={metric.employeeId}>{metric.name}</option>)}</select></label>
+                {[
+                  { key: "firstId" as const, value: firstId, label: copy.employeeA },
+                  { key: "secondId" as const, value: secondId, label: copy.employeeB }
+                ].map((selector) => (
+                  <label key={selector.key} className="grid gap-1 text-xs font-semibold text-slate-600">{selector.label}<select value={selector.value} onChange={(event) => setComparison((current) => ({ ...current, [selector.key]: event.target.value }))} className="focus-ring h-11 rounded-md border border-slate-300 px-3 text-sm font-normal text-slate-900">{analytics.metrics.map((metric) => <option key={metric.employeeId} value={metric.employeeId}>{metric.name}</option>)}</select></label>
                 ))}
               </div>
               {first && second ? (

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { serverSupabaseClientOptions } from "../lib/supabase/node-client-options";
 import {
@@ -8,13 +9,18 @@ import {
   DEMO_DATA_MANIFEST,
   DEMO_SEED_MARKER,
   validateDemoManifest,
-  type DemoPerson
+  type DemoPerson,
+  type DemoPersonKey,
+  type DemoQuoteStatus
 } from "./demo-data-manifest";
 import { createProvisionedAuthUser } from "./provision-admin-users";
 
 export const DEMO_SEED_ALLOWED_ENV = "QUIKSOL_DEMO_SEED_ALLOWED";
 export const DEMO_PROJECT_REF_ENV = "QUIKSOL_DEMO_PROJECT_REF";
 export const DEMO_USER_PASSWORD_ENV = "QUIKSOL_DEMO_USER_PASSWORD";
+export const DEMO_OWNER_PASSWORD_ENV = "QUIKSOL_DEMO_OWNER_PASSWORD";
+export const DEMO_BASE_PROJECT_REF = "glrmosslaboxfcprqlgo";
+const DEMO_OWNER_PASSWORD_APPROVED_SHA256 = "f9fb5c2de9ef0401f7d807f3fa942628a24cda3f5a608c355d67d53f956fe5c6";
 
 export type DemoSeedOptions = {
   mode: "dry-run" | "apply";
@@ -22,11 +28,34 @@ export type DemoSeedOptions = {
   projectRef?: string;
 };
 
-type DemoAuthUser = Pick<User, "id" | "email" | "user_metadata">;
+export type DemoAuthUser = Pick<User, "id" | "email" | "user_metadata">;
 type PersonIds = Record<DemoPerson["key"], string>;
 type UnknownRow = Record<string, unknown>;
 
+type DemoProvisioningResult = {
+  state: "NEW" | "EXISTING_PENDING" | "EXISTING_COMPLETED";
+  intentId: string;
+  authUserId: string | null;
+  role: DemoPerson["technicalRole"];
+  status: "pending" | "completed";
+  attemptCount: number;
+};
+
+export type DemoUserProvisioningGateway = {
+  listAuthUsers(): Promise<DemoAuthUser[]>;
+  verifyExistingSeedOwnership(person: DemoPerson, user: DemoAuthUser): Promise<void>;
+  getAuthUserById(userId: string): Promise<DemoAuthUser>;
+  beginCliProvisioning(person: DemoPerson): Promise<DemoProvisioningResult>;
+  beginAdminProvisioning(person: DemoPerson): Promise<DemoProvisioningResult>;
+  createAuthUser(person: DemoPerson, password: string, intentId: string): Promise<DemoAuthUser>;
+  authenticateSeedAdmin(person: DemoPerson, password: string, expectedUserId: string): Promise<void>;
+  releaseSeedAdminSession(): Promise<void>;
+  verifySeedOwnerLogin(person: DemoPerson, password: string, expectedUserId: string): Promise<void>;
+  ensureSeedProfile(person: DemoPerson, userId: string): Promise<void>;
+};
+
 const projectRefPattern = /^[a-z0-9]{20}$/;
+const provisioningUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function readFlag(args: string[], flag: string) {
   const prefix = `${flag}=`;
   const values = args.filter((arg) => arg.startsWith(prefix)).map((arg) => arg.slice(prefix.length));
@@ -70,6 +99,14 @@ export function projectRefFromSupabaseUrl(rawUrl: string) {
   return match[1].toLowerCase();
 }
 
+export function validateLinkedDemoProjectRef(rawRef: string) {
+  const linkedRef = rawRef.trim().toLowerCase();
+  if (linkedRef !== DEMO_BASE_PROJECT_REF) {
+    throw new Error("DEMO_SEED_LINKED_PROJECT_REF_MISMATCH");
+  }
+  return linkedRef;
+}
+
 function validatePassword(password: string | undefined) {
   if (
     !password ||
@@ -82,6 +119,18 @@ function validatePassword(password: string | undefined) {
     throw new Error(
       `${DEMO_USER_PASSWORD_ENV}_WEAK: require at least 16 characters with upper, lower, number and symbol.`
     );
+  }
+  return password;
+}
+
+export function validateDemoOwnerPassword(
+  password: string | undefined
+) {
+  if (!password) throw new Error(`${DEMO_OWNER_PASSWORD_ENV}_REQUIRED`);
+  const expected = Buffer.from(DEMO_OWNER_PASSWORD_APPROVED_SHA256, "hex");
+  const actual = createHash("sha256").update(password, "utf8").digest();
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw new Error(`${DEMO_OWNER_PASSWORD_ENV}_NOT_APPROVED`);
   }
   return password;
 }
@@ -108,11 +157,19 @@ export function validateDemoApplyGuards(
     throw new Error(`${DEMO_PROJECT_REF_ENV}_REQUIRED`);
   }
   const urlRef = projectRefFromSupabaseUrl(supabaseUrl);
-  if (cliRef !== allowlistedRef || cliRef !== urlRef) {
+  if (
+    cliRef !== DEMO_BASE_PROJECT_REF ||
+    allowlistedRef !== DEMO_BASE_PROJECT_REF ||
+    urlRef !== DEMO_BASE_PROJECT_REF
+  ) {
     throw new Error("DEMO_SEED_PROJECT_REF_MISMATCH");
   }
 
-  return { password: validatePassword(env[DEMO_USER_PASSWORD_ENV]), projectRef: cliRef };
+  return {
+    password: validatePassword(env[DEMO_USER_PASSWORD_ENV]),
+    ownerPassword: validateDemoOwnerPassword(env[DEMO_OWNER_PASSWORD_ENV]),
+    projectRef: cliRef
+  };
 }
 
 export function buildDemoDryRunPlan() {
@@ -121,6 +178,7 @@ export function buildDemoDryRunPlan() {
     mode: "dry-run",
     networkAccess: false,
     writes: false,
+    projectRef: DEMO_BASE_PROJECT_REF,
     marker: manifest.marker,
     authUsers: manifest.people.map(({ email, technicalRole, profileBusinessRank }) => ({
       email,
@@ -128,24 +186,33 @@ export function buildDemoDryRunPlan() {
       profileBusinessRank
     })),
     records: {
-      customer: manifest.customer.externalId,
-      rfq: manifest.rfq.externalId,
+      employees: manifest.people.length,
+      clients: manifest.clients.length,
+      rfqs: manifest.rfqs.length,
+      compensations: manifest.compensations.length,
+      quotes: manifest.quotes.length,
       product: manifest.product.mpn,
-      quote: manifest.quote.number
+      quoteStatuses: {
+        accepted: manifest.quotes.filter((quote) => quote.status === "accepted").length,
+        rejected: manifest.quotes.filter((quote) => quote.status === "rejected").length,
+        expired: manifest.quotes.filter((quote) => quote.status === "expired").length,
+        sent: manifest.quotes.filter((quote) => quote.status === "sent").length,
+        draft: manifest.quotes.filter((quote) => quote.status === "draft").length
+      }
     },
     expectedMetrics: manifest.expectedMetrics,
     applyRequirements: [
       "--apply",
       `--confirm=${DEMO_APPLY_CONFIRMATION}`,
-      "--project-ref=<20-character-ref>",
+      `--project-ref=${DEMO_BASE_PROJECT_REF}`,
       `${DEMO_SEED_ALLOWED_ENV}=true`,
-      `${DEMO_PROJECT_REF_ENV}=<same-project-ref>`,
-      `${DEMO_USER_PASSWORD_ENV}=<strong-temporary-password>`
+      `${DEMO_PROJECT_REF_ENV}=${DEMO_BASE_PROJECT_REF}`,
+      `${DEMO_USER_PASSWORD_ENV}=<strong-temporary-password>`,
+      `${DEMO_OWNER_PASSWORD_ENV}=<approved-owner-password-from-secret-manager>`
     ],
     exclusions: [
       "no existing Auth user updates",
       "no super_admin_dev role grants",
-      "no employee compensation",
       "no Opportunity Finder data",
       "no revenue or sales records",
       "no deletes"
@@ -173,9 +240,14 @@ function loadEnvFile(filePath: string) {
 function serviceConfiguration() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const publishableKey = (
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  )?.trim();
   if (!supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL_REQUIRED");
   if (!serviceRoleKey) throw new Error("SUPABASE_SERVICE_ROLE_KEY_REQUIRED");
-  return { supabaseUrl, serviceRoleKey };
+  if (!publishableKey) throw new Error("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY_REQUIRED");
+  return { supabaseUrl, serviceRoleKey, publishableKey };
 }
 
 async function schemaPreflight(supabase: SupabaseClient) {
@@ -204,6 +276,13 @@ async function schemaPreflight(supabase: SupabaseClient) {
         "profile_id,manager_id,business_title,business_rank,department,country,location,responsibilities,version",
         { head: true }
       )
+      .limit(1)
+  );
+  await check(
+    "employee_compensation",
+    supabase
+      .from("employee_compensation")
+      .select("employee_id,amount,currency,periodicity,updated_by,updated_at", { head: true })
       .limit(1)
   );
   await check(
@@ -338,21 +417,106 @@ async function guardNaturalKey(
   if (conflicting) throw new Error(`DEMO_SEED_NATURAL_KEY_COLLISION: ${table}`);
 }
 
-async function collisionPreflight(supabase: SupabaseClient) {
-  const { ids, customer, product, rfq, quote } = DEMO_DATA_MANIFEST;
-  await guardFixedRow(supabase, "clients", "id", ids.client, (row) => markerInField(row, "description"));
-  await guardFixedRow(supabase, "commerce_client_details", "client_id", ids.client, (row) =>
-    markerInField(row, "commercial_notes")
+async function guardFixedRows(
+  supabase: SupabaseClient,
+  table: string,
+  idColumn: string,
+  expected: readonly { id: string; ownsRow: (row: UnknownRow) => boolean }[]
+) {
+  const { data, error } = await supabase
+    .from(table as never)
+    .select("*")
+    .in(idColumn, expected.map((entry) => entry.id));
+  if (error) throw error;
+  const ownershipById = new Map(expected.map((entry) => [entry.id, entry.ownsRow]));
+  for (const row of (data ?? []) as unknown as UnknownRow[]) {
+    const id = String(row[idColumn]);
+    if (!ownershipById.get(id)?.(row)) {
+      throw new Error(`DEMO_SEED_FIXED_ID_COLLISION: ${table}.${idColumn}=${id}`);
+    }
+  }
+}
+
+async function guardNaturalRows(
+  supabase: SupabaseClient,
+  table: string,
+  naturalColumn: string,
+  expected: readonly { value: string; id: string }[],
+  idColumn = "id"
+) {
+  const { data, error } = await supabase
+    .from(table as never)
+    .select("*")
+    .in(naturalColumn, expected.map((entry) => entry.value));
+  if (error) throw error;
+  const expectedIdByValue = new Map(expected.map((entry) => [entry.value, entry.id]));
+  const conflicting = ((data ?? []) as unknown as UnknownRow[]).find(
+    (row) => expectedIdByValue.get(String(row[naturalColumn])) !== String(row[idColumn])
   );
+  if (conflicting) throw new Error(`DEMO_SEED_NATURAL_KEY_COLLISION: ${table}`);
+}
+
+async function guardCaseInsensitivePair(
+  supabase: SupabaseClient,
+  table: string,
+  leftColumn: string,
+  leftValue: string,
+  rightColumn: string,
+  rightValue: string,
+  expectedId: string
+) {
+  const { data, error } = await supabase
+    .from(table as never)
+    .select("id")
+    .ilike(leftColumn, leftValue)
+    .ilike(rightColumn, rightValue);
+  if (error) throw error;
+  const conflicting = ((data ?? []) as unknown as UnknownRow[]).find(
+    (row) => String(row.id) !== expectedId
+  );
+  if (conflicting) throw new Error(`DEMO_SEED_NATURAL_KEY_COLLISION: ${table}`);
+}
+
+async function guardLineOneRows(
+  supabase: SupabaseClient,
+  table: string,
+  parentColumn: string,
+  expected: readonly { parentId: string; id: string }[]
+) {
+  const { data, error } = await supabase
+    .from(table as never)
+    .select(`id,${parentColumn},line_number`)
+    .in(parentColumn, expected.map((entry) => entry.parentId))
+    .eq("line_number", 1);
+  if (error) throw error;
+  const expectedIdByParent = new Map(expected.map((entry) => [entry.parentId, entry.id]));
+  const conflicting = ((data ?? []) as unknown as UnknownRow[]).find(
+    (row) => expectedIdByParent.get(String(row[parentColumn])) !== String(row.id)
+  );
+  if (conflicting) throw new Error(`DEMO_SEED_NATURAL_KEY_COLLISION: ${table}`);
+}
+
+async function collisionPreflight(supabase: SupabaseClient) {
+  const { ids, clients, product, rfqs, quotes } = DEMO_DATA_MANIFEST;
+  await guardFixedRows(supabase, "clients", "id", clients.map((target) => ({
+    id: target.id,
+    ownsRow: (row: UnknownRow) => markerInField(row, "description")
+  })));
+  await guardFixedRows(supabase, "commerce_client_details", "client_id", clients.map((target) => ({
+    id: target.id,
+    ownsRow: (row: UnknownRow) => markerInField(row, "commercial_notes")
+  })));
   await guardFixedRow(supabase, "commerce_catalog_products", "id", ids.catalogProduct, (row) =>
     markerInField(row, "description")
   );
-  await guardFixedRow(supabase, "commerce_rfqs", "id", ids.rfq, (row) =>
-    markerInObject(row.contact_snapshot)
-  );
-  await guardFixedRow(supabase, "commerce_rfq_items", "id", ids.rfqItem, (row) =>
-    markerInField(row, "description")
-  );
+  await guardFixedRows(supabase, "commerce_rfqs", "id", rfqs.map((rfq) => ({
+    id: rfq.id,
+    ownsRow: (row: UnknownRow) => markerInObject(row.contact_snapshot)
+  })));
+  await guardFixedRows(supabase, "commerce_rfq_items", "id", rfqs.map((rfq) => ({
+    id: rfq.itemId,
+    ownsRow: (row: UnknownRow) => markerInField(row, "description")
+  })));
   await guardFixedRow(supabase, "sourcing_requests", "id", ids.sourcingRequest, (row) =>
     markerInField(row, "notes")
   );
@@ -362,22 +526,32 @@ async function collisionPreflight(supabase: SupabaseClient) {
   await guardFixedRow(supabase, "commercial_price_approvals", "id", ids.priceApproval, (row) =>
     row.mpn === product.mpn && String(row.manufacturer ?? "").includes("DEMO")
   );
-  await guardFixedRow(supabase, "commerce_quotes", "id", ids.quote, (row) =>
-    markerInField(row, "notes")
-  );
-  await guardFixedRow(supabase, "commerce_quote_items", "id", ids.quoteItem, (row) =>
-    markerInField(row, "description")
-  );
+  await guardFixedRows(supabase, "commerce_quotes", "id", quotes.map((quote) => ({
+    id: quote.id,
+    ownsRow: (row: UnknownRow) => markerInField(row, "notes")
+  })));
+  await guardFixedRows(supabase, "commerce_quote_items", "id", quotes.map((quote) => ({
+    id: quote.itemId,
+    ownsRow: (row: UnknownRow) => markerInField(row, "description")
+  })));
 
-  await guardNaturalKey(supabase, "clients", { external_customer_id: customer.externalId }, ids.client);
-  await guardNaturalKey(supabase, "commerce_rfqs", { external_rfq_id: rfq.externalId }, ids.rfq);
-  await guardNaturalKey(supabase, "commerce_rfq_items", { rfq_id: ids.rfq, line_number: 1 }, ids.rfqItem);
-  await guardNaturalKey(
+  await guardNaturalRows(supabase, "clients", "external_customer_id", clients.map((target) => ({ value: target.externalId, id: target.id })));
+  await guardNaturalRows(supabase, "commerce_rfqs", "external_rfq_id", rfqs.map((rfq) => ({ value: rfq.externalId, id: rfq.id })));
+  await guardNaturalRows(supabase, "commerce_quotes", "quote_number", quotes.map((quote) => ({ value: quote.number, id: quote.id })));
+  await guardLineOneRows(supabase, "commerce_rfq_items", "rfq_id", rfqs.map((rfq) => ({ parentId: rfq.id, id: rfq.itemId })));
+  await guardLineOneRows(supabase, "commerce_quote_items", "quote_id", quotes.map((quote) => ({ parentId: quote.id, id: quote.itemId })));
+  await guardCaseInsensitivePair(
     supabase,
     "commerce_catalog_products",
-    { mpn: product.mpn, manufacturer: product.manufacturer },
+    "mpn",
+    product.mpn,
+    "manufacturer",
+    product.manufacturer,
     ids.catalogProduct
   );
+  await readAndValidateSeedQuoteEvents(supabase);
+  await guardNaturalKey(supabase, "commerce_rfqs", { external_rfq_id: rfqs[0].externalId }, ids.rfq);
+  await guardNaturalKey(supabase, "commerce_rfq_items", { rfq_id: ids.rfq, line_number: 1 }, ids.rfqItem);
   await guardNaturalKey(
     supabase,
     "sourcing_requests",
@@ -390,7 +564,6 @@ async function collisionPreflight(supabase: SupabaseClient) {
     { normalized_mpn: product.normalizedMpn, status: "active" },
     ids.priceApproval
   );
-  await guardNaturalKey(supabase, "commerce_quotes", { quote_number: quote.number }, ids.quote);
   await guardNaturalKey(supabase, "commerce_quote_items", { quote_id: ids.quote, line_number: 1 }, ids.quoteItem);
 }
 
@@ -410,20 +583,38 @@ function isSeedOwnedAuthUser(user: DemoAuthUser) {
   return user.user_metadata?.quiksol_demo_seed === DEMO_SEED_MARKER && user.user_metadata?.demo === true;
 }
 
-function parseProvisioningResult(value: unknown) {
+function parseProvisioningResult(value: unknown, person: DemoPerson): DemoProvisioningResult {
   if (!value || typeof value !== "object") throw new Error("DEMO_SEED_PROVISIONING_RESULT_INVALID");
   const row = value as UnknownRow;
   const state = row.state;
   const intentId = row.intent_id;
   const authUserId = row.auth_user_id;
+  const status = row.status;
+  const attemptCount = row.attempt_count;
   if (
     !["NEW", "EXISTING_PENDING", "EXISTING_COMPLETED"].includes(String(state)) ||
     typeof intentId !== "string" ||
-    (authUserId !== null && typeof authUserId !== "string")
+    !provisioningUuidPattern.test(intentId) ||
+    (authUserId !== null &&
+      (typeof authUserId !== "string" || !provisioningUuidPattern.test(authUserId))) ||
+    row.role !== person.technicalRole ||
+    !["pending", "completed"].includes(String(status)) ||
+    typeof attemptCount !== "number" ||
+    !Number.isInteger(attemptCount) ||
+    attemptCount < 1 ||
+    (state === "EXISTING_COMPLETED" && (status !== "completed" || authUserId === null)) ||
+    (state !== "EXISTING_COMPLETED" && (status !== "pending" || authUserId !== null))
   ) {
     throw new Error("DEMO_SEED_PROVISIONING_RESULT_INVALID");
   }
-  return { state: String(state), intentId, authUserId: authUserId as string | null };
+  return {
+    state: state as DemoProvisioningResult["state"],
+    intentId,
+    authUserId: authUserId as string | null,
+    role: person.technicalRole,
+    status: status as DemoProvisioningResult["status"],
+    attemptCount
+  };
 }
 
 async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, userId: string) {
@@ -435,88 +626,302 @@ async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, us
   if (error) throw error;
   if (
     !data ||
-    data.email?.trim().toLowerCase() !== person.email ||
-    data.full_name !== person.fullName ||
+    data.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
     data.role !== person.technicalRole ||
     data.is_active !== true ||
-    data.department !== person.department ||
-    data.region !== person.region ||
-    data.bio !== DEMO_SEED_MARKER ||
-    data.job_title !== person.title
+    data.bio !== DEMO_SEED_MARKER
   ) {
     throw new Error(`DEMO_SEED_PROFILE_MISMATCH: ${person.email}`);
   }
-  return data as UnknownRow;
+  const desired = {
+    full_name: person.fullName,
+    department: person.department,
+    region: person.region,
+    job_title: person.title,
+    business_rank: person.profileBusinessRank
+  };
+  const profileRow = data as UnknownRow;
+  if (Object.entries(desired).every(([field, value]) => profileRow[field] === value)) {
+    return data as UnknownRow;
+  }
+  const updated = await supabase
+    .from("profiles")
+    .update(desired)
+    .eq("id", userId)
+    .eq("bio", DEMO_SEED_MARKER)
+    .eq("role", person.technicalRole)
+    .select("id,email,full_name,role,is_active,department,region,bio,job_title,business_rank")
+    .maybeSingle();
+  if (updated.error || !updated.data ||
+      updated.data.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
+      !Object.entries(desired).every(([field, value]) => (updated.data as UnknownRow | null)?.[field] === value)) {
+    throw updated.error ?? new Error(`DEMO_SEED_PROFILE_RECONCILIATION_FAILED: ${person.email}`);
+  }
+  return updated.data as UnknownRow;
 }
 
-async function ensureDemoUsers(supabase: SupabaseClient, password: string) {
-  const existingUsers = await listAuthUsers(supabase);
+function provisioningArguments(person: DemoPerson) {
+  return {
+    operation_idempotency_key: person.idempotencyKey,
+    requested_email: person.email,
+    requested_full_name: person.fullName,
+    requested_role: person.technicalRole,
+    requested_department: person.department,
+    requested_region: person.region,
+    requested_is_active: true,
+    requested_bio: DEMO_SEED_MARKER,
+    requested_job_title: person.title
+  };
+}
+
+function createDemoUserProvisioningGateway(
+  service: SupabaseClient,
+  adminActor: SupabaseClient,
+  ownerVerifier: SupabaseClient
+): DemoUserProvisioningGateway {
+  return {
+    listAuthUsers: () => listAuthUsers(service),
+    async verifyExistingSeedOwnership(person, user) {
+      const intentId = user.user_metadata?.quiksol_provisioning_intent_id;
+      if (typeof intentId !== "string" || !provisioningUuidPattern.test(intentId)) {
+        throw new Error(`DEMO_SEED_EXISTING_AUTH_USER_PROTECTED: ${person.email}`);
+      }
+      const { data: preview, error: previewError } = await service.rpc(
+        "preview_user_provisioning_reconciliation_v1",
+        { target_intent_id: intentId }
+      );
+      const rows = Array.isArray(preview) ? preview : preview ? [preview] : [];
+      const evidence = rows.length === 1 && rows[0] && typeof rows[0] === "object"
+        ? rows[0] as UnknownRow
+        : null;
+      const { data: profile, error: profileError } = await service
+        .from("profiles")
+        .select("id,email,role,is_active,bio")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (
+        previewError ||
+        profileError ||
+        !evidence ||
+        evidence.intent_id !== intentId ||
+        evidence.technical_auth_user_id !== user.id ||
+        evidence.classification !== "COMPLETED_CONSISTENT" ||
+        evidence.intent_status !== "completed" ||
+        !["USER_METADATA", "BOTH"].includes(String(evidence.locator_channel)) ||
+        !profile ||
+        profile.id !== user.id ||
+        profile.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
+        profile.role !== person.technicalRole ||
+        profile.is_active !== true ||
+        profile.bio !== DEMO_SEED_MARKER
+      ) {
+        throw new Error(`DEMO_SEED_EXISTING_AUTH_USER_PROTECTED: ${person.email}`);
+      }
+    },
+    async getAuthUserById(userId) {
+      const { data, error } = await service.auth.admin.getUserById(userId);
+      if (error || !data.user) throw error ?? new Error("DEMO_SEED_AUTH_USER_MISSING");
+      return data.user;
+    },
+    async beginCliProvisioning(person) {
+      const { data, error } = await service.rpc(
+        "begin_cli_user_provisioning_v2",
+        provisioningArguments(person)
+      );
+      if (error) throw error;
+      return parseProvisioningResult(data, person);
+    },
+    async beginAdminProvisioning(person) {
+      const { data, error } = await adminActor.rpc(
+        "begin_user_provisioning_v2",
+        provisioningArguments(person)
+      );
+      if (error) throw error;
+      return parseProvisioningResult(data, person);
+    },
+    async createAuthUser(person, password, intentId) {
+      return createProvisionedAuthUser(service, {
+        email: person.email,
+        password,
+        user_metadata: {
+          full_name: person.fullName,
+          quiksol_provisioning_intent_id: intentId,
+          quiksol_demo_seed: DEMO_SEED_MARKER,
+          demo: true
+        }
+      });
+    },
+    async authenticateSeedAdmin(person, password, expectedUserId) {
+      const { data, error } = await adminActor.auth.signInWithPassword({
+        email: person.email,
+        password
+      });
+      const user = data.user;
+      if (
+        error ||
+        !data.session?.access_token ||
+        !user ||
+        user.id !== expectedUserId ||
+        user.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
+        !isSeedOwnedAuthUser(user)
+      ) {
+        await adminActor.auth.signOut({ scope: "local" }).catch(() => undefined);
+        throw new Error("DEMO_SEED_ADMIN_AUTH_FAILED");
+      }
+    },
+    async releaseSeedAdminSession() {
+      await adminActor.auth.signOut({ scope: "local" }).catch(() => undefined);
+    },
+    async verifySeedOwnerLogin(person, password, expectedUserId) {
+      try {
+        const { data, error } = await ownerVerifier.auth.signInWithPassword({
+          email: person.email,
+          password
+        });
+        const user = data.user;
+        if (
+          error ||
+          !data.session?.access_token ||
+          !user ||
+          user.id !== expectedUserId ||
+          user.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
+          !isSeedOwnedAuthUser(user)
+        ) {
+          throw new Error("DEMO_SEED_OWNER_AUTH_FAILED");
+        }
+      } finally {
+        await ownerVerifier.auth.signOut({ scope: "local" }).catch(() => undefined);
+      }
+    },
+    async ensureSeedProfile(person, userId) {
+      await profileForPerson(service, person, userId);
+    }
+  };
+}
+
+export async function ensureDemoUsersWithGateway(
+  gateway: DemoUserProvisioningGateway,
+  password: string,
+  ownerPassword: string
+) {
+  const existingUsers = await gateway.listAuthUsers();
+  const usersByEmail = new Map<string, DemoAuthUser>();
   const personIds = {} as PersonIds;
 
   // Validate the whole Auth namespace before creating the first user, so a
   // protected collision cannot leave a partially provisioned organization.
   for (const person of DEMO_DATA_MANIFEST.people) {
-    const matches = existingUsers.filter((user) => user.email?.trim().toLowerCase() === person.email);
+    const normalizedEmail = person.email.trim().toLowerCase();
+    const matches = existingUsers.filter((user) => user.email?.trim().toLowerCase() === normalizedEmail);
     if (matches.length > 1) throw new Error(`DEMO_SEED_DUPLICATE_AUTH_EMAIL: ${person.email}`);
     if (matches[0] && !isSeedOwnedAuthUser(matches[0])) {
       throw new Error(`DEMO_SEED_EXISTING_AUTH_USER_PROTECTED: ${person.email}`);
     }
+    if (matches[0]) {
+      await gateway.verifyExistingSeedOwnership(person, matches[0]);
+      usersByEmail.set(normalizedEmail, matches[0]);
+    }
   }
 
-  for (const person of DEMO_DATA_MANIFEST.people) {
-    const matches = existingUsers.filter((user) => user.email?.trim().toLowerCase() === person.email);
-    let user = matches[0];
+  async function ensurePerson(
+    person: DemoPerson,
+    beginProvisioning: (target: DemoPerson) => Promise<DemoProvisioningResult>,
+    authPassword = password,
+    reconcileProfile = true
+  ) {
+    const normalizedEmail = person.email.trim().toLowerCase();
+    let user = usersByEmail.get(normalizedEmail);
 
     if (!user) {
-      const { data, error } = await supabase.rpc("begin_cli_user_provisioning_v2", {
-        operation_idempotency_key: person.idempotencyKey,
-        requested_email: person.email,
-        requested_full_name: person.fullName,
-        requested_role: person.technicalRole,
-        requested_department: person.department,
-        requested_region: person.region,
-        requested_is_active: true,
-        requested_bio: DEMO_SEED_MARKER,
-        requested_job_title: person.title
-      });
-      if (error) throw error;
-      const provisioning = parseProvisioningResult(data);
+      const provisioning = await beginProvisioning(person);
 
       if (provisioning.state === "EXISTING_COMPLETED") {
         if (!provisioning.authUserId) throw new Error("DEMO_SEED_COMPLETED_INTENT_WITHOUT_USER");
-        const result = await supabase.auth.admin.getUserById(provisioning.authUserId);
-        if (result.error || !result.data.user) throw result.error ?? new Error("DEMO_SEED_AUTH_USER_MISSING");
-        user = result.data.user;
-        if (user.email?.trim().toLowerCase() !== person.email || !isSeedOwnedAuthUser(user)) {
-          throw new Error(`DEMO_SEED_COMPLETED_INTENT_NOT_OWNED: ${person.email}`);
-        }
+        user = await gateway.getAuthUserById(provisioning.authUserId);
       } else {
-        user = await createProvisionedAuthUser(supabase, {
-          email: person.email,
-          password,
-          user_metadata: {
-            full_name: person.fullName,
-            quiksol_provisioning_intent_id: provisioning.intentId,
-            quiksol_demo_seed: DEMO_SEED_MARKER,
-            demo: true
+        try {
+          user = await gateway.createAuthUser(person, authPassword, provisioning.intentId);
+        } catch {
+          const recovery = await beginProvisioning(person);
+          if (recovery.state !== "EXISTING_COMPLETED" || !recovery.authUserId) {
+            throw new Error(`DEMO_SEED_PROVISIONING_RETRYABLE: ${person.email}`);
           }
-        });
+          user = await gateway.getAuthUserById(recovery.authUserId);
+        }
       }
+      usersByEmail.set(normalizedEmail, user);
     }
 
-    if (!user || !isSeedOwnedAuthUser(user)) throw new Error(`DEMO_SEED_AUTH_OWNERSHIP_FAILED: ${person.email}`);
-    const profile = await profileForPerson(supabase, person, user.id);
-    if (profile.business_rank !== person.profileBusinessRank) {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ business_rank: person.profileBusinessRank })
-        .eq("id", user.id);
-      if (error) throw error;
+    if (
+      user.email?.trim().toLowerCase() !== normalizedEmail ||
+      !isSeedOwnedAuthUser(user)
+    ) {
+      throw new Error(`DEMO_SEED_AUTH_OWNERSHIP_FAILED: ${person.email}`);
     }
     personIds[person.key] = user.id;
+    if (reconcileProfile) await gateway.ensureSeedProfile(person, user.id);
+  }
+
+  const [olivia, ...team] = DEMO_DATA_MANIFEST.people;
+  const jason = team.find((person) => person.key === "jason");
+  if (!jason) throw new Error("DEMO_SEED_OWNER_MISSING");
+  const owner = jason;
+  const remainingTeam = team.filter((person) => person.key !== "jason");
+  await ensurePerson(olivia, (person) => gateway.beginCliProvisioning(person), password, false);
+
+  const needsAdminProvisioning = team.some(
+    (person) => !usersByEmail.has(person.email.trim().toLowerCase())
+  );
+
+  async function provisionVerifiedTeam() {
+    await ensurePerson(
+      owner,
+      (target) => gateway.beginAdminProvisioning(target),
+      ownerPassword,
+      false
+    );
+    if (!personIds.jason) throw new Error("DEMO_SEED_OWNER_MISSING");
+    await gateway.verifySeedOwnerLogin(owner, ownerPassword, personIds.jason);
+
+    // No seed-owned profile or downstream record is reconciled until both
+    // privileged demo identities have authenticated successfully.
+    await gateway.ensureSeedProfile(olivia, personIds.olivia);
+    await gateway.ensureSeedProfile(owner, personIds.jason);
+    for (const person of remainingTeam) {
+      await ensurePerson(
+        person,
+        (target) => gateway.beginAdminProvisioning(target),
+        password
+      );
+    }
+  }
+
+  if (needsAdminProvisioning) {
+    try {
+      await gateway.authenticateSeedAdmin(olivia, password, personIds.olivia);
+      await provisionVerifiedTeam();
+    } finally {
+      await gateway.releaseSeedAdminSession();
+    }
+  } else {
+    await provisionVerifiedTeam();
   }
 
   return personIds;
+}
+
+async function ensureDemoUsers(
+  service: SupabaseClient,
+  adminActor: SupabaseClient,
+  ownerVerifier: SupabaseClient,
+  password: string,
+  ownerPassword: string
+) {
+  return ensureDemoUsersWithGateway(
+    createDemoUserProvisioningGateway(service, adminActor, ownerVerifier),
+    password,
+    ownerPassword
+  );
 }
 
 function sameOrganizationValues(row: UnknownRow, values: UnknownRow) {
@@ -531,9 +936,35 @@ function sameOrganizationValues(row: UnknownRow, values: UnknownRow) {
   ].every((field) => (row[field] ?? null) === (values[field] ?? null));
 }
 
+export function demoPeopleInHierarchyOrder() {
+  const byKey = new Map(DEMO_DATA_MANIFEST.people.map((person) => [person.key, person]));
+  const depthByKey = new Map<DemoPerson["key"], number>();
+
+  function depth(person: DemoPerson, lineage = new Set<DemoPerson["key"]>()): number {
+    const cached = depthByKey.get(person.key);
+    if (cached !== undefined) return cached;
+    if (!person.managerKey) {
+      depthByKey.set(person.key, 0);
+      return 0;
+    }
+    if (lineage.has(person.key)) throw new Error("DEMO_SEED_ORGANIZATION_CYCLE");
+    const manager = byKey.get(person.managerKey);
+    if (!manager) throw new Error("DEMO_SEED_ORGANIZATION_MANAGER_MISSING");
+    const nextLineage = new Set(lineage).add(person.key);
+    const value = depth(manager, nextLineage) + 1;
+    depthByKey.set(person.key, value);
+    return value;
+  }
+
+  return [...DEMO_DATA_MANIFEST.people].sort(
+    (left, right) => depth(left) - depth(right)
+      || DEMO_DATA_MANIFEST.people.indexOf(left) - DEMO_DATA_MANIFEST.people.indexOf(right)
+  );
+}
+
 async function ensureOrganization(supabase: SupabaseClient, personIds: PersonIds) {
-  const updatedBy = personIds.olivia;
-  for (const person of DEMO_DATA_MANIFEST.people) {
+  const updatedBy = personIds.jason;
+  for (const person of demoPeopleInHierarchyOrder()) {
     const values: UnknownRow = {
       manager_id: person.managerKey ? personIds[person.managerKey] : null,
       business_title: person.title,
@@ -566,9 +997,168 @@ async function ensureOrganization(supabase: SupabaseClient, personIds: PersonIds
   }
 }
 
+async function ensureCompensations(supabase: SupabaseClient, personIds: PersonIds) {
+  const updatedBy = personIds.jason;
+  for (const compensation of DEMO_DATA_MANIFEST.compensations) {
+    const employeeId = personIds[compensation.personKey];
+    if (!employeeId) throw new Error(`DEMO_SEED_COMPENSATION_EMPLOYEE_MISSING: ${compensation.personKey}`);
+    const desired = {
+      amount: compensation.amount,
+      currency: compensation.currency,
+      periodicity: compensation.periodicity,
+      updated_by: updatedBy
+    };
+    const { data, error } = await supabase
+      .from("employee_compensation")
+      .select("employee_id,amount,currency,periodicity,updated_by")
+      .eq("employee_id", employeeId)
+      .maybeSingle();
+    if (error) throw error;
+
+    const matches = data
+      && Number(data.amount) === desired.amount
+      && data.currency === desired.currency
+      && data.periodicity === desired.periodicity
+      && data.updated_by === desired.updated_by;
+    if (matches) continue;
+
+    if (!data) {
+      const inserted = await supabase
+        .from("employee_compensation")
+        .insert({ employee_id: employeeId, ...desired, updated_at: new Date().toISOString() });
+      if (inserted.error) throw inserted.error;
+      continue;
+    }
+
+    const updated = await supabase
+      .from("employee_compensation")
+      .update({ ...desired, updated_at: new Date().toISOString() })
+      .eq("employee_id", employeeId)
+      .select("employee_id,amount,currency,periodicity,updated_by")
+      .maybeSingle();
+    if (
+      updated.error ||
+      !updated.data ||
+      Number(updated.data.amount) !== desired.amount ||
+      updated.data.currency !== desired.currency ||
+      updated.data.periodicity !== desired.periodicity ||
+      updated.data.updated_by !== desired.updated_by
+    ) {
+      throw updated.error ?? new Error(`DEMO_SEED_COMPENSATION_RECONCILIATION_FAILED: ${compensation.personKey}`);
+    }
+  }
+}
+
 async function upsertOrThrow(supabase: SupabaseClient, table: string, row: UnknownRow, onConflict: string) {
   const { error } = await supabase.from(table as never).upsert(row, { onConflict });
   if (error) throw new Error(`DEMO_SEED_UPSERT_FAILED: ${table}: ${error.message}`);
+}
+
+export type DemoQuoteEventSeed = Readonly<{
+  key: string;
+  quoteId: string;
+  quoteNumber: string;
+  sellerKey: DemoPersonKey;
+  eventType: "created" | "sent" | "accepted" | "rejected" | "expired";
+  previousStatus: DemoQuoteStatus | null;
+  newStatus: DemoQuoteStatus;
+  createdAt: string;
+}>;
+
+function addMinutesToIso(iso: string, minutes: number) {
+  return new Date(Date.parse(iso) + minutes * 60_000).toISOString();
+}
+
+export function buildDemoQuoteEventSeeds(): DemoQuoteEventSeed[] {
+  const events: DemoQuoteEventSeed[] = [];
+  for (const quote of DEMO_DATA_MANIFEST.quotes) {
+    events.push(Object.freeze({
+      key: `${quote.number}:created`,
+      quoteId: quote.id,
+      quoteNumber: quote.number,
+      sellerKey: quote.sellerKey,
+      eventType: "created",
+      previousStatus: null,
+      newStatus: "draft",
+      createdAt: quote.createdAt
+    }));
+    if (quote.status === "draft") continue;
+
+    events.push(Object.freeze({
+      key: `${quote.number}:sent`,
+      quoteId: quote.id,
+      quoteNumber: quote.number,
+      sellerKey: quote.sellerKey,
+      eventType: "sent",
+      previousStatus: "draft",
+      newStatus: "sent",
+      createdAt: quote.sentAt ?? addMinutesToIso(quote.createdAt, 5)
+    }));
+    if (quote.status === "sent") continue;
+
+    events.push(Object.freeze({
+      key: `${quote.number}:${quote.status}`,
+      quoteId: quote.id,
+      quoteNumber: quote.number,
+      sellerKey: quote.sellerKey,
+      eventType: quote.status,
+      previousStatus: "sent",
+      newStatus: quote.status,
+      createdAt: addMinutesToIso(quote.createdAt, 10)
+    }));
+  }
+  return events;
+}
+
+export function validateExistingDemoQuoteEvents(
+  existingEvents: readonly UnknownRow[],
+  personIds?: PersonIds
+) {
+  const quoteById = new Map(DEMO_DATA_MANIFEST.quotes.map((target) => [target.id, target]));
+  const expectedEventByKey = new Map(buildDemoQuoteEventSeeds().map((event) => [event.key, event]));
+  const existingSeedEventKeys = new Set<string>();
+
+  for (const rawEvent of existingEvents) {
+    if (!markerInObject(rawEvent.metadata)) {
+      throw new Error(`DEMO_SEED_NON_DEMO_EVENT_COLLISION: ${String(rawEvent.quote_id)}`);
+    }
+    const targetQuote = quoteById.get(String(rawEvent.quote_id));
+    if (!targetQuote) throw new Error("DEMO_SEED_EVENT_QUOTE_MISMATCH");
+    const metadata = rawEvent.metadata as UnknownRow;
+    const key = typeof metadata.seed_event_key === "string"
+      ? metadata.seed_event_key
+      : `${targetQuote.number}:${String(rawEvent.event_type)}`;
+    const expected = expectedEventByKey.get(key);
+    if (
+      !expected ||
+      existingSeedEventKeys.has(key) ||
+      String(rawEvent.quote_id) !== expected.quoteId ||
+      rawEvent.event_type !== expected.eventType ||
+      (rawEvent.previous_status ?? null) !== expected.previousStatus ||
+      rawEvent.new_status !== expected.newStatus ||
+      (personIds !== undefined && rawEvent.actor_id !== personIds[expected.sellerKey]) ||
+      Date.parse(String(rawEvent.created_at)) !== Date.parse(expected.createdAt)
+    ) {
+      throw new Error(`DEMO_SEED_IMMUTABLE_EVENT_MISMATCH: ${key}`);
+    }
+    existingSeedEventKeys.add(key);
+  }
+  return existingSeedEventKeys;
+}
+
+async function readAndValidateSeedQuoteEvents(
+  supabase: SupabaseClient,
+  personIds?: PersonIds
+) {
+  const { data, error } = await supabase
+    .from("commerce_quote_events")
+    .select("quote_id,actor_id,event_type,previous_status,new_status,metadata,created_at")
+    .in("quote_id", DEMO_DATA_MANIFEST.quotes.map((target) => target.id));
+  if (error) throw error;
+  return validateExistingDemoQuoteEvents(
+    (data ?? []) as unknown as UnknownRow[],
+    personIds
+  );
 }
 
 async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) {
@@ -576,6 +1166,8 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
   const { ids, customer, product, supplierOffer, rfq, quote, fixedTimestamp, validUntil } = manifest;
   const maya = personIds.maya;
   const lin = personIds.lin;
+  const clientByKey = new Map(manifest.clients.map((target) => [target.key, target]));
+  const rfqByKey = new Map(manifest.rfqs.map((target) => [target.key, target]));
 
   await upsertOrThrow(
     supabase,
@@ -613,6 +1205,46 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
     },
     "client_id"
   );
+
+  for (const target of manifest.clients.slice(1)) {
+    const sellerId = personIds[target.sellerKey];
+    await upsertOrThrow(
+      supabase,
+      "clients",
+      {
+        id: target.id,
+        name: target.name,
+        description: target.description,
+        industry: target.industry,
+        region: target.region,
+        website: null,
+        status: "active",
+        created_by: sellerId,
+        updated_by: sellerId,
+        external_customer_id: target.externalId,
+        assigned_salesperson_id: sellerId,
+        created_at: fixedTimestamp,
+        archived_at: null
+      },
+      "id"
+    );
+    await upsertOrThrow(
+      supabase,
+      "commerce_client_details",
+      {
+        client_id: target.id,
+        legal_company_name: target.name,
+        contact_name: target.contactName,
+        contact_email: target.contactEmail,
+        country: target.country,
+        city: target.city,
+        preferred_language: target.language,
+        commercial_notes: `${DEMO_SEED_MARKER}: fictional contact; never use for real outreach.`,
+        created_at: fixedTimestamp
+      },
+      "client_id"
+    );
+  }
   await upsertOrThrow(
     supabase,
     "commerce_rfqs",
@@ -652,6 +1284,51 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
     },
     "id"
   );
+
+  for (const targetRfq of manifest.rfqs.slice(1)) {
+    const targetClient = clientByKey.get(targetRfq.clientKey);
+    if (!targetClient) throw new Error(`DEMO_SEED_RFQ_CLIENT_MISSING: ${targetRfq.key}`);
+    const sellerId = personIds[targetRfq.sellerKey];
+    await upsertOrThrow(
+      supabase,
+      "commerce_rfqs",
+      {
+        id: targetRfq.id,
+        external_rfq_id: targetRfq.externalId,
+        request_fingerprint: targetRfq.fingerprint,
+        client_id: targetClient.id,
+        contact_snapshot: {
+          demo: true,
+          seed_marker: DEMO_SEED_MARKER,
+          company_name: targetClient.name,
+          contact_name: targetClient.contactName,
+          contact_email: targetClient.contactEmail,
+          preferred_language: targetClient.language
+        },
+        assigned_salesperson_id: sellerId,
+        status: "quoted",
+        source: "quiksol-web",
+        created_at: fixedTimestamp
+      },
+      "id"
+    );
+    await upsertOrThrow(
+      supabase,
+      "commerce_rfq_items",
+      {
+        id: targetRfq.itemId,
+        rfq_id: targetRfq.id,
+        line_number: 1,
+        mpn: targetRfq.mpn,
+        manufacturer: targetRfq.manufacturer,
+        description: targetRfq.description,
+        quantity: targetRfq.quantity,
+        target_price: targetRfq.targetPrice,
+        created_at: fixedTimestamp
+      },
+      "id"
+    );
+  }
   await upsertOrThrow(
     supabase,
     "sourcing_requests",
@@ -807,57 +1484,111 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
     "id"
   );
 
-  const { data: existingEvents, error: eventReadError } = await supabase
-    .from("commerce_quote_events")
-    .select("event_type,metadata")
-    .eq("quote_id", ids.quote);
-  if (eventReadError) throw eventReadError;
-  const seededEventTypes = new Set(
-    (existingEvents ?? [])
-      .filter((event) => markerInObject(event.metadata))
-      .map((event) => event.event_type)
-  );
-  const events = [
-    { event_type: "created", previous_status: null, new_status: "draft", created_at: fixedTimestamp },
-    {
-      event_type: "sent",
-      previous_status: "draft",
-      new_status: "sent",
-      created_at: "2026-08-29T12:05:00.000Z"
-    },
-    {
-      event_type: "accepted",
-      previous_status: "sent",
-      new_status: "accepted",
-      created_at: "2026-08-29T12:10:00.000Z"
+  for (const targetQuote of manifest.quotes.slice(1)) {
+    const targetClient = clientByKey.get(targetQuote.clientKey);
+    const targetRfq = rfqByKey.get(targetQuote.rfqKey);
+    if (!targetClient || !targetRfq) {
+      throw new Error(`DEMO_SEED_QUOTE_RELATION_MISSING: ${targetQuote.key}`);
     }
-  ].filter((event) => !seededEventTypes.has(event.event_type));
-  if (events.length) {
+    const sellerId = personIds[targetQuote.sellerKey];
+    await upsertOrThrow(
+      supabase,
+      "commerce_quotes",
+      {
+        id: targetQuote.id,
+        quote_number: targetQuote.number,
+        rfq_id: targetRfq.id,
+        client_id: targetClient.id,
+        seller_id: sellerId,
+        status: targetQuote.status,
+        currency: "USD",
+        subtotal: targetQuote.subtotal,
+        tax_rate: targetQuote.taxRate,
+        tax: targetQuote.tax,
+        total: targetQuote.total,
+        valid_until: targetQuote.validUntil,
+        notes: `${DEMO_SEED_MARKER}: deterministic fictional quote for employee analytics.`,
+        commercial_terms: "DEMO only. No commercial commitment or fulfillment obligation.",
+        version: targetQuote.version,
+        created_at: targetQuote.createdAt,
+        sent_at: targetQuote.sentAt
+      },
+      "id"
+    );
+    await upsertOrThrow(
+      supabase,
+      "commerce_quote_items",
+      {
+        id: targetQuote.itemId,
+        quote_id: targetQuote.id,
+        line_number: 1,
+        product_id: null,
+        mpn: targetRfq.mpn,
+        manufacturer: targetRfq.manufacturer,
+        description: targetRfq.description,
+        quantity: targetQuote.quantity,
+        authorized_unit_price: Number((targetQuote.unitPrice * 0.82).toFixed(4)),
+        seller_unit_price: targetQuote.unitPrice,
+        discount_percent: 0,
+        currency: "USD",
+        line_total: targetQuote.subtotal,
+        availability_revision: 1,
+        sourcing_offer_id: null,
+        created_at: targetQuote.createdAt
+      },
+      "id"
+    );
+  }
+
+  const expectedEvents = buildDemoQuoteEventSeeds();
+  const existingSeedEventKeys = await readAndValidateSeedQuoteEvents(supabase, personIds);
+
+  const missingEvents = expectedEvents.filter((event) => !existingSeedEventKeys.has(event.key));
+  if (missingEvents.length) {
     const { error } = await supabase.from("commerce_quote_events").insert(
-      events.map((event) => ({
-        ...event,
-        quote_id: ids.quote,
-        actor_id: maya,
-        metadata: { demo: true, seed_marker: DEMO_SEED_MARKER, deterministic: true }
+      missingEvents.map((event) => ({
+        quote_id: event.quoteId,
+        actor_id: personIds[event.sellerKey],
+        event_type: event.eventType,
+        previous_status: event.previousStatus,
+        new_status: event.newStatus,
+        created_at: event.createdAt,
+        metadata: {
+          demo: true,
+          seed_marker: DEMO_SEED_MARKER,
+          deterministic: true,
+          seed_event_key: event.key,
+          quote_number: event.quoteNumber
+        }
       }))
     );
     if (error) throw error;
   }
 }
 
-export async function applyDemoSeed(supabase: SupabaseClient, password: string) {
+export async function applyDemoSeed(
+  service: SupabaseClient,
+  adminActor: SupabaseClient,
+  ownerVerifier: SupabaseClient,
+  password: string,
+  ownerPassword: string
+) {
   validateDemoManifest();
-  await schemaPreflight(supabase);
-  await collisionPreflight(supabase);
-  const personIds = await ensureDemoUsers(supabase, password);
-  await ensureOrganization(supabase, personIds);
-  await seedBusinessData(supabase, personIds);
+  await schemaPreflight(service);
+  await collisionPreflight(service);
+  const personIds = await ensureDemoUsers(service, adminActor, ownerVerifier, password, ownerPassword);
+  await ensureOrganization(service, personIds);
+  await ensureCompensations(service, personIds);
+  await seedBusinessData(service, personIds);
   return {
     marker: DEMO_SEED_MARKER,
     users: DEMO_DATA_MANIFEST.people.length,
-    customer: DEMO_DATA_MANIFEST.customer.externalId,
-    rfq: DEMO_DATA_MANIFEST.rfq.externalId,
-    quote: DEMO_DATA_MANIFEST.quote.number,
+    clients: DEMO_DATA_MANIFEST.clients.length,
+    rfqs: DEMO_DATA_MANIFEST.rfqs.length,
+    quotes: DEMO_DATA_MANIFEST.quotes.length,
+    quoteEvents: buildDemoQuoteEventSeeds().length,
+    compensations: DEMO_DATA_MANIFEST.compensations.length,
+    ownerLoginValidated: true,
     expectedMetrics: DEMO_DATA_MANIFEST.expectedMetrics
   };
 }
@@ -871,11 +1602,16 @@ async function main() {
 
   loadEnvFile(".env.local");
   loadEnvFile(".env");
-  const { supabaseUrl, serviceRoleKey } = serviceConfiguration();
-  const { password, projectRef } = validateDemoApplyGuards(options, process.env, supabaseUrl);
-  const supabase = createClient(supabaseUrl, serviceRoleKey, serverSupabaseClientOptions());
+  const linkedRefPath = path.resolve(process.cwd(), "supabase/.temp/project-ref");
+  if (!fs.existsSync(linkedRefPath)) throw new Error("DEMO_SEED_LINKED_PROJECT_REF_REQUIRED");
+  validateLinkedDemoProjectRef(fs.readFileSync(linkedRefPath, "utf8"));
+  const { supabaseUrl, serviceRoleKey, publishableKey } = serviceConfiguration();
+  const { password, ownerPassword, projectRef } = validateDemoApplyGuards(options, process.env, supabaseUrl);
+  const service = createClient(supabaseUrl, serviceRoleKey, serverSupabaseClientOptions());
+  const adminActor = createClient(supabaseUrl, publishableKey, serverSupabaseClientOptions());
+  const ownerVerifier = createClient(supabaseUrl, publishableKey, serverSupabaseClientOptions());
   console.log(`Applying ${DEMO_SEED_MARKER} to explicitly allowlisted project ${projectRef}.`);
-  const result = await applyDemoSeed(supabase, password);
+  const result = await applyDemoSeed(service, adminActor, ownerVerifier, password, ownerPassword);
   console.log(JSON.stringify({ mode: "apply", ...result }, null, 2));
 }
 
@@ -888,6 +1624,7 @@ async function runCli() {
     process.exitCode = 1;
   } finally {
     delete process.env[DEMO_USER_PASSWORD_ENV];
+    delete process.env[DEMO_OWNER_PASSWORD_ENV];
   }
 }
 

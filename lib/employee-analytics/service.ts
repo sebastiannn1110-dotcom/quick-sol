@@ -8,6 +8,7 @@ import type {
   AnalyticsQuoteEvent,
   AnalyticsQuoteItem,
   AnalyticsScope,
+  EmployeeAnalyticsFilters,
   EmployeeAnalyticsPayload
 } from "./contracts";
 
@@ -21,19 +22,22 @@ function scopeForRole(role: AuthContext["profile"]["role"]): AnalyticsScope {
 
 function emptyAnalytics(
   context: AuthContext,
-  employees: AnalyticsEmployee[]
+  employees: AnalyticsEmployee[],
+  filters: EmployeeAnalyticsFilters
 ): EmployeeAnalyticsPayload {
   return buildEmployeeAnalytics({
     scope: scopeForRole(context.profile.role),
     employees,
     quotes: [],
     items: [],
-    events: []
+    events: [],
+    filters
   });
 }
 
 export async function loadEmployeeAnalytics(
-  context: AuthContext
+  context: AuthContext,
+  filters: EmployeeAnalyticsFilters = {}
 ): Promise<EmployeeAnalyticsPayload> {
   const directory = await loadOrganizationDirectory(context);
   const visibleIds = analyticsVisibleEmployeeIds(directory.actor, directory.members);
@@ -41,14 +45,17 @@ export async function loadEmployeeAnalytics(
     .filter((member) => visibleIds.has(member.profileId))
     .map((member) => ({
       employeeId: member.profileId,
+      managerId: member.managerId,
       name: member.name,
       businessTitle: member.businessTitle,
       businessRank: member.businessRank,
+      department: member.department,
+      country: member.country,
       region: member.region,
       avatarPath: member.avatarPath
     }));
 
-  if (!context.supabase || !employees.length) return emptyAnalytics(context, employees);
+  if (!context.supabase || !employees.length) return emptyAnalytics(context, employees, filters);
 
   const employeeIds = employees.map((employee) => employee.employeeId);
   const quotesResult = await context.supabase
@@ -67,7 +74,7 @@ export async function loadEmployeeAnalytics(
     createdAt: String(row.created_at),
     sentAt: typeof row.sent_at === "string" ? row.sent_at : null
   }));
-  if (!quotes.length) return emptyAnalytics(context, employees);
+  if (!quotes.length) return emptyAnalytics(context, employees, filters);
 
   const quoteIds = quotes.map((quote) => quote.id);
   const [itemsResult, eventsResult] = await Promise.all([
@@ -96,6 +103,7 @@ export async function loadEmployeeAnalytics(
     employees,
     quotes,
     items,
-    events
+    events,
+    filters
   });
 }

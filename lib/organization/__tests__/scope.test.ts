@@ -87,6 +87,7 @@ describe("organization scopes", () => {
     expect(canReadEmployeeCompensation("admin", "owner")).toBe(true);
     expect(canReadEmployeeCompensation("admin", "executive")).toBe(false);
     expect(canReadEmployeeCompensation("manager", "owner")).toBe(false);
+    expect(canReadEmployeeCompensation("employee", "owner")).toBe(false);
     expect(canReadEmployeeCompensation("super_admin_dev", null)).toBe(true);
   });
 });
