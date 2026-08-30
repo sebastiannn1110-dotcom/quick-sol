@@ -610,7 +610,7 @@ export default function TeamStructure() {
           {selected ? (
             <div className="space-y-5">
               <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3"><UserAvatar name={selected.name} avatarPath={selected.avatarPath} size="lg" /><div><h2 className="text-xl font-semibold text-slate-950">{selected.name}</h2><p className="text-sm text-slate-500">{selected.email}</p><p className="mt-1 text-sm font-semibold text-brand-700">{selected.businessTitle || copy.titlePending}</p></div></div>
+                <div className="flex items-start gap-4"><UserAvatar name={selected.name} avatarPath={selected.avatarPath} size="xl" /><div className="min-w-0"><h2 className="text-xl font-semibold text-slate-950">{selected.name}</h2><p className="break-all text-sm text-slate-500">{selected.email}</p><p className="mt-1 text-sm font-semibold text-brand-700">{selected.businessTitle || copy.titlePending}</p></div></div>
                 {selected.canEdit && !editing ? <button type="button" onClick={beginEdit} className="focus-ring inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-300 text-slate-700" aria-label={copy.editMember}><Pencil className="h-4 w-4" /></button> : null}
               </div>
 

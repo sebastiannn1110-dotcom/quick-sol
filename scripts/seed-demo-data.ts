@@ -187,7 +187,9 @@ export function buildDemoDryRunPlan() {
     })),
     records: {
       employees: manifest.people.length,
+      employeePhotos: manifest.people.filter((person) => Boolean(person.media.localPath)).length,
       clients: manifest.clients.length,
+      companyPhotos: manifest.clients.filter((target) => Boolean(target.media.localPath)).length,
       rfqs: manifest.rfqs.length,
       compensations: manifest.compensations.length,
       quotes: manifest.quotes.length,
@@ -620,7 +622,7 @@ function parseProvisioningResult(value: unknown, person: DemoPerson): DemoProvis
 async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, userId: string) {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,email,full_name,role,is_active,department,region,bio,job_title,business_rank")
+    .select("id,email,full_name,role,is_active,department,region,bio,job_title,business_rank,avatar_path")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
@@ -638,7 +640,8 @@ async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, us
     department: person.department,
     region: person.region,
     job_title: person.title,
-    business_rank: person.profileBusinessRank
+    business_rank: person.profileBusinessRank,
+    avatar_path: person.media.localPath
   };
   const profileRow = data as UnknownRow;
   if (Object.entries(desired).every(([field, value]) => profileRow[field] === value)) {
@@ -650,7 +653,7 @@ async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, us
     .eq("id", userId)
     .eq("bio", DEMO_SEED_MARKER)
     .eq("role", person.technicalRole)
-    .select("id,email,full_name,role,is_active,department,region,bio,job_title,business_rank")
+    .select("id,email,full_name,role,is_active,department,region,bio,job_title,business_rank,avatar_path")
     .maybeSingle();
   if (updated.error || !updated.data ||
       updated.data.email?.trim().toLowerCase() !== person.email.trim().toLowerCase() ||
@@ -1178,6 +1181,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
       description: customer.description,
       industry: customer.industry,
       region: customer.region,
+      logo_path: customer.media.localPath,
       website: null,
       status: "active",
       created_by: maya,
@@ -1217,6 +1221,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
         description: target.description,
         industry: target.industry,
         region: target.region,
+        logo_path: target.media.localPath,
         website: null,
         status: "active",
         created_by: sellerId,
@@ -1583,7 +1588,9 @@ export async function applyDemoSeed(
   return {
     marker: DEMO_SEED_MARKER,
     users: DEMO_DATA_MANIFEST.people.length,
+    employeePhotos: DEMO_DATA_MANIFEST.people.length,
     clients: DEMO_DATA_MANIFEST.clients.length,
+    companyPhotos: DEMO_DATA_MANIFEST.clients.length,
     rfqs: DEMO_DATA_MANIFEST.rfqs.length,
     quotes: DEMO_DATA_MANIFEST.quotes.length,
     quoteEvents: buildDemoQuoteEventSeeds().length,

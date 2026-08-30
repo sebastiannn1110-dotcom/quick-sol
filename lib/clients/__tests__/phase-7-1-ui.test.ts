@@ -32,7 +32,12 @@ describe("Phase 7.1 shared client and opportunity UI", () => {
     expect(source("components/opportunities/OpportunityTable.tsx")).toContain("lg:hidden");
     expect(source("components/opportunities/OpportunityTable.tsx")).toContain("hidden overflow-x-auto lg:block");
     expect(source("components/clients/ClientGrid.tsx")).toContain("sm:grid-cols-2");
-    expect(source("components/clients/ClientCard.tsx")).toContain("object-contain");
+    const clientCard = source("components/clients/ClientCard.tsx");
+    const clientDetail = source("app/clients/[clientId]/page.tsx");
+    expect(clientCard).toContain("object-cover");
+    expect(clientCard).toContain("client.industry");
+    expect(clientCard).toContain("client.region");
+    expect(clientDetail).toContain("object-cover");
   });
 
   it("translates client and opportunity navigation in ES, EN and ZH", () => {
@@ -42,5 +47,8 @@ describe("Phase 7.1 shared client and opportunity UI", () => {
     expect(translate("nav.opportunities", "es")).toBe("Oportunidades");
     expect(translate("nav.opportunities", "en")).toBe("Opportunities");
     expect(translate("nav.opportunities", "zh")).toBe("销售机会");
+    expect(translate("adminClient.logo", "es")).toBe("Imagen de empresa");
+    expect(translate("adminClient.logo", "en")).toBe("Company image");
+    expect(translate("adminClient.logo", "zh")).toBe("公司图片");
   });
 });

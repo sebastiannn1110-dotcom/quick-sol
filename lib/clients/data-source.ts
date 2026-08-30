@@ -17,6 +17,7 @@ import {
 
 const CLIENT_SELECT = "id,name,description,industry,region,website,logo_path,status,created_at,updated_at,archived_at";
 const ASSIGNMENT_SELECT = "id,client_id,upload_batch_id,assigned_at,upload_batches(id,original_file_name,detected_category,status,total_rows,warning_count,created_at,archived_at)";
+const LOCAL_DEMO_COMPANY_IMAGE_PATTERN = /^\/?demo\/companies\/[a-z0-9]+(?:-[a-z0-9]+)*\.webp$/;
 
 type ClientRow = {
   id: string;
@@ -59,6 +60,14 @@ type ClientListOptions = {
   includeArchived?: boolean;
   limit?: number;
 };
+
+export function resolveClientLogoUrl(clientId: string, logoPath: string | null) {
+  if (!logoPath) return null;
+  if (LOCAL_DEMO_COMPANY_IMAGE_PATTERN.test(logoPath)) {
+    return logoPath.startsWith("/") ? logoPath : `/${logoPath}`;
+  }
+  return `/api/clients/${encodeURIComponent(clientId)}/image?kind=logo`;
+}
 
 async function loadClientRows(supabase: SupabaseClient, options: ClientListOptions) {
   let query = supabase
@@ -209,7 +218,7 @@ export async function listClientSummaries(
       industry: client.industry,
       region: client.region,
       website: client.website,
-      logoUrl: client.logo_path ? `/api/clients/${client.id}/image?kind=logo` : null,
+      logoUrl: resolveClientLogoUrl(client.id, client.logo_path),
       authorizedIdentificationImageUrl: identificationImagePaths.get(client.id)
         ? `/api/clients/${client.id}/image?kind=identification`
         : null,

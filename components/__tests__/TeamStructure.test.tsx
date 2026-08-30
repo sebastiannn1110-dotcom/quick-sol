@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TeamStructure from "@/components/organization/TeamStructure";
+import { DEMO_DATA_MANIFEST } from "@/scripts/demo-data-manifest";
 import type {
   BusinessRank,
   OrganizationDirectory,
@@ -39,7 +40,7 @@ function member(
     updatedAt: "2026-08-29T00:00:00.000Z",
     technicalRole,
     region: department === "Sales — DEMO" ? "Americas — DEMO" : "Global — DEMO",
-    avatarPath: null,
+    avatarPath: profileId === "jason" ? "/demo/people/jason.webp" : null,
     canEdit: false
   };
 }
@@ -63,6 +64,36 @@ function directory(technicalRole: UserRole, canReadCompensation: boolean): Organ
       canReadCompensation
     },
     members: MEMBERS
+  };
+}
+
+function completeDemoDirectory(): OrganizationDirectory {
+  return {
+    actor: {
+      id: "demo-manager",
+      technicalRole: "manager",
+      businessRank: "manager",
+      canEditGlobal: false,
+      canReadCompensation: false
+    },
+    members: DEMO_DATA_MANIFEST.people.map((person) => ({
+      profileId: person.key,
+      managerId: person.managerKey,
+      name: person.fullName,
+      email: person.email,
+      businessTitle: person.title,
+      businessRank: person.organizationRank,
+      department: person.department,
+      country: person.country,
+      location: person.location,
+      responsibilities: person.responsibilities,
+      version: 1,
+      updatedAt: DEMO_DATA_MANIFEST.fixedTimestamp,
+      technicalRole: person.technicalRole,
+      region: person.region,
+      avatarPath: person.media.localPath,
+      canEdit: false
+    }))
   };
 }
 
@@ -92,6 +123,39 @@ afterEach(() => {
 });
 
 describe("Team Structure filters and compensation", () => {
+  it("renders all 28 distinct demo employee photos in the organization tree", async () => {
+    vi.stubGlobal("fetch", baseFetch(completeDemoDirectory()));
+    render(<TeamStructure />);
+
+    const treeHeading = await screen.findByRole("heading", { name: "Organization tree" });
+    const treePhotos = within(treeHeading.closest("section")!).getAllByRole("img");
+    const sources = treePhotos.map((photo) => photo.getAttribute("src"));
+
+    expect(treePhotos).toHaveLength(28);
+    expect(new Set(sources).size).toBe(28);
+    expect(sources).toContain("/demo/people/jason.webp");
+  });
+
+  it("shows Jason's compact tree photo and an xl panel photo without rendering initials", async () => {
+    vi.stubGlobal("fetch", baseFetch(directory("manager", false)));
+    const { container } = render(<TeamStructure />);
+
+    const treeHeading = await screen.findByRole("heading", { name: "Organization tree" });
+    const treeSection = treeHeading.closest("section")!;
+    const treePhoto = within(treeSection).getByRole("img", { name: /Jason Boss/ });
+    fireEvent.load(treePhoto);
+
+    const panelAvatar = container.querySelector("[data-avatar-size='xl']");
+    expect(panelAvatar).toBeTruthy();
+    const panelPhoto = within(panelAvatar as HTMLElement).getByRole("img", { name: /Jason Boss/ });
+    fireEvent.load(panelPhoto);
+
+    expect(treePhoto.getAttribute("src")).toBe("/demo/people/jason.webp");
+    expect(treePhoto.closest("[data-avatar-size]")?.getAttribute("data-avatar-size")).toBe("md");
+    expect(panelAvatar?.getAttribute("data-avatar-state")).toBe("image");
+    expect(within(panelAvatar as HTMLElement).queryByText("JB")).toBeNull();
+  });
+
   it("combines filters, keeps only required ancestors, and clears every filter", async () => {
     vi.stubGlobal("fetch", baseFetch(directory("manager", false)));
     render(<TeamStructure />);

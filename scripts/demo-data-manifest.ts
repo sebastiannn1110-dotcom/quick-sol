@@ -1,4 +1,12 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  DEMO_COMPANY_MEDIA,
+  DEMO_MEDIA_ASSETS,
+  DEMO_PERSON_MEDIA,
+  type DemoMediaAsset
+} from "./demo-media-manifest";
 
 export const DEMO_SEED_MARKER = "QUIKSOL_DEMO_DATA_V1";
 export const DEMO_APPLY_CONFIRMATION = "QUIKSOL_DEMO_DATA_ONLY";
@@ -35,6 +43,7 @@ export type DemoPerson = {
   responsibilities: string;
   managerKey: DemoPersonKey | null;
   compensationAnnualUsd: number;
+  media: DemoMediaAsset;
 };
 
 export type DemoClient = {
@@ -51,6 +60,7 @@ export type DemoClient = {
   city: string;
   language: "es" | "en" | "zh";
   sellerKey: DemoPersonKey;
+  media: DemoMediaAsset;
 };
 
 export type DemoRfq = {
@@ -122,7 +132,8 @@ function demoPerson(
     location: `${location}${suffix}`,
     responsibilities: `${DEMO_SEED_MARKER}: ${title.toLowerCase()} responsibilities in the fictional demo organization.`,
     managerKey,
-    compensationAnnualUsd
+    compensationAnnualUsd,
+    media: DEMO_PERSON_MEDIA[key]
   });
 }
 
@@ -177,7 +188,7 @@ function deterministicUuid(prefix: string, index: number) {
 
 function demoClient(
   index: number,
-  key: string,
+  key: keyof typeof DEMO_COMPANY_MEDIA,
   externalId: string,
   name: string,
   industry: string,
@@ -202,7 +213,8 @@ function demoClient(
     country,
     city,
     language,
-    sellerKey
+    sellerKey,
+    media: DEMO_COMPANY_MEDIA[key]
   });
 }
 
@@ -374,8 +386,56 @@ export const DEMO_DATA_MANIFEST = Object.freeze({
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
+function validateDemoMediaAssets() {
+  const publicRoot = path.resolve(process.cwd(), "public");
+  const expectedPaths = new Set([
+    ...Object.values(DEMO_PERSON_MEDIA).map((asset) => asset.localPath),
+    ...Object.values(DEMO_COMPANY_MEDIA).map((asset) => asset.localPath)
+  ]);
+  if (
+    Object.keys(DEMO_PERSON_MEDIA).length !== 28 ||
+    Object.keys(DEMO_COMPANY_MEDIA).length !== 19 ||
+    DEMO_MEDIA_ASSETS.length !== 47 ||
+    expectedPaths.size !== 47 ||
+    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sha256)).size !== 47 ||
+    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sourcePageUrl)).size !== 47
+  ) {
+    throw new Error("DEMO_MANIFEST_MEDIA_CARDINALITY_INVALID");
+  }
+
+  for (const asset of DEMO_MEDIA_ASSETS) {
+    const expectedDimensions = asset.localPath.startsWith("demo/people/")
+      ? [512, 512]
+      : [1200, 700];
+    if (
+      !/^demo\/(?:people|companies)\/[a-z0-9-]+\.webp$/.test(asset.localPath) ||
+      !/^https:\/\//.test(asset.imageUrl) ||
+      !/^https:\/\//.test(asset.sourcePageUrl) ||
+      !/^https:\/\//.test(asset.licenseUrl) ||
+      !/^[a-f0-9]{64}$/.test(asset.sha256) ||
+      !asset.credit.trim() ||
+      asset.assetType !== "conventional-stock-photo" ||
+      asset.aiGenerated !== false ||
+      asset.width !== expectedDimensions[0] ||
+      asset.height !== expectedDimensions[1]
+    ) {
+      throw new Error(`DEMO_MANIFEST_MEDIA_METADATA_INVALID: ${asset.localPath}`);
+    }
+
+    const filePath = path.resolve(publicRoot, asset.localPath);
+    if (!filePath.startsWith(publicRoot + path.sep) || !fs.existsSync(filePath)) {
+      throw new Error(`DEMO_MANIFEST_MEDIA_FILE_MISSING: ${asset.localPath}`);
+    }
+    const actualHash = createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+    if (actualHash !== asset.sha256) {
+      throw new Error(`DEMO_MANIFEST_MEDIA_HASH_MISMATCH: ${asset.localPath}`);
+    }
+  }
+}
+
 export function validateDemoManifest() {
   const manifest = DEMO_DATA_MANIFEST;
+  validateDemoMediaAssets();
   const allIds = [
     manifest.ids.catalogProduct, manifest.ids.sourcingRequest, manifest.ids.sourcingOffer, manifest.ids.priceApproval,
     ...manifest.people.map((person) => person.idempotencyKey),
@@ -409,6 +469,9 @@ export function validateDemoManifest() {
   const owners = manifest.people.filter((person) => person.organizationRank === "owner");
   if (roots.length !== 1 || roots[0]?.key !== "jason" || owners.length !== 1 || owners[0]?.key !== "jason") {
     throw new Error("DEMO_MANIFEST_REQUIRES_JASON_ROOT_OWNER");
+  }
+  if (byPersonKey.get("jason")?.media.localPath !== "demo/people/jason.webp") {
+    throw new Error("DEMO_MANIFEST_REQUIRES_JASON_PHOTO");
   }
   const olivia = byPersonKey.get("olivia");
   if (!olivia || olivia.managerKey !== "jason" || olivia.technicalRole !== "admin" || olivia.organizationRank !== "executive") {

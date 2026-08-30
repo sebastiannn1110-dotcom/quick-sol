@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,6 +146,42 @@ describe("DEMO data manifest", () => {
     expect(DEMO_DATA_MANIFEST.clients.every((target) => target.contactEmail.endsWith(".demo.invalid"))).toBe(true);
   });
 
+  it("ships 28 employee photos and 19 company photos with complete conventional-stock provenance", () => {
+    const employeeMedia = DEMO_DATA_MANIFEST.people.map((person) => person.media);
+    const companyMedia = DEMO_DATA_MANIFEST.clients.map((target) => target.media);
+    const allMedia = [...employeeMedia, ...companyMedia];
+
+    expect(employeeMedia).toHaveLength(28);
+    expect(companyMedia).toHaveLength(19);
+    expect(new Set(allMedia.map((asset) => asset.localPath)).size).toBe(47);
+    expect(new Set(allMedia.map((asset) => asset.sourcePageUrl)).size).toBe(47);
+    expect(new Set(allMedia.map((asset) => asset.sha256)).size).toBe(47);
+    expect(allMedia.every((asset) =>
+      asset.assetType === "conventional-stock-photo" &&
+      asset.aiGenerated === false &&
+      Boolean(asset.credit) &&
+      Boolean(asset.licenseUrl)
+    )).toBe(true);
+
+    for (const asset of allMedia) {
+      const filePath = path.resolve(process.cwd(), "public", asset.localPath);
+      expect(fs.existsSync(filePath), asset.localPath).toBe(true);
+      expect(createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"), asset.localPath)
+        .toBe(asset.sha256);
+    }
+
+    const jason = DEMO_DATA_MANIFEST.people.find((person) => person.key === "jason");
+    expect(jason?.media).toMatchObject({
+      localPath: "demo/people/jason.webp",
+      imageSource: "Pexels",
+      credit: "Andrea Piacquadio",
+      width: 512,
+      height: 512,
+      aiGenerated: false
+    });
+    expect(fs.statSync(path.resolve(process.cwd(), "public/demo/people/jason.webp")).size).toBeGreaterThan(0);
+  });
+
   it("keeps the original commercial row and expanded metrics deterministic", () => {
     expect(DEMO_DATA_MANIFEST.quote).toMatchObject({
       number: "QKS-DEMO-0001",
@@ -263,7 +300,15 @@ describe("DEMO seed CLI safety", () => {
       networkAccess: false,
       writes: false,
       marker: DEMO_SEED_MARKER,
-      records: { employees: 28, clients: 19, rfqs: 19, compensations: 28, quotes: 45 }
+      records: {
+        employees: 28,
+        employeePhotos: 28,
+        clients: 19,
+        companyPhotos: 19,
+        rfqs: 19,
+        compensations: 28,
+        quotes: 45
+      }
     });
   });
 
@@ -445,6 +490,13 @@ describe("DEMO seed source boundary", () => {
     expect(source).not.toMatch(/\.from\("(?:revenue|sales)/);
     expect(source).not.toContain(".delete(");
     expect(source).toContain('.from("employee_compensation")');
+  });
+
+  it("reconciles only deterministic local demo media paths into existing columns", () => {
+    expect(source).toContain("avatar_path: person.media.localPath");
+    expect(source).toContain("logo_path: customer.media.localPath");
+    expect(source).toContain("logo_path: target.media.localPath");
+    expect(source).not.toContain('.from("storage.objects")');
   });
 
   it("returns from dry-run before loading environment files or creating Supabase", () => {
