@@ -27,3 +27,14 @@ export function avatarPublicUrl(path: string | null | undefined) {
   const encodedPath = candidate.split("/").map(encodeURIComponent).join("/");
   return `${base}/storage/v1/object/public/avatars/${encodedPath}`;
 }
+
+export function avatarFallbackText(name: string) {
+  const cleanName = name.replace(/\s+[\u2014-]\s+DEMO$/i, "").trim();
+  if (/^Jason\s+Boss$/i.test(cleanName)) return "J";
+  return cleanName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "QS";
+}

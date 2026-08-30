@@ -470,7 +470,16 @@ export function validateDemoManifest() {
   if (roots.length !== 1 || roots[0]?.key !== "jason" || owners.length !== 1 || owners[0]?.key !== "jason") {
     throw new Error("DEMO_MANIFEST_REQUIRES_JASON_ROOT_OWNER");
   }
-  if (byPersonKey.get("jason")?.media.localPath !== "demo/people/jason.webp") {
+  const jasonMedia = byPersonKey.get("jason")?.media;
+  if (
+    !jasonMedia ||
+    jasonMedia.localPath !== "demo/people/jason.webp" ||
+    jasonMedia.imageSource !== "Pexels" ||
+    jasonMedia.sourcePageUrl !== "https://www.pexels.com/photo/serious-man-3760373/" ||
+    jasonMedia.credit !== "Andrea Piacquadio" ||
+    jasonMedia.aiGenerated !== false ||
+    jasonMedia.assetType !== "conventional-stock-photo"
+  ) {
     throw new Error("DEMO_MANIFEST_REQUIRES_JASON_PHOTO");
   }
   const olivia = byPersonKey.get("olivia");

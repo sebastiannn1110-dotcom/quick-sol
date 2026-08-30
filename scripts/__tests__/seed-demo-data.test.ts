@@ -153,6 +153,8 @@ describe("DEMO data manifest", () => {
 
     expect(employeeMedia).toHaveLength(28);
     expect(companyMedia).toHaveLength(19);
+    expect(new Set(employeeMedia.map((asset) => asset.localPath)).size).toBe(28);
+    expect(new Set(employeeMedia.map((asset) => asset.sha256)).size).toBe(28);
     expect(new Set(allMedia.map((asset) => asset.localPath)).size).toBe(47);
     expect(new Set(allMedia.map((asset) => asset.sourcePageUrl)).size).toBe(47);
     expect(new Set(allMedia.map((asset) => asset.sha256)).size).toBe(47);
@@ -174,12 +176,21 @@ describe("DEMO data manifest", () => {
     expect(jason?.media).toMatchObject({
       localPath: "demo/people/jason.webp",
       imageSource: "Pexels",
+      sourcePageUrl: "https://www.pexels.com/photo/serious-man-3760373/",
       credit: "Andrea Piacquadio",
       width: 512,
       height: 512,
+      assetType: "conventional-stock-photo",
       aiGenerated: false
     });
-    expect(fs.statSync(path.resolve(process.cwd(), "public/demo/people/jason.webp")).size).toBeGreaterThan(0);
+    const jasonFile = fs.readFileSync(path.resolve(process.cwd(), "public/demo/people/jason.webp"));
+    expect(jasonFile.length).toBeGreaterThan(0);
+    expect(jasonFile.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(jasonFile.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    expect(jasonFile.subarray(12, 16).toString("ascii")).toBe("VP8 ");
+    expect([...jasonFile.subarray(23, 26)]).toEqual([0x9d, 0x01, 0x2a]);
+    expect(jasonFile.readUInt16LE(26) & 0x3fff).toBe(512);
+    expect(jasonFile.readUInt16LE(28) & 0x3fff).toBe(512);
   });
 
   it("keeps the original commercial row and expanded metrics deterministic", () => {

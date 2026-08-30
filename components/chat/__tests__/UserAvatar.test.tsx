@@ -23,6 +23,7 @@ describe("UserAvatar", () => {
     const avatar = container.querySelector("[data-avatar-size='xl']");
     expect(avatar?.getAttribute("data-avatar-state")).toBe("image");
     expect(screen.queryByText("JB")).toBeNull();
+    expect(screen.queryByText("J")).toBeNull();
   });
 
   it("shows visible initials when the selected image fails", () => {
@@ -33,7 +34,8 @@ describe("UserAvatar", () => {
     fireEvent.error(screen.getByRole("img", { name: "Jason Boss — DEMO" }));
 
     expect(screen.queryByRole("img", { name: "Jason Boss — DEMO" })).toBeNull();
-    expect(screen.getByText("JB")).toBeTruthy();
+    expect(screen.getByText("J")).toBeTruthy();
+    expect(screen.queryByText("JB")).toBeNull();
     expect(container.firstElementChild?.getAttribute("data-avatar-state")).toBe("initials");
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { avatarPublicUrl } from "@/lib/profile/avatar";
+import { avatarFallbackText, avatarPublicUrl } from "@/lib/profile/avatar";
 
 type UserAvatarSize = "sm" | "md" | "lg" | "xl";
 
@@ -16,7 +16,7 @@ export default function UserAvatar({ name, avatarPath, size = "md" }: { name: st
       : size === "xl"
         ? "h-28 w-28 text-2xl"
         : "h-10 w-10 text-sm";
-  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "QS";
+  const initials = avatarFallbackText(name);
 
   return (
     <span

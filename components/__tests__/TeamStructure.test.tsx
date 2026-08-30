@@ -154,6 +154,7 @@ describe("Team Structure filters and compensation", () => {
     expect(treePhoto.closest("[data-avatar-size]")?.getAttribute("data-avatar-size")).toBe("md");
     expect(panelAvatar?.getAttribute("data-avatar-state")).toBe("image");
     expect(within(panelAvatar as HTMLElement).queryByText("JB")).toBeNull();
+    expect(within(panelAvatar as HTMLElement).queryByText("J")).toBeNull();
   });
 
   it("combines filters, keeps only required ancestors, and clears every filter", async () => {
