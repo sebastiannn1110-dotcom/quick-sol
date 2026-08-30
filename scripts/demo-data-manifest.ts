@@ -242,7 +242,7 @@ const clients = [
 
 const product = Object.freeze({
   mpn: "QKS-DEMO-MCU-042",
-  normalizedMpn: "QKSDEMO042",
+  normalizedMpn: "QKS-DEMO-MCU-042",
   manufacturer: `Asterion Microdevices${suffix}`,
   description: `Industrial control MCU${suffix} / ${DEMO_SEED_MARKER}`,
   demandQuantity: 1200,
