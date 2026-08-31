@@ -1,7 +1,7 @@
 export type AssistantLanguage = "es" | "en" | "zh";
 
-const SPANISH_HINTS = /\b(el|la|los|las|que|como|cual|ultimo|ultima|subido|archivo|proveedor|cliente|errores|filas|muestrame|busca|precio|costos?|comision|registros?|stock|inventario|venta|ventas|requiere|disponible|cantidad)\b/g;
-const ENGLISH_HINTS = /\b(the|last|file|upload|show|find|supplier|customer|errors|rows|how|what|which|price|cost|commission|records?|stock|inventory|sale|sales|require|requires|available|quantity|parts?)\b/g;
+const SPANISH_HINTS = /\b(el|la|los|las|que|quien|como|cual|ultimo|ultima|subido|archivo|proveedor|cliente|clientes|errores|filas|muestrame|busca|precio|costos?|comision|registros?|stock|inventario|venta|ventas|vendedor|vendedores|empleados?|metricas?|conversion|cotizaciones?|requiere|disponible|cantidad|mejor|funcionando)\b/g;
+const ENGLISH_HINTS = /\b(the|who|is|last|file|upload|show|find|supplier|customer|customers|clients?|errors|rows|how|what|which|price|cost|commission|records?|stock|inventory|sale|sales|seller|sellers|salesperson|performance|performs?|better|best|metrics?|conversion|quotes?|accepted|sent|team|rfqs?|require|requires|available|quantity|parts?)\b/g;
 
 export function normalizeAssistantLanguage(language: unknown, fallback: AssistantLanguage = "es"): AssistantLanguage {
   if (typeof language !== "string") return fallback;

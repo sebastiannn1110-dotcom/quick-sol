@@ -232,6 +232,8 @@ function safeQuoteMetric(value: unknown) {
   return compactObject({
     name: text(row.name, 160),
     businessTitle: text(row.businessTitle, 160),
+    country: text(row.country, 100),
+    department: text(row.department, 100),
     region: text(row.region, 100),
     quotesCreated: numberValue(row.quotesCreated),
     quotesSent: numberValue(row.quotesSent),
@@ -241,7 +243,23 @@ function safeQuoteMetric(value: unknown) {
     quotedValue: numberValue(row.quotedValue),
     acceptedQuoteValue: numberValue(row.acceptedQuoteValue),
     customersServed: numberValue(row.customersServed),
-    newCustomers: numberValue(row.newCustomers)
+    newCustomers: numberValue(row.newCustomers),
+    draftQuotes: numberValue(row.draftQuotes)
+  });
+}
+
+function nullableSafeQuoteMetric(value: unknown) {
+  const metric = safeQuoteMetric(value);
+  return Object.keys(metric).length ? metric : null;
+}
+
+function safeEmployeeFilters(value: unknown) {
+  const filters = record(value);
+  return compactObject({
+    country: text(filters.country, 100),
+    region: text(filters.region, 100),
+    department: text(filters.department, 100),
+    team: text(filters.team, 160)
   });
 }
 
@@ -292,6 +310,45 @@ function safeSourcingApproval(value: unknown) {
     leadTimeDays: numberValue(row.leadTimeDays),
     minimumOrderQuantity: numberValue(row.minimumOrderQuantity),
     validUntil: text(row.validUntil, 40)
+  });
+}
+
+function safeRfqInsight(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    externalRfqId: text(row.externalRfqId, 160),
+    status: text(row.status, 30),
+    source: text(row.source, 40),
+    createdAt: text(row.createdAt, 40),
+    companyOrName: text(row.companyOrName, 200),
+    assignedSellerName: text(row.assignedSellerName, 160),
+    itemCount: numberValue(row.itemCount)
+  });
+}
+
+function safeClientInsight(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    name: text(row.name, 200),
+    isDemoAccount: booleanValue(row.isDemoAccount)
+  });
+}
+
+function safeClientActivityRfq(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    externalRfqId: text(row.externalRfqId, 160),
+    status: text(row.status, 30),
+    createdAt: text(row.createdAt, 40)
+  });
+}
+
+function safeClientActivityQuote(value: unknown) {
+  const row = record(value);
+  return compactObject({
+    number: text(row.number, 100),
+    status: text(row.status, 30),
+    createdAt: text(row.createdAt, 40)
   });
 }
 
@@ -368,20 +425,83 @@ function safeToolData(tool: string, value: unknown): unknown {
         openQuoteValue: numberValue(source.openQuoteValue),
         recentQuotes: array(source.recentQuotes).map(safeRecentQuote).slice(0, 10)
       };
-    case "employee_quote_metrics":
+    case "employee_quote_metrics": {
+      const comparison = record(source.comparison);
+      const average = record(source.average);
+      const clarification = record(source.clarification);
       return {
         analyticsScope: text(source.analyticsScope, 20),
         currency: text(source.currency, 3),
+        generatedAt: text(source.generatedAt, 40),
         queryMode: text(source.queryMode, 20),
-        selectedEmployee: safeQuoteMetric(source.selectedEmployee),
+        sortBy: text(source.sortBy, 40),
+        metricDefinition: text(source.metricDefinition, 240),
+        requestedLimit: numberValue(source.requestedLimit),
+        rankStart: numberValue(source.rankStart),
+        activeSellerCount: numberValue(source.activeSellerCount),
+        appliedFilters: safeEmployeeFilters(source.appliedFilters),
+        selectedEmployee: nullableSafeQuoteMetric(source.selectedEmployee),
         ranking: array(source.ranking).map(safeQuoteMetric).slice(0, 10),
+        comparison: Object.keys(comparison).length
+          ? {
+              metric: text(comparison.metric, 40),
+              employees: array(comparison.employees).map(safeQuoteMetric).slice(0, 2),
+              winner: nullableSafeQuoteMetric(comparison.winner),
+              tied: booleanValue(comparison.tied)
+            }
+          : null,
+        average: Object.keys(average).length
+          ? {
+              metric: text(average.metric, 40),
+              value: numberValue(average.value)
+            }
+          : null,
+        belowAverage: array(source.belowAverage).map(safeQuoteMetric).slice(0, 10),
+        needsImprovement: array(source.needsImprovement).map(safeQuoteMetric).slice(0, 10),
+        clarification: Object.keys(clarification).length
+          ? {
+              required: booleanValue(clarification.required),
+              reason: text(clarification.reason, 60),
+              message: text(clarification.message, 320),
+              candidates: array(clarification.candidates).map(safeQuoteMetric).slice(0, 10)
+            }
+          : null,
         totals: safeQuoteMetric(source.totals)
       };
+    }
     case "client_quote_summary":
       return {
         currency: text(source.currency, 3),
         topClient: safeClientQuoteMetric(source.topClient),
         clients: array(source.clients).map(safeClientQuoteMetric).slice(0, 25)
+      };
+    case "rfq_summary": {
+      const clarification = record(source.clarification);
+      return {
+        mode: text(source.mode, 30),
+        definition: text(source.definition, 200),
+        employeeName: text(source.employeeName, 160),
+        count: numberValue(source.count),
+        rfqs: array(source.rfqs).map(safeRfqInsight).slice(0, 10),
+        clarification: {
+          reason: text(clarification.reason, 60),
+          candidates: array(clarification.candidates)
+            .map((item) => text(item, 160))
+            .filter(Boolean)
+            .slice(0, 10)
+        }
+      };
+    }
+    case "client_lookup":
+      return {
+        mode: text(source.mode, 30),
+        count: numberValue(source.count),
+        client: safeClientInsight(source.client),
+        clients: array(source.clients).map(safeClientInsight).slice(0, 10),
+        assignedSellerName: text(source.assignedSellerName, 160),
+        activityCount: numberValue(source.activityCount),
+        rfqs: array(source.rfqs).map(safeClientActivityRfq).slice(0, 10),
+        quotes: array(source.quotes).map(safeClientActivityQuote).slice(0, 10)
       };
     case "sourcing_lookup":
       return {

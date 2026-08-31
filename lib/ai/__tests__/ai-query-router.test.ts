@@ -44,6 +44,8 @@ describe("AI query router", () => {
   const getEmployeeQuoteMetrics = vi.fn();
   const getClientQuoteSummary = vi.fn();
   const getSourcingLookup = vi.fn();
+  const getRfqSummary = vi.fn();
+  const getClientLookup = vi.fn();
   const logger = {
     info: vi.fn(async () => undefined),
     warn: vi.fn(async () => undefined),
@@ -179,6 +181,28 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getRfqSummary.mockResolvedValue({
+      ok: true,
+      tool: "rfq_summary",
+      scope: "company",
+      total: 3,
+      rows: [],
+      data: { mode: "new_count", count: 3, rfqs: [] },
+      summary: "Authorized RFQ summary.",
+      empty: false,
+      deterministic: true
+    });
+    getClientLookup.mockResolvedValue({
+      ok: true,
+      tool: "client_lookup",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { mode: "search", count: 1, clients: [{ name: "Amazon-demo" }] },
+      summary: "Authorized client lookup.",
+      empty: false,
+      deterministic: true
+    });
     getOpportunityFinderSummary.mockResolvedValue({
       ok: true,
       tool: "getOpportunityFinderSummary",
@@ -244,6 +268,10 @@ describe("AI query router", () => {
       getClientQuoteSummary,
       getSourcingLookup
     }));
+    vi.doMock("@/lib/ai/commerce-insights-tools", () => ({
+      getRfqSummary,
+      getClientLookup
+    }));
   });
 
   it("routes explicit MPN questions to controlled MPN lookup", async () => {
@@ -306,7 +334,73 @@ describe("AI query router", () => {
 
     expect(result.intent).toBe("employee_quote_metrics");
     expect(result.toolResult?.tool).toBe("employee_quote_metrics");
-    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question);
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
+  });
+
+  it.each([
+    ["es", "quien es el mejor vendedor"],
+    ["es", "de los empleados en la base de datos quien tiene las mejores metricas"],
+    ["es", "quien tiene mayor conversion"],
+    ["es", "cuales son los 5 mejores vendedores"],
+    ["es", "compara Maya con Daniel"],
+    ["es", "Compara a Maya con Daniel"],
+    ["es", "¿Cómo está funcionando el equipo de ventas?"],
+    ["es", "cuantas cotizaciones aceptadas tenemos"],
+    ["en", "who is the best salesperson"],
+    ["en", "show me the top 5 sellers"],
+    ["en", "who has the highest conversion rate"],
+    ["en", "Who performs better, Maya or Daniel?"],
+    ["zh", "谁是表现最好的销售人员？"],
+    ["zh", "谁的转化率最高？"],
+    ["zh", "比较 Maya 和 Daniel"]
+  ] as const)("routes clear employee-performance language without clarification: %s / %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("manager");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(result.plan.answerMode).not.toBe("clarify");
+    expect(result.toolResult?.tool).toBe("employee_quote_metrics");
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
+  });
+
+  it("routes an ordinal employee follow-up using immediate history", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const history = [
+      { role: "user" as const, content: "quien es el mejor vendedor" },
+      { role: "assistant" as const, content: "Maya lidera el ranking." }
+    ];
+    const result = await routeAssistantDatabaseQuery(
+      authContext("manager"),
+      "y los siguientes cuatro?",
+      { language: "es", history }
+    );
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(
+      expect.any(Object),
+      "y los siguientes cuatro?",
+      { language: "es", history }
+    );
+  });
+
+  it.each([
+    ["cuantos RFQs nuevos tenemos", "rfq_summary"],
+    ["busca Amazon-demo", "client_lookup"]
+  ] as const)("routes business insight %s through %s", async (question, tool) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("manager"), question, { language: "es" });
+
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(result.toolResult?.tool).toBe(tool);
   });
 
   it.each([
@@ -320,7 +414,10 @@ describe("AI query router", () => {
 
     expect(result.intent).toBe("employee_quote_metrics");
     expect(result.toolResult?.tool).toBe("employee_quote_metrics");
-    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question);
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
   });
 
   it.each([

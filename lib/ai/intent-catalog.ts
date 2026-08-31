@@ -1,5 +1,9 @@
 import type { AssistantLanguage } from "@/lib/ai/language-detection";
 import type { AssistantAnswerMode } from "@/lib/ai/response-plan";
+import {
+  detectExplicitBusinessIntent,
+  isEmployeePerformanceFollowUp
+} from "@/lib/ai/business-intent";
 
 export type AssistantIntentId =
   | "policy_safety"
@@ -47,6 +51,8 @@ export type AssistantIntentId =
   | "quote_summary"
   | "employee_quote_metrics"
   | "client_quote_summary"
+  | "rfq_summary"
+  | "client_lookup"
   | "sourcing_lookup"
   | "latest_upload_attribution"
   | "latest_upload"
@@ -79,6 +85,8 @@ export type CatalogToolName =
   | "quote_summary"
   | "employee_quote_metrics"
   | "client_quote_summary"
+  | "rfq_summary"
+  | "client_lookup"
   | "sourcing_lookup"
   | "getLatestUploadAttribution"
   | "getLatestUpload"
@@ -294,22 +302,95 @@ export const ASSISTANT_INTENT_CATALOG: AssistantIntentDefinition[] = [
   }, { parameters: ["mpn"], answerMode: "item_detail" }),
   entry("employee_quote_metrics", "employee_quote_metrics", 138, {
     es: [
+      "quien es el mejor vendedor",
+      "quien tiene las mejores metricas",
+      "mejor empleado de ventas",
+      "mejor desempeno comercial",
+      "rendimiento del equipo de ventas",
+      "mejores vendedores",
+      "top vendedores",
+      "quien tiene mayor conversion",
+      "quien tiene mas cotizaciones aceptadas",
+      "quien ha enviado mas cotizaciones",
       "quien tiene el mayor accepted quote value",
       "quien tiene el mayor valor de cotizaciones aceptadas",
+      "cuantas cotizaciones aceptadas tenemos",
+      "cual es nuestra tasa de conversion",
+      "que vendedor tiene mas quotes en draft",
+      "que vendedor necesita mejorar",
+      "quien esta por debajo del promedio",
+      "cuantos clientes ha atendido",
+      "cuantos vendedores activos hay",
+      "compara vendedores",
       "cuantas cotizaciones tiene",
       "cotizaciones de"
     ],
     en: [
+      "who is the best salesperson",
+      "best sales rep",
+      "top sellers",
+      "show me the top sellers",
+      "sales team performance",
+      "who has the highest conversion rate",
+      "who has the most accepted quotes",
+      "who sent the most quotes",
       "who has the highest accepted quote value",
       "highest accepted quote value",
+      "how many accepted quotes do we have",
+      "what is our conversion rate",
+      "who has the most draft quotes",
+      "who needs improvement",
+      "who is below average",
+      "customers served by",
+      "how many active sellers",
+      "compare salespeople",
       "how many quotes does",
       "quotes for"
     ],
     zh: [
+      "谁是表现最好的销售人员",
+      "谁是最好的销售员",
+      "销售人员排名",
+      "前五名销售人员",
+      "谁的转化率最高",
+      "谁的已接受报价最多",
+      "谁发送的报价最多",
       "\u8c01\u7684\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8",
       "\u5458\u5de5\u62a5\u4ef7\u6392\u540d",
       "\u6709\u591a\u5c11\u4efd\u62a5\u4ef7"
     ]
+  }, { answerMode: "summary" }),
+  entry("rfq_summary", "rfq_summary", 137, {
+    es: [
+      "cuantos rfqs nuevos tenemos",
+      "muestrame los rfqs sin asignar",
+      "que rfq llego mas recientemente",
+      "cuantos rfqs tiene"
+    ],
+    en: [
+      "how many new rfqs do we have",
+      "show me unassigned rfqs",
+      "what is the most recent rfq",
+      "how many rfqs does"
+    ],
+    zh: ["我们有多少新询价", "显示未分配的询价", "最近的询价是什么"]
+  }, { answerMode: "summary" }),
+  entry("client_lookup", "client_lookup", 136, {
+    es: [
+      "cuantos clientes tenemos",
+      "busca el cliente",
+      "quien atiende el cliente",
+      "que rfqs tiene el cliente",
+      "que cotizaciones tiene el cliente"
+    ],
+    en: [
+      "how many clients do we have",
+      "find the client",
+      "who handles the client",
+      "what rfqs does the client have",
+      "what quotes does the client have"
+    ],
+    zh: ["我们有多少客户", "查找客户", "谁负责这个客户", "客户有哪些询价", "客户有哪些报价"]
   }, { answerMode: "summary" }),
   entry("client_quote_summary", "client_quote_summary", 137, {
     es: [
@@ -648,7 +729,8 @@ export interface DetectedAssistantIntent {
 
 export function detectAssistantIntent(
   question: string,
-  language: AssistantLanguage
+  language: AssistantLanguage,
+  history: readonly { role: string; content: string }[] = []
 ): DetectedAssistantIntent {
   const normalizedQuestion = normalize(question);
   const scored = ASSISTANT_INTENT_CATALOG
@@ -666,8 +748,22 @@ export function detectAssistantIntent(
       );
       return { definition, score };
     })
-    .filter((item) => item.score > 0)
-    .sort((left, right) =>
+    .filter((item) => item.score > 0);
+
+  const explicitIntent = detectExplicitBusinessIntent(question) ?? (
+    isEmployeePerformanceFollowUp(question, history) ? "employee_quote_metrics" : null
+  );
+  const safetyMatch = scored.some(
+    (item) => item.definition.answerMode === "deny" && item.score >= 0.66
+  );
+  if (explicitIntent && !safetyMatch) {
+    const definition = ASSISTANT_INTENT_CATALOG.find((item) => item.id === explicitIntent)!;
+    const existing = scored.find((item) => item.definition.id === explicitIntent);
+    if (existing) existing.score = Math.max(existing.score, 0.99);
+    else scored.push({ definition, score: 0.99 });
+  }
+
+  scored.sort((left, right) =>
       right.score - left.score ||
       right.definition.priority - left.definition.priority
     );

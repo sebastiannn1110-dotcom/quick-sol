@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import type { AuthContext } from "@/lib/auth/context";
 import type { SafeHistoryMessage } from "@/lib/ai/conversation-memory";
+import {
+  detectExplicitBusinessIntent,
+  isEmployeePerformanceFollowUp
+} from "@/lib/ai/business-intent";
 import { routeAssistantDatabaseQuery } from "@/lib/ai/ai-query-router";
 import {
   AssistantToolRequestError,
@@ -369,8 +373,18 @@ export async function answerAssistantQuestion({
       throw new AssistantRequestError(assistantMessage(language, "timeout"), 504, "TOOL_TIMEOUT");
     }
     if (error instanceof AssistantToolRequestError) throw error;
+    const failedBusinessIntent = detectExplicitBusinessIntent(message) ?? (
+      isEmployeePerformanceFollowUp(message, history) ? "employee_quote_metrics" : null
+    );
+    const failureMessage = failedBusinessIntent === "employee_quote_metrics"
+      ? assistantMessage(language, "metricsUnavailable")
+      : failedBusinessIntent === "rfq_summary"
+        ? assistantMessage(language, "rfqUnavailable")
+        : failedBusinessIntent === "client_lookup"
+          ? assistantMessage(language, "clientUnavailable")
+          : assistantMessage(language, "providerFailed");
     throw new AssistantRequestError(
-      assistantMessage(language, "providerFailed"),
+      failureMessage,
       502,
       "TOOL_FAILED"
     );
