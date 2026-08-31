@@ -10,6 +10,9 @@ type CopyKey =
   | "malformed"
   | "inactive"
   | "providerFailed"
+  | "metricsUnavailable"
+  | "rfqUnavailable"
+  | "clientUnavailable"
   | "providerMissing";
 
 const COPY: Record<AssistantLanguage, Record<CopyKey, string>> = {
@@ -22,6 +25,9 @@ const COPY: Record<AssistantLanguage, Record<CopyKey, string>> = {
     malformed: "La solicitud no tiene un formato válido.",
     inactive: "Tu perfil no está activo o no tiene permiso para usar el asistente.",
     providerFailed: "El proveedor externo no pudo completar la operación.",
+    metricsUnavailable: "No pude consultar las métricas en este momento.",
+    rfqUnavailable: "No pude consultar los RFQs en este momento.",
+    clientUnavailable: "No pude consultar los clientes en este momento.",
     providerMissing: "El proveedor externo no está configurado."
   },
   en: {
@@ -33,6 +39,9 @@ const COPY: Record<AssistantLanguage, Record<CopyKey, string>> = {
     malformed: "The request format is invalid.",
     inactive: "Your profile is inactive or does not have permission to use the assistant.",
     providerFailed: "The external provider could not complete the operation.",
+    metricsUnavailable: "I could not query the metrics right now.",
+    rfqUnavailable: "I could not query RFQs right now.",
+    clientUnavailable: "I could not query clients right now.",
     providerMissing: "The external provider is not configured."
   },
   zh: {
@@ -44,6 +53,9 @@ const COPY: Record<AssistantLanguage, Record<CopyKey, string>> = {
     malformed: "请求格式无效。",
     inactive: "你的个人资料未启用，或无权使用助手。",
     providerFailed: "外部服务提供商未能完成操作。",
+    metricsUnavailable: "目前无法查询绩效指标。",
+    rfqUnavailable: "目前无法查询 RFQ。",
+    clientUnavailable: "目前无法查询客户数据。",
     providerMissing: "外部服务提供商尚未配置。"
   }
 };
@@ -107,6 +119,101 @@ function localizedMoney(value: unknown, language: AssistantLanguage, currency = 
     currency: /^[A-Z]{3}$/.test(currency) ? currency : "USD",
     maximumFractionDigits: 2
   }).format(amount);
+}
+
+function localizedNumber(value: unknown, language: AssistantLanguage, maximumFractionDigits = 2) {
+  const parsed = Number(value ?? 0);
+  const amount = Number.isFinite(parsed) ? parsed : 0;
+  const locale = language === "es" ? "es-CO" : language === "zh" ? "zh-CN" : "en-US";
+  return new Intl.NumberFormat(locale, { maximumFractionDigits }).format(amount);
+}
+
+function employeeMetricLabel(metric: string, language: AssistantLanguage) {
+  const labels: Record<string, Record<AssistantLanguage, string>> = {
+    overall: {
+      es: "Accepted Quote Value del ranking oficial",
+      en: "Accepted Quote Value in the official ranking",
+      zh: "官方排名中的已接受报价金额"
+    },
+    accepted_quotes: { es: "cotizaciones aceptadas", en: "accepted quotes", zh: "已接受报价" },
+    conversion_rate: { es: "conversión", en: "conversion", zh: "转化率" },
+    accepted_quote_value: { es: "Accepted Quote Value", en: "Accepted Quote Value", zh: "已接受报价金额" },
+    sent_quotes: { es: "cotizaciones enviadas", en: "sent quotes", zh: "已发送报价" },
+    created_quotes: { es: "cotizaciones creadas", en: "created quotes", zh: "已创建报价" },
+    customers_served: { es: "clientes atendidos", en: "customers served", zh: "已服务客户" },
+    draft_quotes: { es: "cotizaciones en draft", en: "draft quotes", zh: "草稿报价" }
+  };
+  return labels[metric]?.[language] ?? labels.overall[language];
+}
+
+function employeeMetricValue(
+  employee: Record<string, unknown>,
+  metric: string,
+  language: AssistantLanguage,
+  currency: string
+) {
+  if (metric === "conversion_rate") {
+    return `${localizedNumber(employee.quoteConversionRate, language)}%`;
+  }
+  if (metric === "accepted_quote_value" || metric === "overall") {
+    return localizedMoney(employee.acceptedQuoteValue, language, currency);
+  }
+  const keys: Record<string, string> = {
+    accepted_quotes: "quotesAccepted",
+    sent_quotes: "quotesSent",
+    created_quotes: "quotesCreated",
+    customers_served: "customersServed",
+    draft_quotes: "draftQuotes"
+  };
+  return localizedNumber(employee[keys[metric] ?? "acceptedQuoteValue"], language, 0);
+}
+
+function employeeMetricEntry(
+  employee: Record<string, unknown>,
+  metric: string,
+  language: AssistantLanguage,
+  currency: string
+) {
+  const name = safeText(employee.name, 160);
+  const value = employeeMetricValue(employee, metric, language, currency);
+  const label = employeeMetricLabel(metric, language);
+  if (language === "zh") return `${name} — ${label} ${value}`;
+  if (language === "es") return `${name} — ${value} en ${label}`;
+  return `${name} — ${value} ${label}`;
+}
+
+function employeeSupportingFacts(
+  employee: Record<string, unknown>,
+  language: AssistantLanguage,
+  currency: string
+) {
+  const accepted = localizedNumber(employee.quotesAccepted, language, 0);
+  const conversion = localizedNumber(employee.quoteConversionRate, language);
+  const acceptedValue = localizedMoney(employee.acceptedQuoteValue, language, currency);
+  if (language === "zh") {
+    return `${accepted} 份已接受报价，转化率 ${conversion}%，已接受报价金额 ${acceptedValue}`;
+  }
+  if (language === "es") {
+    return `${accepted} cotizaciones aceptadas, ${conversion}% de conversión y ${acceptedValue} en Accepted Quote Value`;
+  }
+  return `${accepted} accepted quotes, ${conversion}% conversion, and ${acceptedValue} in Accepted Quote Value`;
+}
+
+function employeeFilterQualifier(value: unknown, language: AssistantLanguage) {
+  const filters = record(value);
+  const definitions: Array<[string, Record<AssistantLanguage, string>]> = [
+    ["country", { es: "país", en: "country", zh: "国家" }],
+    ["region", { es: "región", en: "region", zh: "地区" }],
+    ["department", { es: "departamento", en: "department", zh: "部门" }],
+    ["team", { es: "equipo", en: "team", zh: "团队" }]
+  ];
+  const parts = definitions.flatMap(([key, labels]) => {
+    const item = safeText(filters[key], 160);
+    return item ? [`${labels[language]} ${item}`] : [];
+  });
+  if (!parts.length) return "";
+  if (language === "zh") return `（${parts.join("，")}）`;
+  return ` ${language === "es" ? "para" : "for"} ${parts.join(", ")}`;
 }
 
 export function assistantMessage(language: AssistantLanguage, key: CopyKey) {
@@ -184,23 +291,164 @@ export function localizeToolSummary(toolResult: AiToolResult, language: Assistan
     return `Your authorized scope contains ${quoteCount} quotes: ${open} open and ${accepted} accepted. Quoted value is ${quotedValue}, and Accepted Quote Value is ${acceptedValue}.`;
   }
   if (toolResult.tool === "employee_quote_metrics") {
+    const queryMode = safeText(data.queryMode, 30);
+    const metric = safeText(data.sortBy, 40) || "overall";
+    const currency = safeText(data.currency, 3) || "USD";
+    const filterQualifier = employeeFilterQualifier(data.appliedFilters, language);
     const selected = record(data.selectedEmployee);
     const name = safeText(selected.name, 160);
-    if (!name) return assistantMessage(language, "noData");
-    const created = count(selected, "quotesCreated");
-    const sent = count(selected, "quotesSent");
-    const accepted = count(selected, "quotesAccepted");
-    const acceptedValue = localizedMoney(selected.acceptedQuoteValue, language, String(data.currency ?? "USD"));
-    const ranking = data.queryMode === "ranking";
-    if (language === "zh") return ranking
-      ? `${name} \u7684\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff0c\u4e3a ${acceptedValue}\uff1b\u5171\u521b\u5efa ${created} \u4efd\u62a5\u4ef7\uff0c${accepted} \u4efd\u5df2\u63a5\u53d7\u3002`
-      : `${name} \u5171\u6709 ${created} \u4efd\u62a5\u4ef7\uff0c${sent} \u4efd\u5df2\u53d1\u9001\uff0c${accepted} \u4efd\u5df2\u63a5\u53d7\uff0c\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u4e3a ${acceptedValue}\u3002`;
-    if (language === "es") return ranking
-      ? `${name} tiene el mayor Accepted Quote Value: ${acceptedValue}. Ha creado ${created} cotizaciones y ${accepted} fueron aceptadas.`
-      : `${name} tiene ${created} cotizaciones: ${sent} enviadas y ${accepted} aceptadas. Su Accepted Quote Value es ${acceptedValue}.`;
-    return ranking
-      ? `${name} has the highest Accepted Quote Value at ${acceptedValue}. ${created} quotes were created and ${accepted} were accepted.`
-      : `${name} has ${created} quotes: ${sent} sent and ${accepted} accepted. Accepted Quote Value is ${acceptedValue}.`;
+    const ranking = Array.isArray(data.ranking) ? data.ranking.map(record) : [];
+    const clarification = record(data.clarification);
+    const clarificationMessage = safeText(clarification.message, 320);
+    if (clarificationMessage) {
+      const candidates = Array.isArray(clarification.candidates)
+        ? clarification.candidates.map(record).map((candidate) => {
+            const candidateName = safeText(candidate.name, 160);
+            const details = [candidate.businessTitle, candidate.region]
+              .map((item) => safeText(item, 160))
+              .filter(Boolean);
+            return `${candidateName}${details.length ? ` (${details.join(" · ")})` : ""}`;
+          }).filter(Boolean)
+        : [];
+      if (!candidates.length) return clarificationMessage;
+      if (language === "zh") return `${clarificationMessage} 可选项：${candidates.join("；")}。`;
+      if (language === "es") return `${clarificationMessage} Opciones: ${candidates.join("; ")}.`;
+      return `${clarificationMessage} Options: ${candidates.join("; ")}.`;
+    }
+
+    if (queryMode === "aggregate") {
+      const activeSellers = count(data, "activeSellerCount");
+      if (metric === "accepted_quotes") {
+        const value = count(totals, "quotesAccepted");
+        if (language === "zh") return `授权范围${filterQualifier}内共有 ${value} 份已接受报价。`;
+        if (language === "es") return `En el alcance autorizado${filterQualifier} tenemos ${value} cotizaciones aceptadas.`;
+        return `The authorized scope${filterQualifier} has ${value} accepted quotes.`;
+      }
+      if (metric === "conversion_rate") {
+        const value = localizedNumber(totals.quoteConversionRate, language);
+        if (language === "zh") return `授权范围${filterQualifier}内的整体报价转化率为 ${value}%。`;
+        if (language === "es") return `La tasa de conversión global del alcance autorizado${filterQualifier} es ${value}%.`;
+        return `The overall quote conversion rate in the authorized scope${filterQualifier} is ${value}%.`;
+      }
+      if (metric === "accepted_quote_value") {
+        const value = localizedMoney(totals.acceptedQuoteValue, language, currency);
+        if (language === "zh") return `授权范围${filterQualifier}内的已接受报价总额为 ${value}。`;
+        if (language === "es") return `El Accepted Quote Value total del alcance autorizado${filterQualifier} es ${value}.`;
+        return `Total Accepted Quote Value in the authorized scope${filterQualifier} is ${value}.`;
+      }
+      if (metric === "draft_quotes") {
+        const value = count(totals, "draftQuotes");
+        if (language === "zh") return `授权范围${filterQualifier}内共有 ${value} 份草稿报价。`;
+        if (language === "es") return `En el alcance autorizado${filterQualifier} tenemos ${value} cotizaciones en draft.`;
+        return `The authorized scope${filterQualifier} has ${value} draft quotes.`;
+      }
+      const aggregateCountKeys: Record<string, string> = {
+        sent_quotes: "quotesSent",
+        created_quotes: "quotesCreated",
+        customers_served: "customersServed"
+      };
+      if (aggregateCountKeys[metric]) {
+        const value = count(totals, aggregateCountKeys[metric]);
+        const label = employeeMetricLabel(metric, language);
+        if (language === "zh") return `授权范围${filterQualifier}内共有 ${value} 个${label}。`;
+        if (language === "es") return `En el alcance autorizado${filterQualifier} tenemos ${value} ${label}.`;
+        return `The authorized scope${filterQualifier} has ${value} ${label}.`;
+      }
+      const accepted = count(totals, "quotesAccepted");
+      const conversion = localizedNumber(totals.quoteConversionRate, language);
+      const value = localizedMoney(totals.acceptedQuoteValue, language, currency);
+      if (language === "zh") return `销售团队${filterQualifier}有 ${activeSellers} 名可见活跃销售人员、${accepted} 份已接受报价，整体转化率 ${conversion}%，已接受报价金额 ${value}。`;
+      if (language === "es") return `El equipo visible${filterQualifier} tiene ${activeSellers} vendedores activos, ${accepted} cotizaciones aceptadas, ${conversion}% de conversión global y ${value} en Accepted Quote Value.`;
+      return `The visible team${filterQualifier} has ${activeSellers} active sellers, ${accepted} accepted quotes, ${conversion}% overall conversion, and ${value} in Accepted Quote Value.`;
+    }
+
+    if (queryMode === "comparison") {
+      const comparison = record(data.comparison);
+      const employees = Array.isArray(comparison.employees)
+        ? comparison.employees.map(record).filter((employee) => safeText(employee.name, 160))
+        : ranking;
+      if (employees.length !== 2) return assistantMessage(language, "noData");
+      const facts = employees.map((employee) => employeeMetricEntry(employee, metric, language, currency));
+      const winner = record(comparison.winner);
+      const winnerName = safeText(winner.name, 160);
+      const tied = comparison.tied === true;
+      if (language === "zh") return `${facts.join("；")}。${tied ? "两人在该指标上并列。" : `${winnerName} 在该指标上领先。`}`;
+      if (language === "es") return `${facts.join("; ")}. ${tied ? "Ambos están empatados en esa métrica." : `${winnerName} lidera en esa métrica.`}`;
+      return `${facts.join("; ")}. ${tied ? "They are tied on that metric." : `${winnerName} leads on that metric.`}`;
+    }
+
+    if (queryMode === "below_average" || queryMode === "needs_improvement") {
+      const source = queryMode === "below_average" ? data.belowAverage : data.needsImprovement;
+      const employees = Array.isArray(source) ? source.map(record) : ranking;
+      const average = record(data.average);
+      const averageValue = employeeMetricValue({
+        quoteConversionRate: average.value,
+        acceptedQuoteValue: average.value,
+        quotesAccepted: average.value,
+        quotesSent: average.value,
+        quotesCreated: average.value,
+        customersServed: average.value,
+        draftQuotes: average.value
+      }, metric, language, currency);
+      if (!employees.length) {
+        if (language === "zh") return "授权范围内没有符合该条件的销售人员。";
+        if (language === "es") return "No hay vendedores visibles que cumplan esa condición.";
+        return "No visible sellers meet that condition.";
+      }
+      const entries = employees.map((employee) => employeeMetricEntry(employee, metric, language, currency)).join("; ");
+      if (queryMode === "below_average") {
+        if (language === "zh") return `低于平均值（${averageValue}）的销售人员：${entries}。`;
+        if (language === "es") return `Por debajo del promedio de ${averageValue} en ${employeeMetricLabel(metric, language)}: ${entries}.`;
+        return `Below the ${averageValue} average for ${employeeMetricLabel(metric, language)}: ${entries}.`;
+      }
+      if (language === "zh") return `按${employeeMetricLabel(metric, language)}排序，需要改进的销售人员：${entries}。`;
+      if (language === "es") return `Según ${employeeMetricLabel(metric, language)}, quienes necesitan mejorar son: ${entries}.`;
+      return `Based on ${employeeMetricLabel(metric, language)}, the sellers needing improvement are: ${entries}.`;
+    }
+
+    if (queryMode === "employee") {
+      if (!name) return assistantMessage(language, "noData");
+      if (metric !== "overall") {
+        const entry = employeeMetricEntry(selected, metric, language, currency);
+        if (language === "zh") return `${entry}。`;
+        return `${entry}.`;
+      }
+      const facts = employeeSupportingFacts(selected, language, currency);
+      if (language === "zh") return `${name}：${facts}。`;
+      if (language === "es") return `${name} tiene ${facts}.`;
+      return `${name} has ${facts}.`;
+    }
+
+    if (!ranking.length && name) ranking.push(selected);
+    if (!ranking.length) return assistantMessage(language, "noData");
+    const rankStart = Math.max(1, count(data, "rankStart") || 1);
+    const entries = ranking.map((employee, index) =>
+      `${rankStart + index}. ${employeeMetricEntry(employee, metric, language, currency)}`
+    );
+    if (ranking.length > 1 || rankStart > 1) {
+      const end = rankStart + ranking.length - 1;
+      if (language === "zh") return `销售排名${filterQualifier}第 ${rankStart} 至 ${end} 名：\n${entries.join("\n")}`;
+      if (language === "es") return `Ranking comercial${filterQualifier}, puestos ${rankStart} a ${end}:\n${entries.join("\n")}`;
+      return `Sales ranking${filterQualifier}, positions ${rankStart}–${end}:\n${entries.join("\n")}`;
+    }
+    const leader = ranking[0];
+    const leaderName = safeText(leader.name, 160);
+    const facts = employeeSupportingFacts(leader, language, currency);
+    if (metric === "accepted_quote_value") {
+      const acceptedValue = localizedMoney(leader.acceptedQuoteValue, language, currency);
+      if (language === "zh") return `${leaderName} 的已接受报价金额最高，为 ${acceptedValue}；${facts}。`;
+      if (language === "es") return `${leaderName} tiene el mayor Accepted Quote Value: ${acceptedValue}. Registra ${facts}.`;
+      return `${leaderName} has the highest Accepted Quote Value at ${acceptedValue}. The record contains ${facts}.`;
+    }
+    if (metric === "overall") {
+      if (language === "zh") return `目前 ${leaderName} 位居官方销售排名${filterQualifier}第一：${facts}。`;
+      if (language === "es") return `Actualmente, ${leaderName} ocupa el primer lugar del ranking comercial oficial${filterQualifier}: ${facts}.`;
+      return `Currently, ${leaderName} ranks first in the official sales ranking${filterQualifier} with ${facts}.`;
+    }
+    const entry = employeeMetricEntry(leader, metric, language, currency);
+    if (language === "zh") return `${entry}，在该指标上排名第一。`;
+    if (language === "es") return `${entry}; ocupa el primer lugar en esa métrica.`;
+    return `${entry}; this is the highest value for that metric.`;
   }
   if (toolResult.tool === "client_quote_summary") {
     const client = record(data.topClient);
@@ -211,6 +459,108 @@ export function localizeToolSummary(toolResult: AiToolResult, language: Assistan
     if (language === "zh") return `${name} \u7684\u672a\u7ed3\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff0c\u5171 ${openCount} \u4efd\uff0c\u603b\u989d\u4e3a ${openValue}\u3002\u672a\u7ed3\u62a5\u4ef7\u6307\u8349\u7a3f\u6216\u5df2\u53d1\u9001\u72b6\u6001\u3002`;
     if (language === "es") return `${name} es el cliente con mayor valor de cotizaciones abiertas: ${openValue} en ${openCount} cotizaciones. Abiertas significa draft o sent.`;
     return `${name} has the highest open quote value: ${openValue} across ${openCount} quotes. Open means draft or sent.`;
+  }
+  if (toolResult.tool === "rfq_summary") {
+    const mode = safeText(data.mode, 30);
+    const rfqs = Array.isArray(data.rfqs) ? data.rfqs.map(record) : [];
+    const clarification = record(data.clarification);
+    const candidates = Array.isArray(clarification.candidates)
+      ? clarification.candidates.map((item) => safeText(item, 160)).filter(Boolean)
+      : [];
+    if (candidates.length) {
+      if (language === "zh") return `有多名员工符合该姓名：${candidates.join("、")}。请指定完整姓名。`;
+      if (language === "es") return `Hay más de un empleado visible con ese nombre: ${candidates.join(", ")}. Indica el nombre completo.`;
+      return `More than one visible employee matches that name: ${candidates.join(", ")}. Please provide the full name.`;
+    }
+    const rfqCount = count(data, "count");
+    if (mode === "new_count") {
+      if (language === "zh") return `你的授权范围内有 ${rfqCount} 个新 RFQ。这里“新”指过去 24 小时内创建、状态为未分配或已分配的 RFQ。`;
+      if (language === "es") return `Hay ${rfqCount} RFQs nuevos en tu alcance autorizado. “Nuevo” significa un RFQ unassigned o assigned creado durante las últimas 24 horas.`;
+      return `There are ${rfqCount} new RFQs in your authorized scope. “New” means an unassigned or assigned RFQ created during the last 24 hours.`;
+    }
+    const labels = rfqs.slice(0, 5).map((rfq) => {
+      const externalId = safeText(rfq.externalRfqId, 160);
+      const status = safeText(rfq.status, 30);
+      return `${externalId}${status ? ` (${status})` : ""}`;
+    }).filter(Boolean);
+    if (mode === "latest") {
+      const latest = rfqs[0] ?? {};
+      const externalId = safeText(latest.externalRfqId, 160);
+      if (!externalId) return assistantMessage(language, "noData");
+      const status = safeText(latest.status, 30);
+      const company = safeText(latest.companyOrName, 200);
+      const createdAt = localizedUploadDate(latest.createdAt, language);
+      if (language === "zh") return `最近的 RFQ 是 ${externalId}${company ? `，客户为 ${company}` : ""}，状态为 ${status}${createdAt ? `，创建于 ${createdAt}` : ""}。`;
+      if (language === "es") return `El RFQ más reciente es ${externalId}${company ? ` de ${company}` : ""}, con estado ${status}${createdAt ? `, creado el ${createdAt}` : ""}.`;
+      return `The most recent RFQ is ${externalId}${company ? ` for ${company}` : ""}, with status ${status}${createdAt ? `, created ${createdAt}` : ""}.`;
+    }
+    if (mode === "employee") {
+      const employee = safeText(data.employeeName, 160);
+      if (language === "zh") return `${employee || "该员工"} 在你的授权范围内有 ${rfqCount} 个 RFQ${labels.length ? `：${labels.join("、")}` : ""}。`;
+      if (language === "es") return `${employee || "El empleado"} tiene ${rfqCount} RFQs en tu alcance autorizado${labels.length ? `: ${labels.join(", ")}` : "."}`;
+      return `${employee || "The employee"} has ${rfqCount} RFQs in your authorized scope${labels.length ? `: ${labels.join(", ")}` : "."}`;
+    }
+    if (mode === "unassigned") {
+      if (language === "zh") return `你的授权范围内有 ${rfqCount} 个未分配 RFQ${labels.length ? `：${labels.join("、")}` : ""}。`;
+      if (language === "es") return `Hay ${rfqCount} RFQs sin asignar en tu alcance autorizado${labels.length ? `: ${labels.join(", ")}` : "."}`;
+      return `There are ${rfqCount} unassigned RFQs in your authorized scope${labels.length ? `: ${labels.join(", ")}` : "."}`;
+    }
+    if (language === "zh") return `你的授权范围内共有 ${rfqCount} 个 RFQ${labels.length ? `：${labels.join("、")}` : ""}。`;
+    if (language === "es") return `Hay ${rfqCount} RFQs en tu alcance autorizado${labels.length ? `: ${labels.join(", ")}` : "."}`;
+    return `There are ${rfqCount} RFQs in your authorized scope${labels.length ? `: ${labels.join(", ")}` : "."}`;
+  }
+  if (toolResult.tool === "client_lookup") {
+    const mode = safeText(data.mode, 30);
+    const clients = Array.isArray(data.clients) ? data.clients.map(record) : [];
+    const client = record(data.client);
+    const clientName = safeText(client.name, 200);
+    const demoDisclosure = client.isDemoAccount === true
+      ? language === "es"
+        ? " Es una entidad ficticia del entorno demo, sin afiliación con la marca real."
+        : language === "zh"
+          ? " 这是演示环境中的虚构实体，与真实品牌无关联。"
+          : " This is a fictitious demo entity with no affiliation to the real brand."
+      : "";
+    if (mode === "count") {
+      const clientCount = count(data, "count");
+      if (language === "zh") return `你的授权客户列表中有 ${clientCount} 个活跃客户。`;
+      if (language === "es") return `Hay ${clientCount} clientes activos en tu lista autorizada.`;
+      return `There are ${clientCount} active clients in your authorized list.`;
+    }
+    if (mode === "search") {
+      const names = clients.slice(0, 10).map((item) => safeText(item.name, 200)).filter(Boolean);
+      if (!names.length) return assistantMessage(language, "noData");
+      const hasDemo = clients.some((item) => item.isDemoAccount === true);
+      const disclosure = hasDemo
+        ? language === "es"
+          ? " Las cuentas *-demo son entidades ficticias sin afiliación con las marcas reales."
+          : language === "zh"
+            ? " *-demo 账户是虚构实体，与真实品牌无关联。"
+            : " *-demo accounts are fictitious entities with no affiliation to the real brands."
+        : "";
+      if (language === "zh") return `找到 ${names.length} 个授权客户：${names.join("、")}。${disclosure}`.trim();
+      if (language === "es") return `Encontré ${names.length} clientes autorizados: ${names.join(", ")}.${disclosure}`;
+      return `Found ${names.length} authorized clients: ${names.join(", ")}.${disclosure}`;
+    }
+    if (mode === "owner") {
+      const seller = safeText(data.assignedSellerName, 160);
+      if (language === "zh") return `${clientName} 由 ${seller || "尚未分配销售人员"} 负责。${demoDisclosure}`;
+      if (language === "es") return `${clientName} está atendido por ${seller || "ningún vendedor asignado"}.${demoDisclosure}`;
+      return `${clientName} is handled by ${seller || "no assigned seller"}.${demoDisclosure}`;
+    }
+    const activityCount = count(data, "activityCount");
+    if (mode === "rfqs") {
+      const rfqs = Array.isArray(data.rfqs) ? data.rfqs.map(record) : [];
+      const labels = rfqs.slice(0, 5).map((rfq) => `${safeText(rfq.externalRfqId, 160)} (${safeText(rfq.status, 30)})`);
+      if (language === "zh") return `${clientName} 在你的授权范围内有 ${activityCount} 个 RFQ${labels.length ? `：${labels.join("、")}` : ""}。${demoDisclosure}`;
+      if (language === "es") return `${clientName} tiene ${activityCount} RFQs en tu alcance autorizado${labels.length ? `: ${labels.join(", ")}` : "."}${demoDisclosure}`;
+      return `${clientName} has ${activityCount} RFQs in your authorized scope${labels.length ? `: ${labels.join(", ")}` : "."}${demoDisclosure}`;
+    }
+    const quotes = Array.isArray(data.quotes) ? data.quotes.map(record) : [];
+    const labels = quotes.slice(0, 5).map((quote) => `${safeText(quote.number, 100)} (${safeText(quote.status, 30)})`);
+    if (language === "zh") return `${clientName} 在你的授权范围内有 ${activityCount} 份报价${labels.length ? `：${labels.join("、")}` : ""}。${demoDisclosure}`;
+    if (language === "es") return `${clientName} tiene ${activityCount} cotizaciones en tu alcance autorizado${labels.length ? `: ${labels.join(", ")}` : "."}${demoDisclosure}`;
+    return `${clientName} has ${activityCount} quotes in your authorized scope${labels.length ? `: ${labels.join(", ")}` : "."}${demoDisclosure}`;
   }
   if (toolResult.tool === "sourcing_lookup") {
     const approvals = Array.isArray(data.approvals) ? data.approvals.map(record) : [];

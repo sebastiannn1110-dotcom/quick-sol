@@ -25,6 +25,7 @@ import {
   getQuoteSummary,
   getSourcingLookup
 } from "@/lib/ai/commerce-tools";
+import { detectAssistantIntent } from "@/lib/ai/intent-catalog";
 import { localizeToolSummary } from "@/lib/ai/messages";
 import { sanitizeToolResultForLlm } from "@/lib/ai/tool-contracts";
 
@@ -172,6 +173,103 @@ function analyticsFor(role: UserRole): EmployeeAnalyticsPayload {
       ranking: "Accepted Quote Value",
       newCustomers: "First quote in the selected period"
     }
+  };
+}
+
+function performanceAnalytics(): EmployeeAnalyticsPayload {
+  const metrics: EmployeeQuoteMetrics[] = [
+    {
+      ...METRICS.employee,
+      country: "Colombia",
+      department: "Sales",
+      quotesCreated: 6,
+      quotesSent: 5,
+      quotesAccepted: 4,
+      quoteConversionRate: 80,
+      acceptedQuoteValue: 1_000,
+      customersServed: 5
+    },
+    {
+      ...METRICS.outside,
+      name: "Jordan Lee",
+      country: "US",
+      department: "Sales",
+      quotesCreated: 12,
+      quotesSent: 10,
+      quotesAccepted: 7,
+      quoteConversionRate: 70,
+      acceptedQuoteValue: 900,
+      customersServed: 8
+    },
+    {
+      ...METRICS.manager,
+      name: "Morgan Reed",
+      country: "Colombia",
+      department: "Sales",
+      quotesCreated: 4,
+      quotesSent: 4,
+      quotesAccepted: 3,
+      quoteConversionRate: 75,
+      acceptedQuoteValue: 800,
+      customersServed: 4
+    },
+    {
+      ...METRICS.admin,
+      name: "Alex Rivera",
+      country: "US",
+      department: "Sales",
+      quotesCreated: 9,
+      quotesSent: 5,
+      quotesAccepted: 2,
+      quoteConversionRate: 40,
+      acceptedQuoteValue: 700,
+      customersServed: 6
+    },
+    {
+      ...METRICS.super_admin_dev,
+      name: "Taylor Chen",
+      country: "US",
+      department: "Sales",
+      quotesCreated: 3,
+      quotesSent: 5,
+      quotesAccepted: 1,
+      quoteConversionRate: 20,
+      acceptedQuoteValue: 600,
+      customersServed: 2
+    }
+  ];
+  const totals = {
+    quotesCreated: metrics.reduce((sum, item) => sum + item.quotesCreated, 0),
+    quotesSent: metrics.reduce((sum, item) => sum + item.quotesSent, 0),
+    quotesAccepted: metrics.reduce((sum, item) => sum + item.quotesAccepted, 0),
+    quotesRejected: metrics.reduce((sum, item) => sum + item.quotesRejected, 0),
+    quoteConversionRate: 62.07,
+    quotedValue: metrics.reduce((sum, item) => sum + item.quotedValue, 0),
+    acceptedQuoteValue: metrics.reduce((sum, item) => sum + item.acceptedQuoteValue, 0),
+    customersServed: 25,
+    newCustomers: metrics.reduce((sum, item) => sum + item.newCustomers, 0)
+  };
+  return {
+    ...analyticsFor("admin"),
+    filters: {},
+    filterOptions: {
+      countries: ["Colombia", "US"],
+      regions: ["Americas"],
+      departments: ["Sales"],
+      businessRanks: ["individual_contributor"],
+      teams: [],
+      sellers: metrics.map((item) => ({
+        employeeId: item.employeeId,
+        name: item.name,
+        businessTitle: item.businessTitle
+      })),
+      quoteStatuses: ["draft", "sent", "accepted", "rejected", "expired"]
+    },
+    metrics,
+    ranking: [...metrics].sort(
+      (left, right) => right.acceptedQuoteValue - left.acceptedQuoteValue
+    ),
+    totals
   };
 }
 
@@ -386,6 +484,406 @@ describe("read-only commerce AI tools", () => {
     expect(JSON.stringify(output.data)).not.toMatch(/salary|compensation/i);
   });
 
+  it.each([
+    ["es", "quien es el mejor vendedor"],
+    ["es", "de los empleados en la base de datos quien tiene las mejores metricas"],
+    ["en", "who is the best salesperson"],
+    ["zh", "\u8c01\u662f\u8868\u73b0\u6700\u597d\u7684\u9500\u552e\u4eba\u5458"]
+  ] as const)("uses the canonical Employee Analytics overall ranking for %s natural language", async (language, question) => {
+    const analytics = performanceAnalytics();
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(analytics);
+
+    const output = await getEmployeeQuoteMetrics(contextFor("admin"), question, { language });
+    const data = output.data as {
+      queryMode: string;
+      sortBy: string;
+      selectedEmployee: { name: string };
+      metricDefinition: string;
+    };
+
+    expect(data.queryMode).toBe("ranking");
+    expect(data.sortBy).toBe("overall");
+    expect(data.metricDefinition).toBe(analytics.definitions.ranking);
+    expect(data.selectedEmployee.name).toBe(analytics.ranking[0].name);
+    expect(JSON.stringify(data)).not.toMatch(/employeeId|email|salary|compensation/i);
+  });
+
+  it("keeps the natural-language → intent → canonical metrics → answer contract deterministic", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(performanceAnalytics());
+    const question = "quien es el mejor vendedor";
+    const detected = detectAssistantIntent(question, "es");
+
+    expect(detected).toEqual(expect.objectContaining({
+      intent: "employee_quote_metrics",
+      tool: "employee_quote_metrics",
+      ambiguous: false
+    }));
+
+    const toolResult = await getEmployeeQuoteMetrics(contextFor("admin"), question, {
+      language: "es"
+    });
+    const answer = localizeToolSummary(toolResult, "es");
+
+    expect(toolResult.data).toEqual(expect.objectContaining({
+      selectedEmployee: expect.objectContaining({
+        name: "Maya Torres",
+        quotesAccepted: 4,
+        quoteConversionRate: 80,
+        acceptedQuoteValue: 1_000
+      })
+    }));
+    expect(answer).toContain("Maya Torres");
+    expect(answer).toContain("4 cotizaciones aceptadas");
+    expect(answer).toContain("80% de conversión");
+    expect(answer).toContain("Accepted Quote Value");
+    expect(answer).not.toMatch(/\b(?:salary|compensation|revenue|ventas?)\b/i);
+  });
+
+  it.each([
+    ["quien ha conseguido mas cotizaciones aceptadas", "accepted_quotes", "Jordan Lee"],
+    ["quien tiene mayor conversion", "conversion_rate", "Maya Torres"],
+    ["quien ha enviado mas cotizaciones", "sent_quotes", "Jordan Lee"],
+    ["quien ha creado mas cotizaciones", "created_quotes", "Jordan Lee"],
+    ["quien tiene mas clientes atendidos", "customers_served", "Jordan Lee"],
+    ["who has the highest accepted quote value", "accepted_quote_value", "Maya Torres"]
+  ] as const)("sorts %s by %s", async (question, expectedSort, expectedName) => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(performanceAnalytics());
+
+    const output = await getEmployeeQuoteMetrics(contextFor("admin"), question);
+    const data = output.data as {
+      sortBy: string;
+      selectedEmployee: { name: string };
+    };
+
+    expect(data.sortBy).toBe(expectedSort);
+    expect(data.selectedEmployee.name).toBe(expectedName);
+  });
+
+  it("returns a requested top N and resolves ordinal/next-ranking follow-ups", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValue(performanceAnalytics());
+    const context = contextFor("admin");
+
+    const topFive = await getEmployeeQuoteMetrics(
+      context,
+      "cuales son los 5 mejores vendedores",
+      { language: "es" }
+    );
+    const second = await getEmployeeQuoteMetrics(
+      context,
+      "y el segundo",
+      {
+        language: "es",
+        history: [{ role: "user", content: "quien es el mejor vendedor" }]
+      }
+    );
+    const nextFour = await getEmployeeQuoteMetrics(
+      context,
+      "y los siguientes cuatro",
+      {
+        language: "es",
+        history: [{ role: "user", content: "quien es el mejor vendedor" }]
+      }
+    );
+
+    expect((topFive.data as { ranking: unknown[] }).ranking).toHaveLength(5);
+    expect((second.data as { rankStart: number; selectedEmployee: { name: string } })).toEqual(
+      expect.objectContaining({
+        rankStart: 2,
+        selectedEmployee: expect.objectContaining({ name: "Jordan Lee" })
+      })
+    );
+    expect((nextFour.data as { rankStart: number; ranking: Array<{ name: string }> })).toEqual(
+      expect.objectContaining({
+        rankStart: 2,
+        ranking: [
+          expect.objectContaining({ name: "Jordan Lee" }),
+          expect.objectContaining({ name: "Morgan Reed" }),
+          expect.objectContaining({ name: "Alex Rivera" }),
+          expect.objectContaining({ name: "Taylor Chen" })
+        ]
+      })
+    );
+
+    const topFiveAnswer = localizeToolSummary(topFive, "es");
+    const nextFourAnswer = localizeToolSummary(nextFour, "es");
+    expect(topFiveAnswer).toContain("1. Maya Torres");
+    expect(topFiveAnswer).toContain("5. Taylor Chen");
+    expect(nextFourAnswer).toContain("puestos 2 a 5");
+    expect(nextFourAnswer).toContain("2. Jordan Lee");
+    expect(nextFourAnswer).toContain("5. Taylor Chen");
+  });
+
+  it("returns aggregate metrics from Employee Analytics without selecting an employee", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(performanceAnalytics());
+
+    const output = await getEmployeeQuoteMetrics(
+      contextFor("admin"),
+      "cuantas cotizaciones aceptadas tenemos",
+      { language: "es" }
+    );
+    const data = output.data as {
+      queryMode: string;
+      selectedEmployee: null;
+      activeSellerCount: number;
+      totals: { quotesAccepted: number; quoteConversionRate: number };
+    };
+
+    expect(data).toEqual(expect.objectContaining({
+      queryMode: "aggregate",
+      selectedEmployee: null,
+      activeSellerCount: 5,
+      totals: expect.objectContaining({
+        quotesAccepted: 17,
+        quoteConversionRate: 62.07
+      })
+    }));
+    expect(output.summary).toContain("17 cotizaciones aceptadas");
+    expect(localizeToolSummary(output, "es")).toContain("17 cotizaciones aceptadas");
+  });
+
+  it.each([
+    ["cuantas cotizaciones enviadas tenemos", "sent_quotes", "29 cotizaciones enviadas"],
+    ["cuantas cotizaciones creadas tenemos", "created_quotes", "34 cotizaciones creadas"],
+    ["cuantos clientes atendidos tenemos", "customers_served", "25 clientes atendidos"]
+  ] as const)("renders canonical aggregate %s", async (question, sortBy, expected) => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(performanceAnalytics());
+
+    const output = await getEmployeeQuoteMetrics(contextFor("admin"), question, { language: "es" });
+
+    expect(output.data).toEqual(expect.objectContaining({ queryMode: "aggregate", sortBy }));
+    expect(localizeToolSummary(output, "es")).toContain(expected);
+  });
+
+  it("answers an individual customers-served question with only safe visible fields", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce(performanceAnalytics());
+
+    const output = await getEmployeeQuoteMetrics(
+      contextFor("admin"),
+      "cuantos clientes ha atendido Maya"
+    );
+    const data = output.data as {
+      queryMode: string;
+      sortBy: string;
+      selectedEmployee: { name: string; customersServed: number };
+    };
+
+    expect(data).toEqual(expect.objectContaining({
+      queryMode: "employee",
+      sortBy: "customers_served",
+      selectedEmployee: expect.objectContaining({
+        name: "Maya Torres",
+        customersServed: 5
+      })
+    }));
+    expect(JSON.stringify(data)).not.toMatch(/employeeId|email|salary|compensation/i);
+  });
+
+  it("compares two visible employees and keeps the pair for a metric follow-up", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValue(performanceAnalytics());
+    const context = contextFor("admin");
+
+    const comparison = await getEmployeeQuoteMetrics(
+      context,
+      "Compara Maya con Morgan",
+      { language: "es" }
+    );
+    const followUp = await getEmployeeQuoteMetrics(
+      context,
+      "quien tiene mejor conversion",
+      {
+        language: "es",
+        history: [{ role: "user", content: "Compara Maya con Morgan" }]
+      }
+    );
+    const staleFollowUp = await getEmployeeQuoteMetrics(
+      context,
+      "quien tiene mejor conversion",
+      {
+        language: "es",
+        history: [
+          { role: "user", content: "Compara Maya con Morgan" },
+          { role: "assistant", content: "Maya lidera." },
+          { role: "user", content: "busca MPN ABC123" },
+          { role: "assistant", content: "Encontré ABC123." }
+        ]
+      }
+    );
+
+    expect(comparison.data).toEqual(expect.objectContaining({
+      queryMode: "comparison",
+      sortBy: "overall",
+      comparison: expect.objectContaining({
+        winner: expect.objectContaining({ name: "Maya Torres" }),
+        tied: false
+      })
+    }));
+    expect(followUp.data).toEqual(expect.objectContaining({
+      queryMode: "comparison",
+      sortBy: "conversion_rate",
+      comparison: expect.objectContaining({
+        winner: expect.objectContaining({ name: "Maya Torres" }),
+        employees: [
+          expect.objectContaining({ name: "Maya Torres", quoteConversionRate: 80 }),
+          expect.objectContaining({ name: "Morgan Reed", quoteConversionRate: 75 })
+        ]
+      })
+    }));
+    expect(staleFollowUp.data).toEqual(expect.objectContaining({
+      queryMode: "ranking",
+      sortBy: "conversion_rate",
+      selectedEmployee: expect.objectContaining({ name: "Maya Torres" })
+    }));
+    const answer = localizeToolSummary(followUp, "es");
+    expect(answer).toContain("Maya Torres");
+    expect(answer).toContain("80%");
+    expect(answer).toContain("Morgan Reed");
+    expect(answer).toContain("75%");
+    expect(answer).toContain("Maya Torres lidera");
+  });
+
+  it("asks for clarification when a visible employee name is duplicated", async () => {
+    const analytics = performanceAnalytics();
+    const duplicates: EmployeeQuoteMetrics[] = [
+      { ...analytics.metrics[0], employeeId: "duplicate-one", name: "Sam Lee", region: "Americas" },
+      { ...analytics.metrics[1], employeeId: "duplicate-two", name: "Sam Lee", region: "APAC" }
+    ];
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce({
+      ...analytics,
+      metrics: [...analytics.metrics, ...duplicates],
+      ranking: [...analytics.ranking, ...duplicates]
+    });
+
+    const output = await getEmployeeQuoteMetrics(
+      contextFor("admin"),
+      "Compara Sam Lee con Maya",
+      { language: "es" }
+    );
+    const data = output.data as {
+      queryMode: string;
+      clarification: { required: boolean; reason: string; candidates: Array<{ name: string }> };
+    };
+
+    expect(data.queryMode).toBe("clarification");
+    expect(data.clarification).toEqual(expect.objectContaining({
+      required: true,
+      reason: "ambiguous_employee_name"
+    }));
+    expect(data.clarification.candidates.filter((item) => item.name === "Sam Lee")).toHaveLength(2);
+    expect(JSON.stringify(data)).not.toMatch(/duplicate-one|duplicate-two|employeeId|email/i);
+    const answer = localizeToolSummary(output, "es");
+    expect(answer).toContain("Opciones:");
+    expect(answer).toContain("Americas");
+    expect(answer).toContain("APAC");
+  });
+
+  it("uses the canonical draft filter and ranks by draft quote count", async () => {
+    const analytics = performanceAnalytics();
+    const draftCounts = new Map([
+      [IDS.employee, 2],
+      [IDS.outside, 4],
+      [IDS.manager, 8],
+      [IDS.admin, 1],
+      [IDS.super_admin_dev, 0]
+    ]);
+    const draftMetrics = analytics.metrics.map((item) => ({
+      ...item,
+      quotesCreated: draftCounts.get(item.employeeId) ?? 0
+    }));
+    const draftAnalytics = {
+      ...analytics,
+      filters: { quoteStatus: "draft" as const },
+      metrics: draftMetrics,
+      totals: {
+        ...analytics.totals,
+        quotesCreated: draftMetrics.reduce((sum, item) => sum + item.quotesCreated, 0)
+      }
+    };
+    serviceMocks.loadEmployeeAnalytics.mockImplementation(async (_context, filters) =>
+      filters?.quoteStatus === "draft" ? draftAnalytics : analytics
+    );
+    const context = contextFor("admin");
+
+    const output = await getEmployeeQuoteMetrics(
+      context,
+      "que vendedor tiene mas quotes en draft"
+    );
+
+    expect(serviceMocks.loadEmployeeAnalytics).toHaveBeenNthCalledWith(1, context);
+    expect(serviceMocks.loadEmployeeAnalytics).toHaveBeenNthCalledWith(2, context, {
+      quoteStatus: "draft"
+    });
+    expect(output.data).toEqual(expect.objectContaining({
+      sortBy: "draft_quotes",
+      selectedEmployee: expect.objectContaining({
+        name: "Morgan Reed",
+        draftQuotes: 8
+      }),
+      totals: expect.objectContaining({ draftQuotes: 15 })
+    }));
+  });
+
+  it("reuses Employee Analytics filters for a country-specific ranking", async () => {
+    const analytics = performanceAnalytics();
+    const colombiaMetrics = analytics.metrics.filter((item) => item.country === "Colombia");
+    const colombiaAnalytics = {
+      ...analytics,
+      filters: { country: "Colombia" },
+      metrics: colombiaMetrics,
+      ranking: [colombiaMetrics[1], colombiaMetrics[0]]
+    };
+    serviceMocks.loadEmployeeAnalytics.mockImplementation(async (_context, filters) =>
+      filters?.country === "Colombia" ? colombiaAnalytics : analytics
+    );
+    const context = contextFor("admin");
+
+    const output = await getEmployeeQuoteMetrics(
+      context,
+      "cual es el mejor vendedor de Colombia"
+    );
+
+    expect(serviceMocks.loadEmployeeAnalytics).toHaveBeenNthCalledWith(1, context);
+    expect(serviceMocks.loadEmployeeAnalytics).toHaveBeenNthCalledWith(2, context, {
+      country: "Colombia"
+    });
+    expect(output.data).toEqual(expect.objectContaining({
+      appliedFilters: { country: "Colombia" },
+      selectedEmployee: expect.objectContaining({ name: "Morgan Reed" })
+    }));
+    const answer = localizeToolSummary(output, "es");
+    expect(answer).toContain("Morgan Reed");
+    expect(answer).toContain("país Colombia");
+  });
+
+  it("returns below-average and needs-improvement views without inventing a score", async () => {
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValue(performanceAnalytics());
+    const context = contextFor("admin");
+
+    const belowAverage = await getEmployeeQuoteMetrics(
+      context,
+      "quien esta por debajo del promedio de accepted quote value"
+    );
+    const needsImprovement = await getEmployeeQuoteMetrics(
+      context,
+      "que vendedor necesita mejorar"
+    );
+
+    expect(belowAverage.data).toEqual(expect.objectContaining({
+      queryMode: "below_average",
+      sortBy: "accepted_quote_value",
+      average: { metric: "accepted_quote_value", value: 800 },
+      belowAverage: [
+        expect.objectContaining({ name: "Alex Rivera", acceptedQuoteValue: 700 }),
+        expect.objectContaining({ name: "Taylor Chen", acceptedQuoteValue: 600 })
+      ]
+    }));
+    expect(needsImprovement.data).toEqual(expect.objectContaining({
+      queryMode: "needs_improvement",
+      sortBy: "overall",
+      selectedEmployee: expect.objectContaining({ name: "Taylor Chen" }),
+      metricDefinition: "Accepted Quote Value"
+    }));
+  });
+
   it.each(["employee", "manager", "admin", "super_admin_dev"] as const)(
     "returns only seller-safe sourcing fields for %s",
     async (role) => {
@@ -450,12 +948,33 @@ describe("read-only commerce AI tools", () => {
       rows: [],
       data: {
         analyticsScope: "global",
+        generatedAt: "2026-08-30T12:00:00.000Z",
+        queryMode: "comparison",
+        sortBy: "conversion_rate",
+        metricDefinition: "conversion_rate",
+        requestedLimit: 2,
+        rankStart: 1,
+        activeSellerCount: 5,
+        appliedFilters: { country: "Colombia", teamManagerId: "secret-manager-id" },
         selectedEmployee: {
           name: "Maya Torres",
+          employeeId: "secret-employee-id",
+          country: "Colombia",
+          department: "Sales",
+          draftQuotes: 2,
           acceptedQuoteValue: 500,
           salary: 999999,
           compensation: { amount: 999999 }
         },
+        comparison: {
+          metric: "conversion_rate",
+          employees: [{ name: "Maya Torres", quoteConversionRate: 80, email: "hidden@example.com" }],
+          winner: { name: "Maya Torres", quoteConversionRate: 80, employeeId: "secret" },
+          tied: false
+        },
+        average: { metric: "conversion_rate", value: 62.5 },
+        belowAverage: [{ name: "Taylor Chen", quoteConversionRate: 20, email: "hidden@example.com" }],
+        needsImprovement: [{ name: "Taylor Chen", quoteConversionRate: 20, salary: 999999 }],
         salary: 999999
       },
       summary: "",
@@ -483,7 +1002,26 @@ describe("read-only commerce AI tools", () => {
       deterministic: true
     });
 
-    expect(JSON.stringify(employee.data)).not.toMatch(/salary|compensation|999999/i);
+    expect(employee.data).toEqual(expect.objectContaining({
+      queryMode: "comparison",
+      sortBy: "conversion_rate",
+      appliedFilters: { country: "Colombia" },
+      selectedEmployee: expect.objectContaining({
+        name: "Maya Torres",
+        country: "Colombia",
+        department: "Sales",
+        draftQuotes: 2
+      }),
+      comparison: expect.objectContaining({
+        metric: "conversion_rate",
+        winner: expect.objectContaining({ name: "Maya Torres", quoteConversionRate: 80 }),
+        tied: false
+      }),
+      average: { metric: "conversion_rate", value: 62.5 },
+      belowAverage: [expect.objectContaining({ name: "Taylor Chen", quoteConversionRate: 20 })],
+      needsImprovement: [expect.objectContaining({ name: "Taylor Chen", quoteConversionRate: 20 })]
+    }));
+    expect(JSON.stringify(employee.data)).not.toMatch(/salary|compensation|999999|employeeId|email|secret/i);
     expect(sourcing.data).toEqual(expect.objectContaining({ accessMode: "seller_safe" }));
     expect(JSON.stringify(sourcing.data)).not.toMatch(/rawUnitCost|supplierName|availableQuantity|Secret Supplier/i);
   });

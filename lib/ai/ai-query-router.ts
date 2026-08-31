@@ -47,6 +47,10 @@ import {
   getSourcingLookup
 } from "@/lib/ai/commerce-tools";
 import {
+  getClientLookup,
+  getRfqSummary
+} from "@/lib/ai/commerce-insights-tools";
+import {
   logSafeAiEvent,
   sanitizeQuestionForLogs
 } from "@/lib/ai/safe-logging";
@@ -112,6 +116,9 @@ function entityForIntent(intent: AssistantIntentId): AssistantResponsePlan["enti
   }
   if (intent.includes("stock") || intent === "zero_stock") return "stock";
   if (intent.includes("opportunity")) return "opportunity";
+  if (intent === "employee_quote_metrics") return "employee";
+  if (intent === "rfq_summary") return "rfq";
+  if (intent === "client_lookup" || intent === "client_quote_summary") return "client";
   if (intent === "mpn_search" || intent.includes("mpn")) return "mpn";
   return null;
 }
@@ -294,8 +301,10 @@ async function executeDetectedIntent(input: {
   if (intent === "stock_concept_help") return getStockConceptHelp(context);
   if (intent === "quote_summary") return getQuoteSummary(context);
   if (intent === "employee_quote_metrics") {
-    return getEmployeeQuoteMetrics(context, question);
+    return getEmployeeQuoteMetrics(context, question, { language, history: input.history });
   }
+  if (intent === "rfq_summary") return getRfqSummary(context, question);
+  if (intent === "client_lookup") return getClientLookup(context, question);
   if (intent === "client_quote_summary") return getClientQuoteSummary(context);
   if (intent === "sourcing_lookup") {
     return getSourcingLookup(context, input.mpn ?? "");
@@ -371,7 +380,7 @@ export async function routeAssistantDatabaseQuery(
     };
   }
 
-  const detected = detectAssistantIntent(question, language);
+  const detected = detectAssistantIntent(question, language, history);
 
   // Keep the established security detector as a second, independent boundary.
   if (

@@ -22,7 +22,7 @@ export interface AssistantResponsePlan {
   tool: string | null;
   answerMode: AssistantAnswerMode;
   language: AssistantLanguage;
-  entity: "mpn" | "stock" | "opportunity" | "upload" | "memory" | null;
+  entity: "mpn" | "stock" | "opportunity" | "upload" | "memory" | "employee" | "rfq" | "client" | null;
   metric: string | null;
   mpn: string | null;
   requiresClarification: boolean;

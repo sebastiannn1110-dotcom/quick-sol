@@ -8,6 +8,8 @@ const checkPersistentRateLimit = vi.fn();
 const answerAssistantQuestion = vi.fn();
 const loadOwnedConversation = vi.fn();
 const appendOwnedMessage = vi.fn();
+class MockAssistantRequestError extends Error {}
+class MockAssistantConfigError extends Error {}
 
 function request(body: Record<string, unknown>, signal?: AbortSignal) {
   return new Request("https://app.test/api/ai/assistant/stream", {
@@ -56,7 +58,11 @@ describe("POST /api/ai/assistant/stream", () => {
     vi.doMock("@/lib/security/rateLimit", () => ({
       rateLimitResponse: vi.fn(() => new Response(null, { status: 429 }))
     }));
-    vi.doMock("@/lib/ai/assistantCore", () => ({ answerAssistantQuestion }));
+    vi.doMock("@/lib/ai/assistantCore", () => ({
+      answerAssistantQuestion,
+      AssistantRequestError: MockAssistantRequestError,
+      AssistantConfigError: MockAssistantConfigError
+    }));
     vi.doMock("@/lib/ai/conversation-memory", async () => {
       const actual = await vi.importActual<typeof import("@/lib/ai/conversation-memory")>(
         "@/lib/ai/conversation-memory"
@@ -159,6 +165,26 @@ describe("POST /api/ai/assistant/stream", () => {
     expect(response.status).toBe(413);
     expect(loadOwnedConversation).not.toHaveBeenCalled();
     expect(answerAssistantQuestion).not.toHaveBeenCalled();
+  });
+
+  it("emits a safe localized tool failure without leaking internal details", async () => {
+    answerAssistantQuestion.mockRejectedValueOnce(
+      new MockAssistantRequestError(
+        "No pude consultar las métricas en este momento. 123e4567-e89b-42d3-a456-426614174000 /api/private"
+      )
+    );
+    const { POST } = await import("../route");
+    const response = await POST(request({
+      message: "quien es el mejor vendedor",
+      language: "es"
+    }));
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("event: error");
+    expect(body).toContain("No pude consultar las métricas en este momento.");
+    expect(body).not.toContain("123e4567-e89b-42d3-a456-426614174000");
+    expect(body).not.toContain("/api/private");
   });
 
   it("stops emitting and does not persist an assistant message after cancellation", async () => {

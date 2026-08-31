@@ -57,6 +57,8 @@ export type AiDatabaseToolName =
   | "quote_summary"
   | "employee_quote_metrics"
   | "client_quote_summary"
+  | "rfq_summary"
+  | "client_lookup"
   | "sourcing_lookup"
   | "searchBusinessRecords"
   | "getRecordsByMpn"

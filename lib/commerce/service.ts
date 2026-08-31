@@ -213,6 +213,10 @@ async function manageableClientIds(supabase: SupabaseClient) {
   return [...new Set(ids)];
 }
 
+export async function listCommerceManageableClientIds(supabase: SupabaseClient) {
+  return manageableClientIds(supabase);
+}
+
 export async function listCommerceCatalog(
   supabase: SupabaseClient,
   searchParams: URLSearchParams

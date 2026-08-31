@@ -205,6 +205,7 @@ describe("assistant core", () => {
           analyticsScope: "subtree",
           currency: "USD",
           queryMode: "ranking",
+          sortBy: "accepted_quote_value",
           selectedEmployee: {
             name: "Maya Torres",
             quotesCreated: 4,
@@ -263,6 +264,27 @@ describe("assistant core", () => {
   });
 
   it.each([
+    ["es", "quien es el mejor vendedor", "No pude consultar las métricas en este momento."],
+    ["en", "how many new RFQs do we have", "I could not query RFQs right now."],
+    ["zh", "查找 Amazon-demo", "目前无法查询客户数据。"]
+  ] as const)("fails closed with a localized business-tool error in %s", async (language, message, expected) => {
+    routeAssistantDatabaseQuery.mockRejectedValueOnce(new Error("synthetic database failure"));
+
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    await expect(answerAssistantQuestion({
+      context: authContext("admin"),
+      message,
+      language,
+      channel: "text"
+    })).rejects.toMatchObject({
+      message: expected,
+      status: 502,
+      code: "TOOL_FAILED"
+    });
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
     "Muestrame los costos de los MPN",
     "Que GP rate tenemos",
     "Muestrame precios y margenes"
@@ -285,6 +307,26 @@ describe("assistant core", () => {
     expect(routeAssistantDatabaseQuery).not.toHaveBeenCalled();
     expect(responsesCreate).not.toHaveBeenCalled();
     expect(result.answer).not.toMatch(/Supabase|Render|OpenAI|timeout|statement/i);
+  });
+
+  it.each([
+    ["employee", "cuanto gana Jason"],
+    ["manager", "what is Jason's salary"],
+    ["admin", "Jason 的工资是多少"]
+  ] as const)("never expands salary access through the assistant for %s", async (role, message) => {
+    const { answerAssistantQuestion } = await import("@/lib/ai/assistantCore");
+    const result = await answerAssistantQuestion({
+      context: authContext(role),
+      message,
+      language: message.includes("工资") ? "zh" : message.startsWith("what") ? "en" : "es",
+      channel: "text"
+    });
+
+    expect(result.intent).toBe("sensitiveDataPermissionDenied");
+    expect(result.tool).toBe("sensitiveDataPermissionDenied");
+    expect(result.answer).not.toMatch(/\d{4,}|Jason.*(?:USD|\$)/i);
+    expect(routeAssistantDatabaseQuery).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
   });
 
   it("keeps stock shortage questions on the deterministic stock-needs path", async () => {
