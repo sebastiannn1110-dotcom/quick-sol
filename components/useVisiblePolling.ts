@@ -12,6 +12,7 @@ export type VisiblePollingContext = {
 type VisiblePollingOptions = {
   enabled?: boolean;
   intervalMs?: number;
+  restartKey?: unknown;
 };
 
 const DEFAULT_INTERVAL_MS = 12_000;
@@ -22,7 +23,7 @@ const DEFAULT_INTERVAL_MS = 12_000;
  */
 export function useVisiblePolling(
   task: (context: VisiblePollingContext) => Promise<void> | void,
-  { enabled = true, intervalMs = DEFAULT_INTERVAL_MS }: VisiblePollingOptions = {}
+  { enabled = true, intervalMs = DEFAULT_INTERVAL_MS, restartKey }: VisiblePollingOptions = {}
 ) {
   const taskRef = useRef(task);
   const mountedRef = useRef(false);
@@ -127,7 +128,7 @@ export function useVisiblePolling(
       controllerRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [enabled, execute, intervalMs]);
+  }, [enabled, execute, intervalMs, restartKey]);
 
   return { refresh };
 }

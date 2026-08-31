@@ -187,7 +187,7 @@ export function buildDemoDryRunPlan() {
     })),
     records: {
       employees: manifest.people.length,
-      employeePhotos: manifest.people.filter((person) => Boolean(person.media.localPath)).length,
+      employeePhotos: manifest.people.filter((person) => Boolean(person.avatarPath)).length,
       clients: manifest.clients.length,
       companyPhotos: manifest.clients.filter((target) => Boolean(target.media.localPath)).length,
       rfqs: manifest.rfqs.length,
@@ -374,11 +374,12 @@ async function schemaPreflight(supabase: SupabaseClient) {
 }
 
 function markerInObject(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const row = value as UnknownRow;
   return Boolean(
-    value &&
-      typeof value === "object" &&
-      (value as UnknownRow).demo === true &&
-      (value as UnknownRow).seed_marker === DEMO_SEED_MARKER
+    (row.demo === true && row.seed_marker === DEMO_SEED_MARKER) ||
+      row.seedMarker === DEMO_SEED_MARKER ||
+      (typeof row.notes === "string" && row.notes.includes(DEMO_SEED_MARKER))
   );
 }
 
@@ -641,7 +642,7 @@ async function profileForPerson(supabase: SupabaseClient, person: DemoPerson, us
     region: person.region,
     job_title: person.title,
     business_rank: person.profileBusinessRank,
-    avatar_path: person.media.localPath
+    avatar_path: person.avatarPath
   };
   const profileRow = data as UnknownRow;
   if (Object.entries(desired).every(([field, value]) => profileRow[field] === value)) {
@@ -1204,7 +1205,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
       country: customer.country,
       city: customer.city,
       preferred_language: customer.language,
-      commercial_notes: `${DEMO_SEED_MARKER}: fictional contact; never use for real outreach.`,
+      commercial_notes: `${DEMO_SEED_MARKER}: fictitious demo account; no commercial affiliation implied. Never use for real outreach.`,
       created_at: fixedTimestamp
     },
     "client_id"
@@ -1244,7 +1245,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
         country: target.country,
         city: target.city,
         preferred_language: target.language,
-        commercial_notes: `${DEMO_SEED_MARKER}: fictional contact; never use for real outreach.`,
+        commercial_notes: `${DEMO_SEED_MARKER}: fictitious demo account; no commercial affiliation implied. Never use for real outreach.`,
         created_at: fixedTimestamp
       },
       "client_id"
@@ -1259,12 +1260,14 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
       request_fingerprint: rfq.fingerprint,
       client_id: ids.client,
       contact_snapshot: {
-        demo: true,
-        seed_marker: DEMO_SEED_MARKER,
-        company_name: customer.name,
-        contact_name: customer.contactName,
-        contact_email: customer.contactEmail,
-        preferred_language: customer.language
+        companyOrName: customer.name,
+        contact: customer.contactName,
+        email: customer.contactEmail,
+        phone: "",
+        country: customer.country,
+        city: customer.city,
+        preferredLanguage: customer.language,
+        notes: `${DEMO_SEED_MARKER}: fictional demo request.`
       },
       assigned_salesperson_id: maya,
       status: "quoted",
@@ -1303,12 +1306,14 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
         request_fingerprint: targetRfq.fingerprint,
         client_id: targetClient.id,
         contact_snapshot: {
-          demo: true,
-          seed_marker: DEMO_SEED_MARKER,
-          company_name: targetClient.name,
-          contact_name: targetClient.contactName,
-          contact_email: targetClient.contactEmail,
-          preferred_language: targetClient.language
+          companyOrName: targetClient.name,
+          contact: targetClient.contactName,
+          email: targetClient.contactEmail,
+          phone: "",
+          country: targetClient.country,
+          city: targetClient.city,
+          preferredLanguage: targetClient.language,
+          notes: `${DEMO_SEED_MARKER}: fictional demo request.`
         },
         assigned_salesperson_id: sellerId,
         status: "quoted",
@@ -1588,7 +1593,7 @@ export async function applyDemoSeed(
   return {
     marker: DEMO_SEED_MARKER,
     users: DEMO_DATA_MANIFEST.people.length,
-    employeePhotos: DEMO_DATA_MANIFEST.people.length,
+    employeePhotos: DEMO_DATA_MANIFEST.people.filter((person) => Boolean(person.avatarPath)).length,
     clients: DEMO_DATA_MANIFEST.clients.length,
     companyPhotos: DEMO_DATA_MANIFEST.clients.length,
     rfqs: DEMO_DATA_MANIFEST.rfqs.length,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, logAuditEvent } from "@/lib/auth/context";
-import { validateAvatarFile, avatarPublicUrl } from "@/lib/profile/avatar";
+import { validateAvatarFile, avatarPublicUrl, isJasonDemoOwnerEmail } from "@/lib/profile/avatar";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
 
@@ -16,6 +16,9 @@ function extensionFor(type: string) {
 export async function GET(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
+  if (isJasonDemoOwnerEmail(context.profile.email)) {
+    return NextResponse.json({ avatarPath: null, avatarUrl: null });
+  }
   const path = context.profile.avatar_path ?? null;
   return NextResponse.json({ avatarPath: path, avatarUrl: avatarPublicUrl(path) });
 }
@@ -23,6 +26,12 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const context = await getAuthContext(request);
   if (context instanceof NextResponse) return context;
+  if (isJasonDemoOwnerEmail(context.profile.email)) {
+    return NextResponse.json(
+      { error: "El avatar permanente de esta cuenta demo es J." },
+      { status: 409 }
+    );
+  }
   const form = await request.formData().catch(() => null);
   const file = form?.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "Selecciona una imagen." }, { status: 400 });

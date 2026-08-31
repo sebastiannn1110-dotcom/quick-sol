@@ -40,7 +40,7 @@ function member(
     updatedAt: "2026-08-29T00:00:00.000Z",
     technicalRole,
     region: department === "Sales — DEMO" ? "Americas — DEMO" : "Global — DEMO",
-    avatarPath: profileId === "jason" ? "/demo/people/jason.webp" : null,
+    avatarPath: profileId === "maya" ? "/demo/people/maya.webp" : null,
     canEdit: false
   };
 }
@@ -91,7 +91,7 @@ function completeDemoDirectory(): OrganizationDirectory {
       updatedAt: DEMO_DATA_MANIFEST.fixedTimestamp,
       technicalRole: person.technicalRole,
       region: person.region,
-      avatarPath: person.media.localPath,
+      avatarPath: person.avatarPath,
       canEdit: false
     }))
   };
@@ -123,7 +123,7 @@ afterEach(() => {
 });
 
 describe("Team Structure filters and compensation", () => {
-  it("renders all 28 distinct demo employee photos in the organization tree", async () => {
+  it("renders 27 employee photos while Jason uses only J", async () => {
     vi.stubGlobal("fetch", baseFetch(completeDemoDirectory()));
     render(<TeamStructure />);
 
@@ -131,30 +131,31 @@ describe("Team Structure filters and compensation", () => {
     const treePhotos = within(treeHeading.closest("section")!).getAllByRole("img");
     const sources = treePhotos.map((photo) => photo.getAttribute("src"));
 
-    expect(treePhotos).toHaveLength(28);
-    expect(new Set(sources).size).toBe(28);
-    expect(sources).toContain("/demo/people/jason.webp");
+    expect(treePhotos).toHaveLength(27);
+    expect(new Set(sources).size).toBe(27);
+    expect(sources).not.toContain("/demo/people/jason.webp");
+    const treeSection = treeHeading.closest("section")!;
+    const jasonInitials = within(treeSection).getByLabelText(/Jason Boss.* initials/);
+    expect(jasonInitials.textContent).toBe("J");
+    expect(within(treeSection).queryByText("JB")).toBeNull();
   });
 
-  it("shows Jason's compact tree photo and an xl panel photo without rendering initials", async () => {
+  it("shows Jason's compact and xl avatars as J without an image or JB", async () => {
     vi.stubGlobal("fetch", baseFetch(directory("manager", false)));
     const { container } = render(<TeamStructure />);
 
     const treeHeading = await screen.findByRole("heading", { name: "Organization tree" });
     const treeSection = treeHeading.closest("section")!;
-    const treePhoto = within(treeSection).getByRole("img", { name: /Jason Boss/ });
-    fireEvent.load(treePhoto);
+    const treeInitials = within(treeSection).getByLabelText(/Jason Boss.* initials/);
 
     const panelAvatar = container.querySelector("[data-avatar-size='xl']");
     expect(panelAvatar).toBeTruthy();
-    const panelPhoto = within(panelAvatar as HTMLElement).getByRole("img", { name: /Jason Boss/ });
-    fireEvent.load(panelPhoto);
-
-    expect(treePhoto.getAttribute("src")).toBe("/demo/people/jason.webp");
-    expect(treePhoto.closest("[data-avatar-size]")?.getAttribute("data-avatar-size")).toBe("md");
-    expect(panelAvatar?.getAttribute("data-avatar-state")).toBe("image");
+    expect(treeInitials.textContent).toBe("J");
+    expect(treeInitials.closest("[data-avatar-size]")?.getAttribute("data-avatar-size")).toBe("md");
+    expect(panelAvatar?.getAttribute("data-avatar-state")).toBe("initials");
+    expect(within(panelAvatar as HTMLElement).queryByRole("img")).toBeNull();
     expect(within(panelAvatar as HTMLElement).queryByText("JB")).toBeNull();
-    expect(within(panelAvatar as HTMLElement).queryByText("J")).toBeNull();
+    expect(within(panelAvatar as HTMLElement).getByText("J")).toBeTruthy();
   });
 
   it("combines filters, keeps only required ancestors, and clears every filter", async () => {

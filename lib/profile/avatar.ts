@@ -28,9 +28,21 @@ export function avatarPublicUrl(path: string | null | undefined) {
   return `${base}/storage/v1/object/public/avatars/${encodedPath}`;
 }
 
+function cleanAvatarName(name: string) {
+  return name.replace(/\s+[\u2014-]\s+DEMO$/i, "").trim();
+}
+
+export function isJasonDemoOwnerEmail(email: string | null | undefined) {
+  return email?.trim().toLowerCase() === "jasonboss@quiksol.com";
+}
+
+export function usesJasonInitialAvatar(name: string, email?: string | null) {
+  return isJasonDemoOwnerEmail(email) || /^Jason\s+Boss$/i.test(cleanAvatarName(name));
+}
+
 export function avatarFallbackText(name: string) {
-  const cleanName = name.replace(/\s+[\u2014-]\s+DEMO$/i, "").trim();
-  if (/^Jason\s+Boss$/i.test(cleanName)) return "J";
+  const cleanName = cleanAvatarName(name);
+  if (usesJasonInitialAvatar(name)) return "J";
   return cleanName
     .split(/\s+/)
     .filter(Boolean)

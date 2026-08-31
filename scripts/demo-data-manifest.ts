@@ -44,6 +44,7 @@ export type DemoPerson = {
   managerKey: DemoPersonKey | null;
   compensationAnnualUsd: number;
   media: DemoMediaAsset;
+  avatarPath: string | null;
 };
 
 export type DemoClient = {
@@ -133,7 +134,8 @@ function demoPerson(
     responsibilities: `${DEMO_SEED_MARKER}: ${title.toLowerCase()} responsibilities in the fictional demo organization.`,
     managerKey,
     compensationAnnualUsd,
-    media: DEMO_PERSON_MEDIA[key]
+    media: DEMO_PERSON_MEDIA[key],
+    avatarPath: key === "jason" ? null : DEMO_PERSON_MEDIA[key].localPath
   });
 }
 
@@ -204,8 +206,8 @@ function demoClient(
     key,
     id: index === 1 ? originalIds.client : deterministicUuid("d3000000", index),
     externalId,
-    name: `${name}${suffix}`,
-    description: `${DEMO_SEED_MARKER}: fictional customer for commercial demonstrations.`,
+    name,
+    description: `${DEMO_SEED_MARKER}: fictional demo account \u2014 no commercial affiliation implied.`,
     industry: `${industry}${suffix}`,
     region,
     contactName,
@@ -219,25 +221,25 @@ function demoClient(
 }
 
 const clients = [
-  demoClient(1, "novaCircuit", "DEMO-NOVACIRCUIT", "NovaCircuit Systems S.A.S.", "Electronics manufacturing", "LATAM", "Adrian Vega", "adrian.vega@novacircuit.demo.invalid", "Colombia", "Bogot\u00e1", "es", "maya"),
-  demoClient(2, "atlasRobotics", "DEMO-ATLAS-ROBOTICS", "Atlas Robotics", "Industrial robotics", "North America", "Nora Hayes", "nora.hayes@atlasrobotics.demo.invalid", "United States", "Boston", "en", "maya"),
-  demoClient(3, "andinaControls", "DEMO-ANDINA-CONTROLS", "Andina Controls", "Industrial automation", "LATAM", "Diego Pardo", "diego.pardo@andinacontrols.demo.invalid", "Colombia", "Medell\u00edn", "es", "maya"),
-  demoClient(4, "northStarDevices", "DEMO-NORTHSTAR-DEVICES", "NorthStar Devices", "Medical electronics", "North America", "Avery Reed", "avery.reed@northstardevices.demo.invalid", "United States", "Denver", "en", "maya"),
-  demoClient(5, "pacificaEnergy", "DEMO-PACIFICA-ENERGY", "Pacifica Energy Systems", "Energy controls", "North America", "Megan Cole", "megan.cole@pacificaenergy.demo.invalid", "United States", "San Diego", "en", "maya"),
-  demoClient(6, "mapleGrid", "DEMO-MAPLEGRID", "MapleGrid Automation", "Grid automation", "North America", "Evan Scott", "evan.scott@maplegrid.demo.invalid", "Canada", "Toronto", "en", "jordan"),
-  demoClient(7, "blueMesa", "DEMO-BLUEMESA", "BlueMesa Embedded", "Embedded systems", "North America", "Taylor Morgan", "taylor.morgan@bluemesa.demo.invalid", "United States", "Phoenix", "en", "jordan"),
-  demoClient(8, "libertyMotion", "DEMO-LIBERTY-MOTION", "Liberty Motion Controls", "Motion control", "North America", "Casey Brooks", "casey.brooks@libertymotion.demo.invalid", "United States", "Chicago", "en", "jordan"),
-  demoClient(9, "lionCity", "DEMO-LIONCITY", "LionCity Industrial", "Industrial automation", "APAC", "Amelia Lim", "amelia.lim@lioncity.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
-  demoClient(10, "pearlRiver", "DEMO-PEARLRIVER", "Pearl River Controls", "Factory controls", "APAC", "Tao Xu", "tao.xu@pearlriver.demo.invalid", "China", "Shenzhen", "zh", "ethan"),
-  demoClient(11, "meridianSemi", "DEMO-MERIDIAN-SEMI", "Meridian Semiconductor Labs", "Semiconductors", "APAC", "Grace Ong", "grace.ong@meridiansemi.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
-  demoClient(12, "rheinWerk", "DEMO-RHEINWERK", "RheinWerk Systems", "Industrial machinery", "Europe", "Jonas Keller", "jonas.keller@rheinwerk.demo.invalid", "Germany", "Munich", "en", "hannah"),
-  demoClient(13, "hexagon", "DEMO-HEXAGON", "Hexagon Electronique", "Transportation electronics", "Europe", "Claire Martin", "claire.martin@hexagon.demo.invalid", "France", "Lyon", "en", "hannah"),
-  demoClient(14, "euroNova", "DEMO-EURONOVA", "EuroNova Manufacturing", "Advanced manufacturing", "Europe", "Marco Bianchi", "marco.bianchi@euronova.demo.invalid", "Italy", "Turin", "en", "hannah"),
-  demoClient(15, "azteca", "DEMO-AZTECA", "Azteca Embedded", "Embedded electronics", "LATAM", "Valeria Cruz", "valeria.cruz@azteca.demo.invalid", "Mexico", "Monterrey", "es", "sofia"),
-  demoClient(16, "sakura", "DEMO-SAKURA", "Sakura Motion", "Precision motion", "APAC", "Ren Ito", "ren.ito@sakuramotion.demo.invalid", "Japan", "Tokyo", "en", "haruto"),
-  demoClient(17, "britannia", "DEMO-BRITANNIA", "Britannia Controls", "Building controls", "Europe", "Emily Ward", "emily.ward@britannia.demo.invalid", "United Kingdom", "Manchester", "en", "oliver"),
-  demoClient(18, "iberia", "DEMO-IBERIA", "Iberia Motion", "Renewable energy", "Europe", "Pablo Sanz", "pablo.sanz@iberia.demo.invalid", "Spain", "Madrid", "es", "lucia"),
-  demoClient(19, "southernCross", "DEMO-SOUTHERN-CROSS", "Southern Cross Systems", "Mining automation", "APAC", "Ruby Evans", "ruby.evans@southerncross.demo.invalid", "Australia", "Perth", "en", "chloe")
+  demoClient(1, "novaCircuit", "DEMO-AMAZON", "Amazon-demo", "Logistics technology", "LATAM", "Adrian Vega", "adrian.vega@amazon-demo.demo.invalid", "Colombia", "Bogot\u00e1", "es", "maya"),
+  demoClient(2, "atlasRobotics", "DEMO-GOOGLE", "Google-demo", "Data center technology", "North America", "Nora Hayes", "nora.hayes@google-demo.demo.invalid", "United States", "Boston", "en", "maya"),
+  demoClient(3, "andinaControls", "DEMO-MICROSOFT", "Microsoft-demo", "Enterprise technology", "LATAM", "Diego Pardo", "diego.pardo@microsoft-demo.demo.invalid", "Colombia", "Medell\u00edn", "es", "maya"),
+  demoClient(4, "northStarDevices", "DEMO-APPLE", "Apple-demo", "Consumer electronics", "North America", "Avery Reed", "avery.reed@apple-demo.demo.invalid", "United States", "Denver", "en", "maya"),
+  demoClient(5, "pacificaEnergy", "DEMO-NVIDIA", "Nvidia-demo", "Computing hardware", "North America", "Megan Cole", "megan.cole@nvidia-demo.demo.invalid", "United States", "San Diego", "en", "maya"),
+  demoClient(6, "mapleGrid", "DEMO-INTEL", "Intel-demo", "Semiconductor manufacturing", "North America", "Evan Scott", "evan.scott@intel-demo.demo.invalid", "Canada", "Toronto", "en", "jordan"),
+  demoClient(7, "blueMesa", "DEMO-SAMSUNG", "Samsung-demo", "Electronics manufacturing", "North America", "Taylor Morgan", "taylor.morgan@samsung-demo.demo.invalid", "United States", "Phoenix", "en", "jordan"),
+  demoClient(8, "libertyMotion", "DEMO-SONY", "Sony-demo", "Consumer electronics", "North America", "Casey Brooks", "casey.brooks@sony-demo.demo.invalid", "United States", "Chicago", "en", "jordan"),
+  demoClient(9, "lionCity", "DEMO-DELL", "Dell-demo", "Enterprise computing", "APAC", "Amelia Lim", "amelia.lim@dell-demo.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
+  demoClient(10, "pearlRiver", "DEMO-HP", "HP-demo", "Computing hardware", "APAC", "Tao Xu", "tao.xu@hp-demo.demo.invalid", "China", "Shenzhen", "zh", "ethan"),
+  demoClient(11, "meridianSemi", "DEMO-IBM", "IBM-demo", "Enterprise technology", "APAC", "Grace Ong", "grace.ong@ibm-demo.demo.invalid", "Singapore", "Singapore", "en", "ethan"),
+  demoClient(12, "rheinWerk", "DEMO-CISCO", "Cisco-demo", "Network infrastructure", "Europe", "Jonas Keller", "jonas.keller@cisco-demo.demo.invalid", "Germany", "Munich", "en", "hannah"),
+  demoClient(13, "hexagon", "DEMO-ORACLE", "Oracle-demo", "Enterprise infrastructure", "Europe", "Claire Martin", "claire.martin@oracle-demo.demo.invalid", "France", "Lyon", "en", "hannah"),
+  demoClient(14, "euroNova", "DEMO-QUALCOMM", "Qualcomm-demo", "Semiconductors", "Europe", "Marco Bianchi", "marco.bianchi@qualcomm-demo.demo.invalid", "Italy", "Turin", "en", "hannah"),
+  demoClient(15, "azteca", "DEMO-SIEMENS", "Siemens-demo", "Industrial automation", "LATAM", "Valeria Cruz", "valeria.cruz@siemens-demo.demo.invalid", "Mexico", "Monterrey", "es", "sofia"),
+  demoClient(16, "sakura", "DEMO-BOSCH", "Bosch-demo", "Industrial electronics", "APAC", "Ren Ito", "ren.ito@bosch-demo.demo.invalid", "Japan", "Tokyo", "en", "haruto"),
+  demoClient(17, "britannia", "DEMO-PANASONIC", "Panasonic-demo", "Electronics manufacturing", "Europe", "Emily Ward", "emily.ward@panasonic-demo.demo.invalid", "United Kingdom", "Manchester", "en", "oliver"),
+  demoClient(18, "iberia", "DEMO-META", "Meta-demo", "Digital infrastructure", "Europe", "Pablo Sanz", "pablo.sanz@meta-demo.demo.invalid", "Spain", "Madrid", "es", "lucia"),
+  demoClient(19, "southernCross", "DEMO-TESLA", "Tesla-demo", "Automotive electronics", "APAC", "Ruby Evans", "ruby.evans@tesla-demo.demo.invalid", "Australia", "Perth", "en", "chloe")
 ] as const satisfies readonly DemoClient[];
 
 const product = Object.freeze({
@@ -470,8 +472,11 @@ export function validateDemoManifest() {
   if (roots.length !== 1 || roots[0]?.key !== "jason" || owners.length !== 1 || owners[0]?.key !== "jason") {
     throw new Error("DEMO_MANIFEST_REQUIRES_JASON_ROOT_OWNER");
   }
-  const jasonMedia = byPersonKey.get("jason")?.media;
+  const jason = byPersonKey.get("jason");
+  const jasonMedia = jason?.media;
   if (
+    !jason ||
+    jason.avatarPath !== null ||
     !jasonMedia ||
     jasonMedia.localPath !== "demo/people/jason.webp" ||
     jasonMedia.imageSource !== "Pexels" ||
@@ -480,7 +485,10 @@ export function validateDemoManifest() {
     jasonMedia.aiGenerated !== false ||
     jasonMedia.assetType !== "conventional-stock-photo"
   ) {
-    throw new Error("DEMO_MANIFEST_REQUIRES_JASON_PHOTO");
+    throw new Error("DEMO_MANIFEST_REQUIRES_JASON_INITIAL_AVATAR");
+  }
+  if (manifest.people.some((person) => person.key !== "jason" && person.avatarPath !== person.media.localPath)) {
+    throw new Error("DEMO_MANIFEST_EMPLOYEE_AVATAR_INVALID");
   }
   const olivia = byPersonKey.get("olivia");
   if (!olivia || olivia.managerKey !== "jason" || olivia.technicalRole !== "admin" || olivia.organizationRank !== "executive") {
@@ -503,8 +511,15 @@ export function validateDemoManifest() {
   }
 
   const clientKeys = new Set(manifest.clients.map((target) => target.key));
+  const expectedClientNames = [
+    "Amazon-demo", "Google-demo", "Microsoft-demo", "Apple-demo", "Nvidia-demo",
+    "Intel-demo", "Samsung-demo", "Sony-demo", "Dell-demo", "HP-demo", "IBM-demo",
+    "Cisco-demo", "Oracle-demo", "Qualcomm-demo", "Siemens-demo", "Bosch-demo",
+    "Panasonic-demo", "Meta-demo", "Tesla-demo"
+  ];
   if (manifest.clients.length !== 19 || clientKeys.size !== 19 || new Set(manifest.clients.map((target) => target.externalId)).size !== 19 ||
-      manifest.clients.some((target) => !target.contactEmail.endsWith(".demo.invalid") || !personKeys.has(target.sellerKey))) {
+      manifest.clients.some((target, index) => target.name !== expectedClientNames[index] || !target.name.endsWith("-demo") ||
+        !target.contactEmail.endsWith(".demo.invalid") || !personKeys.has(target.sellerKey))) {
     throw new Error("DEMO_MANIFEST_CLIENTS_INVALID");
   }
   const rfqKeys = new Set(manifest.rfqs.map((rfq) => rfq.key));

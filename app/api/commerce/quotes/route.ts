@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { requireCommerceAuth } from "@/lib/commerce/auth";
 import { commerceQuoteWriteSchema } from "@/lib/commerce/contracts";
 import { commerceError, commerceNoStore, databaseErrorResponse } from "@/lib/commerce/http";
@@ -11,9 +12,14 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const context = await requireCommerceAuth(request);
   if (context instanceof NextResponse) return context;
-  const limit = Math.min(Math.max(Number(new URL(request.url).searchParams.get("limit") ?? 100) || 100, 1), 500);
+  const searchParams = new URL(request.url).searchParams;
+  const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? 100) || 100, 1), 500);
+  const clientId = searchParams.get("clientId")?.trim() || undefined;
+  if (clientId && !z.string().uuid().safeParse(clientId).success) {
+    return commerceError(400, "VALIDATION_ERROR", "The client id filter is invalid.");
+  }
   try {
-    return commerceNoStore(await listCommerceQuotes(context.supabase, limit));
+    return commerceNoStore(await listCommerceQuotes(context.supabase, limit, clientId));
   } catch {
     return commerceError(500, "COMMERCE_UNAVAILABLE", "Quotes could not be loaded.");
   }
@@ -26,6 +32,13 @@ export async function POST(request: Request) {
   if (!rate.allowed) return commerceError(429, "RATE_LIMITED", "Too many quote changes.");
   const parsed = commerceQuoteWriteSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return commerceError(422, "VALIDATION_ERROR", "The quote data is invalid.", parsed.error.flatten());
+  if (parsed.data.rfqId != null) {
+    return commerceError(
+      422,
+      "VALIDATION_ERROR",
+      "Create quotes linked to an RFQ through the RFQ workflow."
+    );
+  }
   try {
     const quote = await createCommerceQuote(context.supabase, parsed.data);
     return quote

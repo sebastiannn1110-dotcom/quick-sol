@@ -146,7 +146,17 @@ describe("DEMO data manifest", () => {
     expect(DEMO_DATA_MANIFEST.clients.every((target) => target.contactEmail.endsWith(".demo.invalid"))).toBe(true);
   });
 
-  it("ships 28 employee photos and 19 company photos with complete conventional-stock provenance", () => {
+  it("uses the exact 19 explicitly fictitious demo account names", () => {
+    expect(DEMO_DATA_MANIFEST.clients.map((target) => target.name)).toEqual([
+      "Amazon-demo", "Google-demo", "Microsoft-demo", "Apple-demo", "Nvidia-demo",
+      "Intel-demo", "Samsung-demo", "Sony-demo", "Dell-demo", "HP-demo", "IBM-demo",
+      "Cisco-demo", "Oracle-demo", "Qualcomm-demo", "Siemens-demo", "Bosch-demo",
+      "Panasonic-demo", "Meta-demo", "Tesla-demo"
+    ]);
+    expect(DEMO_DATA_MANIFEST.clients.every((target) => target.name.endsWith("-demo"))).toBe(true);
+  });
+
+  it("keeps historical employee media but assigns photos to only the other 27 employees", () => {
     const employeeMedia = DEMO_DATA_MANIFEST.people.map((person) => person.media);
     const companyMedia = DEMO_DATA_MANIFEST.clients.map((target) => target.media);
     const allMedia = [...employeeMedia, ...companyMedia];
@@ -173,6 +183,11 @@ describe("DEMO data manifest", () => {
     }
 
     const jason = DEMO_DATA_MANIFEST.people.find((person) => person.key === "jason");
+    expect(jason?.avatarPath).toBeNull();
+    expect(DEMO_DATA_MANIFEST.people.filter((person) => person.avatarPath)).toHaveLength(27);
+    expect(DEMO_DATA_MANIFEST.people
+      .filter((person) => person.key !== "jason")
+      .every((person) => person.avatarPath === person.media.localPath)).toBe(true);
     expect(jason?.media).toMatchObject({
       localPath: "demo/people/jason.webp",
       imageSource: "Pexels",
@@ -191,6 +206,19 @@ describe("DEMO data manifest", () => {
     expect([...jasonFile.subarray(23, 26)]).toEqual([0x9d, 0x01, 0x2a]);
     expect(jasonFile.readUInt16LE(26) & 0x3fff).toBe(512);
     expect(jasonFile.readUInt16LE(28) & 0x3fff).toBe(512);
+  });
+
+  it("uses 19 unique generic stock images and no brand-named official logo asset", () => {
+    const companyMedia = DEMO_DATA_MANIFEST.clients.map((target) => target.media);
+    const officialBrandPath = /(?:amazon|google|microsoft|apple|nvidia|intel|samsung|sony|dell|hp|ibm|cisco|oracle|qualcomm|siemens|bosch|panasonic|meta|tesla)/i;
+
+    expect(companyMedia).toHaveLength(19);
+    expect(new Set(companyMedia.map((asset) => asset.localPath)).size).toBe(19);
+    expect(companyMedia.every((asset) =>
+      asset.assetType === "conventional-stock-photo" &&
+      asset.aiGenerated === false &&
+      !officialBrandPath.test(asset.localPath)
+    )).toBe(true);
   });
 
   it("keeps the original commercial row and expanded metrics deterministic", () => {
@@ -233,7 +261,8 @@ describe("DEMO data manifest", () => {
       technicalRole: "admin",
       profileBusinessRank: "owner",
       organizationRank: "owner",
-      managerKey: null
+      managerKey: null,
+      avatarPath: null
     });
     expect(DEMO_DATA_MANIFEST.people.find((person) => person.key === "olivia")).toMatchObject({
       technicalRole: "admin",
@@ -313,7 +342,7 @@ describe("DEMO seed CLI safety", () => {
       marker: DEMO_SEED_MARKER,
       records: {
         employees: 28,
-        employeePhotos: 28,
+        employeePhotos: 27,
         clients: 19,
         companyPhotos: 19,
         rfqs: 19,
@@ -504,10 +533,24 @@ describe("DEMO seed source boundary", () => {
   });
 
   it("reconciles only deterministic local demo media paths into existing columns", () => {
-    expect(source).toContain("avatar_path: person.media.localPath");
+    expect(source).toContain("avatar_path: person.avatarPath");
+    expect(source.match(/employeePhotos: .*avatarPath/g)).toHaveLength(2);
     expect(source).toContain("logo_path: customer.media.localPath");
     expect(source).toContain("logo_path: target.media.localPath");
     expect(source).not.toContain('.from("storage.objects")');
+  });
+
+  it("reconciles seeded RFQ snapshots to the canonical intake contact shape", () => {
+    expect(source).toContain("companyOrName: customer.name");
+    expect(source).toContain("contact: customer.contactName");
+    expect(source).toContain("email: customer.contactEmail");
+    expect(source).toContain("preferredLanguage: customer.language");
+    expect(source).toContain("country: targetClient.country");
+    expect(source).toContain("typeof row.notes === \"string\" && row.notes.includes(DEMO_SEED_MARKER)");
+    expect(source).not.toMatch(/^\s*company_name:\s*customer\.name/m);
+    expect(source).not.toMatch(
+      /^\s*contact_email:\s*targetClient\.contactEmail/m,
+    );
   });
 
   it("returns from dry-run before loading environment files or creating Supabase", () => {

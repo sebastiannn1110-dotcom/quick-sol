@@ -15,6 +15,7 @@ import {
   Warehouse
 } from "lucide-react";
 import ClientImage from "@/components/clients/ClientImage";
+import { DemoAccountBadge } from "@/components/clients/DemoAccount";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { AccountClient } from "@/lib/clients/clients";
 
@@ -33,9 +34,12 @@ export default function ClientCard({ client }: { client: AccountClient }) {
       />
       <div className="px-4 pt-4">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">
-            <Link href={`/clients/${client.id}`} className="focus-ring rounded-sm">{client.name}</Link>
-          </h2>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">
+              <Link href={`/clients/${client.id}`} className="focus-ring rounded-sm">{client.name}</Link>
+            </h2>
+            <DemoAccountBadge accountName={client.name} />
+          </div>
           <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-medium ${client.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-100 text-slate-600"}`}>
             {t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}
           </span>

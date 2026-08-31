@@ -7,47 +7,45 @@ import UserAvatar from "@/components/chat/UserAvatar";
 afterEach(cleanup);
 
 describe("UserAvatar", () => {
-  it("renders Jason's allowlisted demo photo and keeps initials hidden when it loads", () => {
+  const jasonName = "Jason Boss \u2014 DEMO";
+  const mayaName = "Maya Torres \u2014 DEMO";
+  const oliviaName = "Olivia Mercer \u2014 DEMO";
+
+  it("renders only Jason's permanent J even when a stale photo path is supplied", () => {
     const { container } = render(
       <UserAvatar
-        name="Jason Boss — DEMO"
+        name={jasonName}
         avatarPath="/demo/people/jason.webp"
         size="xl"
       />
     );
 
-    const image = screen.getByRole("img", { name: "Jason Boss — DEMO" });
-    expect(image.getAttribute("src")).toBe("/demo/people/jason.webp");
-    fireEvent.load(image);
-
     const avatar = container.querySelector("[data-avatar-size='xl']");
-    expect(avatar?.getAttribute("data-avatar-state")).toBe("image");
+    expect(avatar?.getAttribute("data-avatar-state")).toBe("initials");
+    expect(screen.queryByRole("img", { name: jasonName })).toBeNull();
     expect(screen.queryByText("JB")).toBeNull();
-    expect(screen.queryByText("J")).toBeNull();
+    expect(screen.getByText("J")).toBeTruthy();
   });
 
-  it("shows visible initials when the selected image fails", () => {
+  it("keeps another employee's configured demo image", () => {
     const { container } = render(
-      <UserAvatar name="Jason Boss — DEMO" avatarPath="/demo/people/jason.webp" />
+      <UserAvatar name={mayaName} avatarPath="/demo/people/maya.webp" />
     );
 
-    fireEvent.error(screen.getByRole("img", { name: "Jason Boss — DEMO" }));
-
-    expect(screen.queryByRole("img", { name: "Jason Boss — DEMO" })).toBeNull();
-    expect(screen.getByText("J")).toBeTruthy();
-    expect(screen.queryByText("JB")).toBeNull();
-    expect(container.firstElementChild?.getAttribute("data-avatar-state")).toBe("initials");
+    expect(screen.getByRole("img", { name: mayaName }).getAttribute("src"))
+      .toBe("/demo/people/maya.webp");
+    expect(container.firstElementChild?.getAttribute("data-avatar-state")).toBe("image");
   });
 
   it("recovers when the avatar path changes after a failed image", () => {
     const { rerender } = render(
-      <UserAvatar name="Jason Boss — DEMO" avatarPath="/demo/people/jason.webp" />
+      <UserAvatar name={oliviaName} avatarPath="/demo/people/olivia.webp" />
     );
-    fireEvent.error(screen.getByRole("img", { name: "Jason Boss — DEMO" }));
+    fireEvent.error(screen.getByRole("img", { name: oliviaName }));
 
-    rerender(<UserAvatar name="Maya Torres — DEMO" avatarPath="/demo/people/maya.webp" />);
+    rerender(<UserAvatar name={mayaName} avatarPath="/demo/people/maya.webp" />);
 
-    expect(screen.getByRole("img", { name: "Maya Torres — DEMO" }).getAttribute("src"))
+    expect(screen.getByRole("img", { name: mayaName }).getAttribute("src"))
       .toBe("/demo/people/maya.webp");
     expect(screen.queryByText("MT")).toBeNull();
   });

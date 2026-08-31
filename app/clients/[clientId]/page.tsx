@@ -5,6 +5,8 @@ import { ArrowLeft, Factory, MapPin, Pencil, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ClientFiles from "@/components/clients/ClientFiles";
+import ClientCommerceActivity from "@/components/clients/ClientCommerceActivity";
+import { DemoAccountBadge, DemoAccountNotice } from "@/components/clients/DemoAccount";
 import ClientImage from "@/components/clients/ClientImage";
 import ClientOpportunities from "@/components/clients/ClientOpportunities";
 import EmployeeGuard from "@/components/EmployeeGuard";
@@ -112,9 +114,11 @@ export default function ClientDetailPage() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="break-words text-2xl font-semibold text-slate-950">{client.name}</h1>
+                <DemoAccountBadge accountName={client.name} />
                 <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}</span>
               </div>
               <p className="mt-2 text-sm text-slate-500">{client.description ?? t("clientDetail.noDescription")}</p>
+              <DemoAccountNotice accountName={client.name} className="mt-3" />
               {client.industry || client.region ? (
                 <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
                   {client.industry ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1"><Factory className="h-3.5 w-3.5" aria-hidden="true" />{client.industry}</span> : null}
@@ -163,6 +167,7 @@ export default function ClientDetailPage() {
                 </div>
               ))}
             </div>
+            <ClientCommerceActivity clientId={client.id} />
           </div>
         ) : null}
         {tab === "opportunities" ? <ClientOpportunities clientId={client.id} /> : null}

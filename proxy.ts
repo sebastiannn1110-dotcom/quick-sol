@@ -25,6 +25,7 @@ const PROTECTED_PREFIXES = [
   "/admindev"
 ];
 const MANAGER_ADMIN_PREFIXES = ["/admin/clients", "/admin/opportunities", "/admin/stock-needs"];
+const COMMERCE_WORKSPACE_PREFIXES = ["/admin/rfqs", "/admin/quotes"];
 
 function isSupabaseConfigured() {
   return Boolean(
@@ -60,6 +61,10 @@ function isPublicPath(pathname: string) {
 
 function managerCanAccessAdminPath(pathname: string) {
   return MANAGER_ADMIN_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+export function isCommerceWorkspacePath(pathname: string) {
+  return COMMERCE_WORKSPACE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
 function isSourcingAdminPath(pathname: string) {
@@ -266,6 +271,7 @@ export async function proxy(request: NextRequest) {
     isAdminPath(pathname) &&
     !canAccessAdmin(profile.role) &&
     !(profile.role === "manager" && managerCanAccessAdminPath(pathname)) &&
+    !(["employee", "manager"].includes(profile.role) && isCommerceWorkspacePath(pathname)) &&
     !(isSourcingAdminPath(pathname) && canManageSourcing(profile))
   ) {
     await logger.security({

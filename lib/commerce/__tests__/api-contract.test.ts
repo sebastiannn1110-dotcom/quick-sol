@@ -16,6 +16,9 @@ describe("D3 commerce API contract", () => {
     "app/api/commerce/customers/route.ts",
     "app/api/commerce/customers/[customerId]/route.ts",
     "app/api/commerce/intake/rfqs/route.ts",
+    "app/api/commerce/rfqs/route.ts",
+    "app/api/commerce/rfqs/[rfqId]/route.ts",
+    "app/api/commerce/rfqs/[rfqId]/quote/route.ts",
     "app/api/commerce/quotes/route.ts",
     "app/api/commerce/quotes/[quoteId]/route.ts",
     "app/api/commerce/quotes/[quoteId]/send/route.ts",
@@ -26,6 +29,28 @@ describe("D3 commerce API contract", () => {
     "app/api/commerce/availability/route.ts"
   ])("implements %s", (route) => {
     expect(fs.existsSync(path.resolve(process.cwd(), route))).toBe(true);
+  });
+
+  it("uses authenticated RLS clients for RFQ list, detail, and mutations", () => {
+    const list = source("app/api/commerce/rfqs/route.ts");
+    const detail = source("app/api/commerce/rfqs/[rfqId]/route.ts");
+    const quote = source("app/api/commerce/rfqs/[rfqId]/quote/route.ts");
+    for (const route of [list, detail, quote]) {
+      expect(route).toContain("requireCommerceAuth(request)");
+      expect(route).not.toContain("createSupabaseServiceRoleClient");
+    }
+    expect(list).toContain("listCommerceRfqs(context.supabase");
+    expect(detail).toContain("commerceRfqActionSchema");
+    expect(quote).toContain("pricingRequired: result.pricingRequired");
+    expect(quote).toContain("result.idempotent ? 200 : 201");
+    expect(quote).not.toContain('commerceError(\n        422,\n        "PRICING_REQUIRED"');
+  });
+
+  it("loads client Commerce activity through the real cookie session and RLS", () => {
+    const activity = source("app/api/clients/[clientId]/commerce/route.ts");
+    expect(activity).toContain("getAuthContext(request)");
+    expect(activity).toContain("getCommerceClientActivity(context.supabase");
+    expect(activity).not.toContain("createSupabaseServiceRoleClient");
   });
 
   it("validates Bearer tokens through Supabase getUser and an active profile", () => {
@@ -81,7 +106,7 @@ describe("D3 commerce API contract", () => {
     expect(share).toContain("hashCommerceShareToken(token)");
     expect(publicRoute).toContain("publicQuotePayload");
     expect(service).toContain("export function publicQuotePayload");
-    const allowlist = service.split("export function publicQuotePayload")[1].split("async function teamSellerIds")[0];
+    const allowlist = service.split("export function publicQuotePayload")[1].split("async function manageableClientIds")[0];
     expect(allowlist).not.toContain("sellerEmail");
     expect(allowlist).not.toContain("assignedSalespersonId");
     expect(allowlist).not.toContain("availabilityRevision");

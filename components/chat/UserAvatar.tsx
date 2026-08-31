@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { avatarFallbackText, avatarPublicUrl } from "@/lib/profile/avatar";
+import { avatarFallbackText, avatarPublicUrl, usesJasonInitialAvatar } from "@/lib/profile/avatar";
 
 type UserAvatarSize = "sm" | "md" | "lg" | "xl";
 
 export default function UserAvatar({ name, avatarPath, size = "md" }: { name: string; avatarPath?: string | null; size?: UserAvatarSize }) {
-  const url = avatarPublicUrl(avatarPath);
+  // Jason's single-letter avatar is permanent in the demo. Ignore a stale
+  // stored path until the idempotent seed reconciles avatar_path back to null.
+  const url = usesJasonInitialAvatar(name) ? null : avatarPublicUrl(avatarPath);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const showImage = Boolean(url && failedUrl !== url);
   const sizeClass = size === "sm"

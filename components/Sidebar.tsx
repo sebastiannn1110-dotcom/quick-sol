@@ -7,6 +7,7 @@ import {
   BriefcaseBusiness,
   Building2,
   Database,
+  FileText,
   MessageCircle,
   UserCircle,
   Search,
@@ -22,6 +23,7 @@ import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
 import { isAdmin, roleSatisfiesAny } from "@/lib/auth/roles";
 import { canManageSourcing } from "@/lib/sourcing/permissions";
+import { RfqToast, useRfqNotifications } from "@/components/commerce/RfqNotifications";
 
 interface NavItem {
   href: string;
@@ -33,6 +35,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/clients", labelKey: "nav.clients", icon: Building2 },
+  { href: "/admin/rfqs", labelKey: "nav.rfqs", icon: FileText },
   { href: "/opportunity-finder", labelKey: "nav.opportunityFinder", icon: BriefcaseBusiness },
   { href: "/stock-needs", labelKey: "nav.stockNeeds", icon: Boxes },
   { href: "/executive-search", labelKey: "nav.executiveSearch", icon: Search },
@@ -50,6 +53,7 @@ const NAV_ITEMS: NavItem[] = [
 export default function Sidebar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
   const pathname = usePathname();
   const { t } = useLanguage();
+  const { pendingCount, toast, dismissToast } = useRfqNotifications(profile?.id);
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.sourcingOnly) return canManageSourcing(profile);
     if (!item.roles) return true;
@@ -57,6 +61,7 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
   });
 
   return (
+    <>
     <aside
       className={`w-full max-w-full overflow-hidden border-b text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r ${
         isAdminArea ? "border-orange-900 bg-orange-950" : "border-slate-200 bg-slate-950 lg:border-slate-800"
@@ -102,11 +107,24 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
               >
                 <Icon aria-hidden="true" className="h-4 w-4" />
               </span>
-              {t(item.labelKey)}
+              <span>{t(item.labelKey)}</span>
+              {item.href === "/admin/rfqs" && pendingCount > 0 ? (
+                <span
+                  className={`ml-auto inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-bold ${
+                    active ? "bg-orange-100 text-orange-800" : "bg-orange-500 text-white"
+                  }`}
+                  aria-label={`${pendingCount} RFQs pending`}
+                  data-testid="rfq-sidebar-badge"
+                >
+                  {pendingCount > 99 ? "99+" : pendingCount}
+                </span>
+              ) : null}
             </Link>
           );
         })}
       </nav>
     </aside>
+    {toast ? <RfqToast rfq={toast} onDismiss={dismissToast} /> : null}
+    </>
   );
 }
