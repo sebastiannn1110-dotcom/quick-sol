@@ -6,6 +6,7 @@ import {
   type SummaryReadState
 } from "@/lib/performance/summary-readiness";
 import type { UserRole } from "@/lib/types";
+import { deployedDemoCompanyLogoUrl } from "@/lib/clients/deployed-demo-company-logos";
 import {
   type AccountClient,
   type ClientDetail,
@@ -63,6 +64,8 @@ type ClientListOptions = {
 
 export function resolveClientLogoUrl(clientId: string, logoPath: string | null) {
   if (!logoPath) return null;
+  const deployedDemoLogoUrl = deployedDemoCompanyLogoUrl(clientId, logoPath);
+  if (deployedDemoLogoUrl) return deployedDemoLogoUrl;
   if (LOCAL_DEMO_COMPANY_IMAGE_PATTERN.test(logoPath)) {
     return logoPath.startsWith("/") ? logoPath : `/${logoPath}`;
   }

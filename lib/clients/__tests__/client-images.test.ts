@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { listClientSummaries, resolveClientLogoUrl } from "@/lib/clients/data-source";
 
 const CLIENT_ID = "7e9093e5-6881-40f3-9aee-7a9b495b301c";
+const AMAZON_DEMO_ID = "d0000000-0000-4000-8000-000000000001";
 
 function queryResult(result: { data: unknown; error: unknown }) {
   const builder: Record<string, unknown> = {};
@@ -67,6 +68,18 @@ describe("client summary images", () => {
   it("renders a local demo company logo_path as its public asset URL", () => {
     expect(resolveClientLogoUrl(CLIENT_ID, "demo/companies/nova-circuit.webp"))
       .toBe("/demo/companies/nova-circuit.webp");
+  });
+
+  it("maps the seeded demo path to the exact logo copied from the deployed demo", () => {
+    expect(resolveClientLogoUrl(AMAZON_DEMO_ID, "demo/companies/nova-circuit.webp"))
+      .toBe("/demo/company-logos/amazon.png");
+    expect(resolveClientLogoUrl(AMAZON_DEMO_ID, "/demo/company-logos/amazon.png"))
+      .toBe("/demo/company-logos/amazon.png");
+  });
+
+  it("preserves an explicitly uploaded storage logo for a demo client", () => {
+    expect(resolveClientLogoUrl(AMAZON_DEMO_ID, `${AMAZON_DEMO_ID}/logo/custom.png`))
+      .toBe(`/api/clients/${AMAZON_DEMO_ID}/image?kind=logo`);
   });
 
   it("does not query or return private identification for employees", async () => {

@@ -5,12 +5,21 @@ import { afterEach, describe, expect, it } from "vitest";
 import ClientGrid from "@/components/clients/ClientGrid";
 import { LanguageProvider } from "@/components/LanguageProvider";
 import type { AccountClient } from "@/lib/clients/clients";
+import { DEPLOYED_DEMO_COMPANY_LOGOS } from "@/lib/clients/deployed-demo-company-logos";
 import { DEMO_DATA_MANIFEST } from "@/scripts/demo-data-manifest";
 
 afterEach(cleanup);
 
 describe("demo client grid media", () => {
-  it("renders exactly 19 client cards with their mapped local company images", () => {
+  it("renders exactly 19 client cards with the deployed demo company logos", () => {
+    const logoByClientId = new Map(
+      DEPLOYED_DEMO_COMPANY_LOGOS.map((asset) => [asset.clientId, asset.publicPath])
+    );
+    const logoUrlFor = (clientId: string) => {
+      const publicPath = logoByClientId.get(clientId);
+      if (!publicPath) throw new Error(`Missing deployed demo logo for ${clientId}`);
+      return `/${publicPath}`;
+    };
     const clients: AccountClient[] = DEMO_DATA_MANIFEST.clients.map((target) => ({
       id: target.id,
       name: target.name,
@@ -18,7 +27,7 @@ describe("demo client grid media", () => {
       industry: target.industry,
       region: target.region,
       website: null,
-      logoUrl: `/${target.media.localPath}`,
+      logoUrl: logoUrlFor(target.id),
       authorizedIdentificationImageUrl: null,
       status: "active",
       fileCount: 0,
@@ -48,7 +57,7 @@ describe("demo client grid media", () => {
     expect(images).toHaveLength(19);
     for (const target of DEMO_DATA_MANIFEST.clients) {
       const image = screen.getByRole("img", { name: target.name });
-      expect(image.getAttribute("src")).toBe(`/${target.media.localPath}`);
+      expect(image.getAttribute("src")).toBe(logoUrlFor(target.id));
       fireEvent.load(image);
     }
     expect(screen.getAllByTestId("client-image")).toHaveLength(19);
