@@ -29,7 +29,7 @@ export type DemoSeedOptions = {
 };
 
 export type DemoAuthUser = Pick<User, "id" | "email" | "user_metadata">;
-type PersonIds = Record<DemoPerson["key"], string>;
+export type PersonIds = Record<DemoPerson["key"], string>;
 type UnknownRow = Record<string, unknown>;
 
 type DemoProvisioningResult = {
@@ -392,22 +392,199 @@ function markerInField(row: UnknownRow, field: string) {
   return typeof row[field] === "string" && row[field].includes(DEMO_SEED_MARKER);
 }
 
-async function guardFixedRow(
+export type DemoFixedRowOwnershipExpectation = Readonly<{
+  id: string;
+  exact: Readonly<Record<string, unknown>>;
+  stringMarkerFields: readonly string[];
+  objectMarkerFields: readonly string[];
+}>;
+
+export type DemoFixedOwnershipGroup = Readonly<{
+  table: string;
+  idColumn: string;
+  expected: readonly DemoFixedRowOwnershipExpectation[];
+}>;
+
+function fixedOwnershipExpectation(
+  id: string,
+  exact: Record<string, unknown>,
+  options: {
+    stringMarkerFields?: readonly string[];
+    objectMarkerFields?: readonly string[];
+  } = {}
+): DemoFixedRowOwnershipExpectation {
+  return Object.freeze({
+    id,
+    exact: Object.freeze(exact),
+    stringMarkerFields: Object.freeze([...(options.stringMarkerFields ?? [])]),
+    objectMarkerFields: Object.freeze([...(options.objectMarkerFields ?? [])])
+  });
+}
+
+export function buildDemoFixedOwnershipPlan(): DemoFixedOwnershipGroup[] {
+  const { ids, clients, product, supplierOffer, rfqs, quotes } = DEMO_DATA_MANIFEST;
+  const clientByKey = new Map(clients.map((target) => [target.key, target]));
+  const rfqByKey = new Map(rfqs.map((target) => [target.key, target]));
+
+  return [
+    {
+      table: "clients",
+      idColumn: "id",
+      expected: clients.map((target) => fixedOwnershipExpectation(target.id, {
+        id: target.id,
+        external_customer_id: target.externalId,
+        name: target.name,
+        description: target.description
+      }))
+    },
+    {
+      table: "commerce_client_details",
+      idColumn: "client_id",
+      expected: clients.map((target) => fixedOwnershipExpectation(target.id, {
+        client_id: target.id,
+        legal_company_name: target.name,
+        contact_email: target.contactEmail
+      }, { stringMarkerFields: ["commercial_notes"] }))
+    },
+    {
+      table: "commerce_catalog_products",
+      idColumn: "id",
+      expected: [fixedOwnershipExpectation(ids.catalogProduct, {
+        id: ids.catalogProduct,
+        mpn: product.mpn,
+        manufacturer: product.manufacturer,
+        description: product.description,
+        category: "DEMO",
+        commercial_price_approval_id: ids.priceApproval
+      })]
+    },
+    {
+      table: "commerce_rfqs",
+      idColumn: "id",
+      expected: rfqs.map((rfq) => {
+        const client = clientByKey.get(rfq.clientKey);
+        if (!client) throw new Error(`DEMO_SEED_RFQ_CLIENT_MISSING: ${rfq.key}`);
+        return fixedOwnershipExpectation(rfq.id, {
+          id: rfq.id,
+          external_rfq_id: rfq.externalId,
+          request_fingerprint: rfq.fingerprint,
+          client_id: client.id
+        }, { objectMarkerFields: ["contact_snapshot"] });
+      })
+    },
+    {
+      table: "commerce_rfq_items",
+      idColumn: "id",
+      expected: rfqs.map((rfq) => fixedOwnershipExpectation(rfq.itemId, {
+        id: rfq.itemId,
+        rfq_id: rfq.id,
+        line_number: 1,
+        mpn: rfq.mpn,
+        description: rfq.description
+      }))
+    },
+    {
+      table: "sourcing_requests",
+      idColumn: "id",
+      expected: [fixedOwnershipExpectation(ids.sourcingRequest, {
+        id: ids.sourcingRequest,
+        commerce_rfq_id: ids.rfq,
+        commerce_rfq_item_id: ids.rfqItem,
+        source: "commerce_rfq",
+        mpn: product.mpn,
+        normalized_mpn: product.normalizedMpn
+      }, { stringMarkerFields: ["notes"] })]
+    },
+    {
+      table: "sourcing_offers",
+      idColumn: "id",
+      expected: [fixedOwnershipExpectation(ids.sourcingOffer, {
+        id: ids.sourcingOffer,
+        sourcing_request_id: ids.sourcingRequest,
+        mpn: product.mpn,
+        normalized_mpn: product.normalizedMpn,
+        supplier_name: supplierOffer.supplierName,
+        supplier_reference: supplierOffer.reference
+      }, { objectMarkerFields: ["provenance"] })]
+    },
+    {
+      table: "commercial_price_approvals",
+      idColumn: "id",
+      expected: [fixedOwnershipExpectation(ids.priceApproval, {
+        id: ids.priceApproval,
+        sourcing_request_id: ids.sourcingRequest,
+        sourcing_offer_id: ids.sourcingOffer,
+        mpn: product.mpn,
+        normalized_mpn: product.normalizedMpn,
+        manufacturer: product.manufacturer
+      })]
+    },
+    {
+      table: "commerce_quotes",
+      idColumn: "id",
+      expected: quotes.map((quote) => {
+        const client = clientByKey.get(quote.clientKey);
+        const rfq = rfqByKey.get(quote.rfqKey);
+        if (!client || !rfq) throw new Error(`DEMO_SEED_QUOTE_RELATION_MISSING: ${quote.key}`);
+        return fixedOwnershipExpectation(quote.id, {
+          id: quote.id,
+          quote_number: quote.number,
+          rfq_id: rfq.id,
+          client_id: client.id
+        }, { stringMarkerFields: ["notes"] });
+      })
+    },
+    {
+      table: "commerce_quote_items",
+      idColumn: "id",
+      expected: quotes.map((quote) => {
+        const rfq = rfqByKey.get(quote.rfqKey);
+        if (!rfq) throw new Error(`DEMO_SEED_QUOTE_RELATION_MISSING: ${quote.key}`);
+        return fixedOwnershipExpectation(quote.itemId, {
+          id: quote.itemId,
+          quote_id: quote.id,
+          line_number: 1,
+          mpn: rfq.mpn,
+          description: rfq.description
+        });
+      })
+    }
+  ];
+}
+
+export function isDemoFixedRowSeedOwned(
+  row: UnknownRow,
+  expectation: DemoFixedRowOwnershipExpectation
+) {
+  return Object.entries(expectation.exact).every(([field, value]) => row[field] === value)
+    && expectation.stringMarkerFields.every((field) => markerInField(row, field))
+    && expectation.objectMarkerFields.every((field) => markerInObject(row[field]));
+}
+
+export function validateDemoFixedRows(
+  group: DemoFixedOwnershipGroup,
+  rows: readonly UnknownRow[]
+) {
+  const expectationById = new Map(group.expected.map((entry) => [entry.id, entry]));
+  for (const row of rows) {
+    const id = String(row[group.idColumn]);
+    const expectation = expectationById.get(id);
+    if (!expectation || !isDemoFixedRowSeedOwned(row, expectation)) {
+      throw new Error(`DEMO_SEED_FIXED_ID_COLLISION: ${group.table}.${group.idColumn}=${id}`);
+    }
+  }
+}
+
+async function guardFixedOwnershipGroup(
   supabase: SupabaseClient,
-  table: string,
-  idColumn: string,
-  expectedId: string,
-  ownsRow: (row: UnknownRow) => boolean
+  group: DemoFixedOwnershipGroup
 ) {
   const { data, error } = await supabase
-    .from(table as never)
+    .from(group.table as never)
     .select("*")
-    .eq(idColumn, expectedId)
-    .maybeSingle();
+    .in(group.idColumn, group.expected.map((entry) => entry.id));
   if (error) throw error;
-  if (data && !ownsRow(data as UnknownRow)) {
-    throw new Error(`DEMO_SEED_FIXED_ID_COLLISION: ${table}.${idColumn}=${expectedId}`);
-  }
+  validateDemoFixedRows(group, (data ?? []) as unknown as UnknownRow[]);
 }
 
 async function guardNaturalKey(
@@ -423,26 +600,6 @@ async function guardNaturalKey(
     (row) => String((row as unknown as UnknownRow)[idColumn]) !== expectedId
   );
   if (conflicting) throw new Error(`DEMO_SEED_NATURAL_KEY_COLLISION: ${table}`);
-}
-
-async function guardFixedRows(
-  supabase: SupabaseClient,
-  table: string,
-  idColumn: string,
-  expected: readonly { id: string; ownsRow: (row: UnknownRow) => boolean }[]
-) {
-  const { data, error } = await supabase
-    .from(table as never)
-    .select("*")
-    .in(idColumn, expected.map((entry) => entry.id));
-  if (error) throw error;
-  const ownershipById = new Map(expected.map((entry) => [entry.id, entry.ownsRow]));
-  for (const row of (data ?? []) as unknown as UnknownRow[]) {
-    const id = String(row[idColumn]);
-    if (!ownershipById.get(id)?.(row)) {
-      throw new Error(`DEMO_SEED_FIXED_ID_COLLISION: ${table}.${idColumn}=${id}`);
-    }
-  }
 }
 
 async function guardNaturalRows(
@@ -506,42 +663,9 @@ async function guardLineOneRows(
 
 async function collisionPreflight(supabase: SupabaseClient) {
   const { ids, clients, product, rfqs, quotes } = DEMO_DATA_MANIFEST;
-  await guardFixedRows(supabase, "clients", "id", clients.map((target) => ({
-    id: target.id,
-    ownsRow: (row: UnknownRow) => markerInField(row, "description")
-  })));
-  await guardFixedRows(supabase, "commerce_client_details", "client_id", clients.map((target) => ({
-    id: target.id,
-    ownsRow: (row: UnknownRow) => markerInField(row, "commercial_notes")
-  })));
-  await guardFixedRow(supabase, "commerce_catalog_products", "id", ids.catalogProduct, (row) =>
-    markerInField(row, "description")
-  );
-  await guardFixedRows(supabase, "commerce_rfqs", "id", rfqs.map((rfq) => ({
-    id: rfq.id,
-    ownsRow: (row: UnknownRow) => markerInObject(row.contact_snapshot)
-  })));
-  await guardFixedRows(supabase, "commerce_rfq_items", "id", rfqs.map((rfq) => ({
-    id: rfq.itemId,
-    ownsRow: (row: UnknownRow) => markerInField(row, "description")
-  })));
-  await guardFixedRow(supabase, "sourcing_requests", "id", ids.sourcingRequest, (row) =>
-    markerInField(row, "notes")
-  );
-  await guardFixedRow(supabase, "sourcing_offers", "id", ids.sourcingOffer, (row) =>
-    markerInObject(row.provenance)
-  );
-  await guardFixedRow(supabase, "commercial_price_approvals", "id", ids.priceApproval, (row) =>
-    row.mpn === product.mpn && String(row.manufacturer ?? "").includes("DEMO")
-  );
-  await guardFixedRows(supabase, "commerce_quotes", "id", quotes.map((quote) => ({
-    id: quote.id,
-    ownsRow: (row: UnknownRow) => markerInField(row, "notes")
-  })));
-  await guardFixedRows(supabase, "commerce_quote_items", "id", quotes.map((quote) => ({
-    id: quote.itemId,
-    ownsRow: (row: UnknownRow) => markerInField(row, "description")
-  })));
+  for (const group of buildDemoFixedOwnershipPlan()) {
+    await guardFixedOwnershipGroup(supabase, group);
+  }
 
   await guardNaturalRows(supabase, "clients", "external_customer_id", clients.map((target) => ({ value: target.externalId, id: target.id })));
   await guardNaturalRows(supabase, "commerce_rfqs", "external_rfq_id", rfqs.map((rfq) => ({ value: rfq.externalId, id: rfq.id })));
@@ -1358,7 +1482,7 @@ async function readAndValidateSeedQuoteEvents(
   );
 }
 
-async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) {
+export async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) {
   const manifest = DEMO_DATA_MANIFEST;
   const { ids, customer, product, supplierOffer, rfq, quote, fixedTimestamp, validUntil } = manifest;
   const maya = personIds.maya;

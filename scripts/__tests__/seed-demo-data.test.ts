@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import {
   DEMO_DATA_MANIFEST,
@@ -12,6 +13,7 @@ import {
 import {
   DEMO_BASE_PROJECT_REF,
   DEMO_OWNER_PASSWORD_ENV,
+  buildDemoFixedOwnershipPlan,
   buildDemoQuoteEventSeeds,
   buildDemoDryRunPlan,
   demoPeopleInHierarchyOrder,
@@ -19,11 +21,15 @@ import {
   legacyDemoOwnerInternalEmail,
   parseDemoSeedArgs,
   projectRefFromSupabaseUrl,
+  seedBusinessData,
   validateDemoApplyGuards,
+  validateDemoFixedRows,
   validateDemoOwnerPassword,
   validateExistingDemoQuoteEvents,
   validateLinkedDemoProjectRef,
   type DemoAuthUser,
+  type DemoFixedRowOwnershipExpectation,
+  type PersonIds,
   type DemoUserProvisioningGateway
 } from "../seed-demo-data";
 
@@ -134,6 +140,95 @@ function fakeUserGateway(initialPeople: readonly DemoPerson[] = []) {
   };
 
   return { calls, gateway, users };
+}
+
+type StoredRow = Record<string, unknown>;
+
+function materializeOwnedFixedRow(expectation: DemoFixedRowOwnershipExpectation): StoredRow {
+  const row: StoredRow = { ...expectation.exact };
+  for (const field of expectation.stringMarkerFields) {
+    row[field] = `${DEMO_SEED_MARKER}: deterministic test evidence.`;
+  }
+  for (const field of expectation.objectMarkerFields) {
+    row[field] = { demo: true, seed_marker: DEMO_SEED_MARKER };
+  }
+  return row;
+}
+
+function fixedOwnershipGroup(table: string) {
+  const group = buildDemoFixedOwnershipPlan().find((candidate) => candidate.table === table);
+  if (!group) throw new Error(`TEST_FIXED_OWNERSHIP_GROUP_MISSING: ${table}`);
+  return group;
+}
+
+function demoPersonIds(): PersonIds {
+  return Object.fromEntries(
+    DEMO_DATA_MANIFEST.people.map((person, index) => [person.key, demoUser(person, index).id])
+  ) as PersonIds;
+}
+
+function fakeBusinessSupabase() {
+  const tables = new Map<string, Map<string, StoredRow>>();
+  const insertedRows = { count: 0 };
+
+  function tableRows(table: string) {
+    let rows = tables.get(table);
+    if (!rows) {
+      rows = new Map<string, StoredRow>();
+      tables.set(table, rows);
+    }
+    return rows;
+  }
+
+  const supabase = {
+    from(table: string) {
+      return {
+        async upsert(input: StoredRow | StoredRow[], options: { onConflict: string }) {
+          for (const row of Array.isArray(input) ? input : [input]) {
+            const key = String(row[options.onConflict]);
+            const existing = tableRows(table).get(key);
+            tableRows(table).set(key, { ...existing, ...row });
+          }
+          return { error: null };
+        },
+        async insert(input: StoredRow | StoredRow[]) {
+          for (const [index, row] of (Array.isArray(input) ? input : [input]).entries()) {
+            const metadata = row.metadata as StoredRow | undefined;
+            const key = String(
+              metadata?.seed_event_key
+              ?? row.id
+              ?? row.client_id
+              ?? `${table}-${tableRows(table).size + index}`
+            );
+            if (!tableRows(table).has(key)) insertedRows.count += 1;
+            tableRows(table).set(key, { ...row });
+          }
+          return { error: null };
+        },
+        select() {
+          return {
+            async in(column: string, values: readonly unknown[]) {
+              return {
+                data: [...tableRows(table).values()].filter((row) => values.includes(row[column])),
+                error: null
+              };
+            }
+          };
+        }
+      };
+    }
+  } as unknown as SupabaseClient;
+
+  return {
+    supabase,
+    insertedRows,
+    put(table: string, key: string, row: StoredRow) {
+      tableRows(table).set(key, { ...row });
+    },
+    rows(table: string) {
+      return [...tableRows(table).values()];
+    }
+  };
 }
 
 describe("DEMO data manifest", () => {
@@ -317,6 +412,188 @@ describe("DEMO data manifest", () => {
     expect(() => validateExistingDemoQuoteEvents([
       { ...rows[0], quote_id: DEMO_DATA_MANIFEST.quotes[1].id }
     ])).toThrow("DEMO_SEED_IMMUTABLE_EVENT_MISMATCH");
+  });
+});
+
+describe("DEMO fixed-ID ownership and partial-apply recovery", () => {
+  it("allows a missing deterministic client to proceed to create", async () => {
+    const clients = fixedOwnershipGroup("clients");
+    expect(() => validateDemoFixedRows(clients, [])).not.toThrow();
+
+    const database = fakeBusinessSupabase();
+    await seedBusinessData(database.supabase, demoPersonIds());
+
+    expect(database.rows("clients")).toHaveLength(19);
+    expect(database.rows("clients")).toContainEqual(expect.objectContaining({
+      id: DEMO_DATA_MANIFEST.ids.client,
+      external_customer_id: "DEMO-AMAZON",
+      name: "Amazon-demo"
+    }));
+  });
+
+  it("recognizes and reconciles the existing seed-owned Amazon-demo row", async () => {
+    const clients = fixedOwnershipGroup("clients");
+    const amazon = DEMO_DATA_MANIFEST.clients[0];
+    const existingAmazon = {
+      id: amazon.id,
+      external_customer_id: amazon.externalId,
+      name: amazon.name,
+      description: amazon.description,
+      industry: amazon.industry,
+      region: "legacy-partial-region",
+      logo_path: "legacy-partial-logo.webp",
+      assigned_salesperson_id: "legacy-partial-owner"
+    };
+
+    expect(() => validateDemoFixedRows(clients, [existingAmazon])).not.toThrow();
+
+    const database = fakeBusinessSupabase();
+    database.put("clients", amazon.id, existingAmazon);
+    await seedBusinessData(database.supabase, demoPersonIds());
+
+    expect(database.rows("clients")).toHaveLength(19);
+    expect(database.rows("clients").find((row) => row.id === amazon.id)).toMatchObject({
+      external_customer_id: amazon.externalId,
+      name: amazon.name,
+      description: amazon.description,
+      region: amazon.region,
+      logo_path: amazon.media.localPath
+    });
+  });
+
+  it("accepts all 19 existing seed-owned clients without weakening their identity", () => {
+    const clients = fixedOwnershipGroup("clients");
+    const existingRows = clients.expected.map(materializeOwnedFixedRow);
+
+    expect(clients.expected).toHaveLength(19);
+    expect(new Set(existingRows.map((row) => row.id)).size).toBe(19);
+    expect(() => validateDemoFixedRows(clients, existingRows)).not.toThrow();
+  });
+
+  it("rejects a foreign identity that reuses a deterministic client UUID", () => {
+    const clients = fixedOwnershipGroup("clients");
+    const amazonExpectation = clients.expected[0];
+    if (!amazonExpectation) throw new Error("TEST_AMAZON_EXPECTATION_MISSING");
+    const seedOwned = materializeOwnedFixedRow(amazonExpectation);
+    const expectedError = `DEMO_SEED_FIXED_ID_COLLISION: clients.id=${amazonExpectation.id}`;
+
+    const wrongName = { ...seedOwned, name: "Real Customer Ltd" };
+    const wrongExternalId = { ...seedOwned, external_customer_id: "REAL-CUSTOMER-001" };
+    expect(() => validateDemoFixedRows(clients, [wrongName])).toThrow(expectedError);
+    expect(() => validateDemoFixedRows(clients, [wrongExternalId])).toThrow(expectedError);
+    expect(wrongName.name).toBe("Real Customer Ltd");
+    expect(wrongExternalId.external_customer_id).toBe("REAL-CUSTOMER-001");
+  });
+
+  it("allows partial seed-owned subsets across every deterministic-ID table", () => {
+    const expectedCounts: Record<string, number> = {
+      clients: 19,
+      commerce_client_details: 19,
+      commerce_catalog_products: 1,
+      commerce_rfqs: 19,
+      commerce_rfq_items: 19,
+      sourcing_requests: 1,
+      sourcing_offers: 1,
+      commercial_price_approvals: 1,
+      commerce_quotes: 45,
+      commerce_quote_items: 45
+    };
+
+    const plan = buildDemoFixedOwnershipPlan();
+    expect(Object.fromEntries(plan.map((group) => [group.table, group.expected.length]))).toEqual(expectedCounts);
+    const plannedTableIds = plan
+      .flatMap((group) => group.expected.map((entry) => `${group.table}:${entry.id}`))
+      .sort();
+    const expectedTableIds = [
+      ...DEMO_DATA_MANIFEST.clients.flatMap((target) => [
+        `clients:${target.id}`,
+        `commerce_client_details:${target.id}`
+      ]),
+      `commerce_catalog_products:${DEMO_DATA_MANIFEST.ids.catalogProduct}`,
+      ...DEMO_DATA_MANIFEST.rfqs.flatMap((rfq) => [
+        `commerce_rfqs:${rfq.id}`,
+        `commerce_rfq_items:${rfq.itemId}`
+      ]),
+      `sourcing_requests:${DEMO_DATA_MANIFEST.ids.sourcingRequest}`,
+      `sourcing_offers:${DEMO_DATA_MANIFEST.ids.sourcingOffer}`,
+      `commercial_price_approvals:${DEMO_DATA_MANIFEST.ids.priceApproval}`,
+      ...DEMO_DATA_MANIFEST.quotes.flatMap((quote) => [
+        `commerce_quotes:${quote.id}`,
+        `commerce_quote_items:${quote.itemId}`
+      ])
+    ].sort();
+    expect(plannedTableIds).toEqual(expectedTableIds);
+    for (const group of plan) {
+      const partialRows = group.expected
+        .filter((_, index) => index % 2 === 0)
+        .map(materializeOwnedFixedRow);
+      expect(() => validateDemoFixedRows(group, partialRows), group.table).not.toThrow();
+    }
+  });
+
+  it("rejects foreign identity evidence in every deterministic-ID table", () => {
+    for (const group of buildDemoFixedOwnershipPlan()) {
+      const expectation = group.expected[0];
+      if (!expectation) throw new Error(`TEST_FIXED_OWNERSHIP_EXPECTATION_MISSING: ${group.table}`);
+      const ownedRow = materializeOwnedFixedRow(expectation);
+      const identityField = Object.keys(expectation.exact).find((field) => field !== group.idColumn);
+      if (!identityField) throw new Error(`TEST_FIXED_OWNERSHIP_IDENTITY_MISSING: ${group.table}`);
+      const foreignRow = { ...ownedRow, [identityField]: "FOREIGN-IDENTITY" };
+      expect(
+        () => validateDemoFixedRows(group, [foreignRow]),
+        group.table
+      ).toThrow(`DEMO_SEED_FIXED_ID_COLLISION: ${group.table}.${group.idColumn}=${expectation.id}`);
+
+      for (const field of expectation.stringMarkerFields) {
+        expect(
+          () => validateDemoFixedRows(group, [{ ...ownedRow, [field]: "foreign" }]),
+          `${group.table}.${field}`
+        ).toThrow("DEMO_SEED_FIXED_ID_COLLISION");
+      }
+      for (const field of expectation.objectMarkerFields) {
+        expect(
+          () => validateDemoFixedRows(group, [{ ...ownedRow, [field]: { source: "foreign" } }]),
+          `${group.table}.${field}`
+        ).toThrow("DEMO_SEED_FIXED_ID_COLLISION");
+      }
+    }
+  });
+
+  it("keeps RFQs, quotes, events, and all final counts stable on a complete second run", async () => {
+    const database = fakeBusinessSupabase();
+    const personIds = demoPersonIds();
+
+    await seedBusinessData(database.supabase, personIds);
+    const firstCounts = {
+      clients: database.rows("clients").length,
+      companyPhotos: database.rows("clients").filter((row) => Boolean(row.logo_path)).length,
+      rfqs: database.rows("commerce_rfqs").length,
+      quotes: database.rows("commerce_quotes").length,
+      quoteEvents: database.rows("commerce_quote_events").length
+    };
+    const insertedAfterFirstRun = database.insertedRows.count;
+
+    await seedBusinessData(database.supabase, personIds);
+    const secondCounts = {
+      clients: database.rows("clients").length,
+      companyPhotos: database.rows("clients").filter((row) => Boolean(row.logo_path)).length,
+      rfqs: database.rows("commerce_rfqs").length,
+      quotes: database.rows("commerce_quotes").length,
+      quoteEvents: database.rows("commerce_quote_events").length
+    };
+
+    expect(secondCounts).toEqual(firstCounts);
+    expect(secondCounts).toEqual({
+      clients: 19,
+      companyPhotos: 19,
+      rfqs: 19,
+      quotes: 45,
+      quoteEvents: 117
+    });
+    expect(database.insertedRows.count).toBe(insertedAfterFirstRun);
+    expect(DEMO_DATA_MANIFEST.people).toHaveLength(28);
+    expect(DEMO_DATA_MANIFEST.people.filter((person) => person.avatarPath)).toHaveLength(27);
+    expect(DEMO_DATA_MANIFEST.compensations).toHaveLength(28);
   });
 });
 
@@ -614,5 +891,18 @@ describe("DEMO seed source boundary", () => {
     expect(source.indexOf('select("quote_id,actor_id,event_type,previous_status,new_status,metadata,created_at")')).toBeGreaterThan(0);
     expect(source.indexOf("seed_event_key")).toBeGreaterThan(0);
     expect(source.indexOf('.from("commerce_quote_events").insert')).toBeGreaterThan(0);
+  });
+
+  it("finishes every fixed-ID ownership check before the first apply write", () => {
+    const applySeed = source.slice(
+      source.indexOf("export async function applyDemoSeed"),
+      source.indexOf("async function main")
+    );
+    const collisionPreflight = applySeed.indexOf("await collisionPreflight(service)");
+    const userProvisioning = applySeed.indexOf("await ensureDemoUsers(");
+    const businessSeed = applySeed.indexOf("await seedBusinessData(");
+    expect(collisionPreflight).toBeGreaterThan(0);
+    expect(userProvisioning).toBeGreaterThan(collisionPreflight);
+    expect(businessSeed).toBeGreaterThan(userProvisioning);
   });
 });
