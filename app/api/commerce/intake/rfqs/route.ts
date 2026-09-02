@@ -12,4 +12,3 @@ function disabled() {
 
 export const GET = disabled;
 export const POST = disabled;
-

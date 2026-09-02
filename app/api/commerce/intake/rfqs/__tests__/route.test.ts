@@ -8,4 +8,3 @@ describe("disabled external RFQ intake", () => {
     await expect(response.json()).resolves.toEqual({ error: "integration_disabled" });
   });
 });
-
