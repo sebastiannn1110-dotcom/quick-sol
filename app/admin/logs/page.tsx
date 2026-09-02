@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 interface SystemLog {
   id: string;
@@ -112,7 +113,7 @@ export default function AdminLogsPage() {
                     <td className="px-4 py-3 text-slate-600">{log.module}</td>
                     <td className="px-4 py-3 font-medium text-slate-950">{log.action}</td>
                     <td className="max-w-md px-4 py-3 text-slate-600">{log.message}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{log.user_email ?? log.user_id ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{visibleEmailAddress(log.user_email) || log.user_id || "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs">
                       {log.trace_id ? (
                         <div className="flex items-center gap-2">

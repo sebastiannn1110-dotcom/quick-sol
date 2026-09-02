@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import type { UserRole } from "@/lib/types";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 interface EmployeeOption {
   id: string;
@@ -178,7 +179,7 @@ export default function AdminEmailCenterPage() {
               {filtered.map((employee) => (
                 <label key={employee.id} className="flex cursor-pointer items-start gap-3 py-3 text-sm">
                   <input type="checkbox" checked={selectedIds.includes(employee.id)} onChange={() => toggle(employee.id)} className="mt-1" />
-                  <span><span className="block font-medium text-slate-950">{employee.full_name}</span><span className="block text-slate-500">{employee.email} · {employee.role}{employee.department ? ` · ${employee.department}` : ""}</span></span>
+                  <span><span className="block font-medium text-slate-950">{employee.full_name}</span><span className="block text-slate-500">{visibleEmailAddress(employee.email, employee.full_name)} · {employee.role}{employee.department ? ` · ${employee.department}` : ""}</span></span>
                 </label>
               ))}
               {!loading && !filtered.length ? <p className="py-6 text-center text-sm text-slate-500">No hay perfiles que coincidan.</p> : null}

@@ -25,6 +25,8 @@
     "provision:admins:inspect": "tsx scripts/provision-admin-users.ts --inspect",
     "provision:admins:apply": "tsx scripts/provision-admin-users.ts --apply",
     "provision:admins:rotate": "tsx scripts/provision-admin-users.ts --apply --rotate-password",
+    "seed:demo": "tsx scripts/seed-demo-data.ts",
+    "seed:demo:apply": "tsx scripts/seed-demo-data.ts --apply",
     "reconcile:users": "tsx scripts/reconcile-user-provisioning.ts --preview",
     "reconcile:users:orphans": "tsx scripts/reconcile-user-provisioning.ts --orphans",
     "reconcile:users:apply": "tsx scripts/reconcile-user-provisioning.ts --apply",

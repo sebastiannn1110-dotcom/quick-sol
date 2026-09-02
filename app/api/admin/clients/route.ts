@@ -23,7 +23,8 @@ export async function POST(request: Request) {
       region: input.region,
       website: input.website,
       created_by: context.profile.id,
-      updated_by: context.profile.id
+      updated_by: context.profile.id,
+      assigned_salesperson_id: context.profile.role === "manager" ? context.profile.id : null
     })
     .select("id,name,description,industry,region,website,status,created_at,updated_at")
     .single();

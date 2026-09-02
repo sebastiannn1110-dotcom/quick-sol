@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Pencil, Upload } from "lucide-react";
+import { ArrowLeft, Factory, MapPin, Pencil, Upload } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ClientFiles from "@/components/clients/ClientFiles";
+import ClientCommerceActivity from "@/components/clients/ClientCommerceActivity";
+import { DemoAccountBadge, DemoAccountNotice } from "@/components/clients/DemoAccount";
 import ClientImage from "@/components/clients/ClientImage";
 import ClientOpportunities from "@/components/clients/ClientOpportunities";
 import EmployeeGuard from "@/components/EmployeeGuard";
@@ -99,32 +101,44 @@ export default function ClientDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           {t("clientDetail.back")}
         </Link>
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center">
+        <header className="grid gap-5 border-b border-slate-200 pb-5 lg:grid-cols-[minmax(280px,380px)_minmax(0,1fr)] lg:items-stretch">
           <ClientImage
             logoUrl={client.logoUrl}
             authorizedIdentificationImageUrl={client.authorizedIdentificationImageUrl}
             alt={client.name}
-            className="flex h-24 w-24 shrink-0 items-center justify-center rounded-md border border-slate-200"
+            className="flex h-52 w-full items-center justify-center rounded-lg border border-slate-200 bg-slate-100 lg:h-full lg:min-h-52"
+            imageClassName="h-full w-full object-cover"
+            placeholderClassName="h-16 w-16 text-slate-300"
           />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="break-words text-2xl font-semibold text-slate-950">{client.name}</h1>
-              <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}</span>
+          <div className="flex min-w-0 flex-col justify-between gap-5 py-1">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="break-words text-2xl font-semibold text-slate-950">{client.name}</h1>
+                <DemoAccountBadge accountName={client.name} />
+                <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}</span>
+              </div>
+              <p className="mt-2 text-sm text-slate-500">{client.description ?? t("clientDetail.noDescription")}</p>
+              <DemoAccountNotice accountName={client.name} className="mt-3" />
+              {client.industry || client.region ? (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
+                  {client.industry ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1"><Factory className="h-3.5 w-3.5" aria-hidden="true" />{client.industry}</span> : null}
+                  {client.region ? <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />{client.region}</span> : null}
+                </div>
+              ) : null}
             </div>
-            <p className="mt-1 text-sm text-slate-500">{client.description ?? t("clientDetail.noDescription")}</p>
+            {client.canManage ? (
+              <div className="flex flex-wrap gap-2">
+                <Link href={`/upload?clientId=${encodeURIComponent(client.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700">
+                  <Upload className="h-4 w-4" />
+                  {t("clients.uploadFiles")}
+                </Link>
+                <Link href={`/admin/clients/${client.id}/edit`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  <Pencil className="h-4 w-4" />
+                  {t("clientDetail.edit")}
+                </Link>
+              </div>
+            ) : null}
           </div>
-          {client.canManage ? (
-            <div className="flex flex-wrap gap-2">
-              <Link href={`/upload?clientId=${encodeURIComponent(client.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700">
-                <Upload className="h-4 w-4" />
-                {t("clients.uploadFiles")}
-              </Link>
-              <Link href={`/admin/clients/${client.id}/edit`} className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                <Pencil className="h-4 w-4" />
-                {t("clientDetail.edit")}
-              </Link>
-            </div>
-          ) : null}
         </header>
 
         <div className="flex gap-2 overflow-x-auto border-b border-slate-200">
@@ -153,6 +167,7 @@ export default function ClientDetailPage() {
                 </div>
               ))}
             </div>
+            <ClientCommerceActivity clientId={client.id} />
           </div>
         ) : null}
         {tab === "opportunities" ? <ClientOpportunities clientId={client.id} /> : null}

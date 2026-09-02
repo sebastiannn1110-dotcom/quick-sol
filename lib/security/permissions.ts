@@ -269,7 +269,7 @@ export function questionRequestsSensitiveCommercialData(question: string) {
     !/\b(muestrame|mostrar|lista|listame|valores?|datos?|registros?|tenemos|tienen|hay|cuant[oa]s?|total|promedio|calcula|calcular|gp\s*rate|margen(?:es)?|profit)\b/.test(normalized);
   if (asksOnlyForStructure) return false;
 
-  return /\b(costos?|cost|precio(?:s)?|price(?:s)?|margen(?:es)?|margin(?:s)?|gp(?:\s*rate)?|gross\s*profit|profit|commission|comision|unit\s*cost|price\s*book|pricebook|global\s*price|globalprice|contract\s*global\s*price|contractglobalprice|usd\s*extended\s*price|po|purchase\s*order|notas?\s+internas?|internal\s+notes?)\b/.test(normalized);
+  return /\b(costos?|cost|precio(?:s)?|price(?:s)?|margen(?:es)?|margin(?:s)?|gp(?:\s*rate)?|gross\s*profit|profit|commission|comision|unit\s*cost|price\s*book|pricebook|global\s*price|globalprice|contract\s*global\s*price|contractglobalprice|usd\s*extended\s*price|po|purchase\s*order|notas?\s+internas?|internal\s+notes?|salario|sueldo|compensacion|salary|compensation|wage|pay)\b|\bcuanto\s+(?:gana|cobra)\b|工资|薪资/.test(normalized);
 }
 
 export function shouldBlockSensitiveAiQuestion(question: string, role: UserRole) {

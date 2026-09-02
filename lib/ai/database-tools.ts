@@ -47,12 +47,18 @@ export type AiDatabaseToolName =
   | "getOpportunityFinderSummary"
   | "getOpportunityFinderItemDetail"
   | "getUploadPresentationSummary"
+  | "getLatestUploadAttribution"
   | "getStockNeedsSummary"
   | "getStockShortageSummary"
   | "getZeroStockSummary"
   | "getStockConceptHelp"
   | "getOpportunitiesSummary"
   | "getLatestUpload"
+  | "quote_summary"
+  | "employee_quote_metrics"
+  | "client_quote_summary"
+  | "client_lookup"
+  | "sourcing_lookup"
   | "searchBusinessRecords"
   | "getRecordsByMpn"
   | "getUploadsByUser"
@@ -924,6 +930,97 @@ export async function getOpportunitiesSummary(context: AuthContext, question: st
     summary,
     baseResult.totals.totalOpportunities === 0,
     input.uploadIds.length >= 12 || baseResult.meta.scannedRecords >= 2500,
+    { deterministic: true }
+  );
+}
+
+type LatestUploadAttributionRow = {
+  original_file_name: string | null;
+  status: string | null;
+  created_at: string | null;
+  profiles?: { full_name?: string | null } | Array<{ full_name?: string | null }> | null;
+};
+
+function safeUploadFileName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const basename = value.split(/[\\/]/).pop() ?? "";
+  const clean = basename
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/[<>:\"|?*`\[\]]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 260);
+  return clean || null;
+}
+
+function safeUploaderDisplayName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const clean = value
+    .replace(/[\u0000-\u001F\u007F<>`\[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+  if (!clean || /@/.test(clean) || /^[0-9a-f-]{36}$/i.test(clean)) return null;
+  return clean;
+}
+
+function safeUploadStatus(value: unknown) {
+  if (typeof value !== "string") return null;
+  const clean = value.replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
+  return clean || null;
+}
+
+/**
+ * Returns the smallest authorized projection needed to identify the latest
+ * visible upload. The caller's Supabase client keeps RLS in force; employees
+ * also receive an explicit owner filter as defense in depth.
+ */
+export async function getLatestUploadAttribution(context: AuthContext) {
+  const supabase = requireSupabase(context);
+  let query = supabase
+    .from("upload_batches")
+    .select("original_file_name, status, created_at, profiles(full_name)")
+    .neq("status", "archived")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (mustForceOwnerScope(context.profile.role)) {
+    query = query.eq("uploaded_by", context.profile.id);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    return result(
+      context,
+      "getLatestUploadAttribution",
+      { item: null },
+      "No hay cargas visibles para identificar.",
+      true,
+      false,
+      { deterministic: true }
+    );
+  }
+
+  const row = data as unknown as LatestUploadAttributionRow;
+  const relatedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+  const item = {
+    fileName: safeUploadFileName(row.original_file_name),
+    uploadedAt: typeof row.created_at === "string" ? row.created_at.slice(0, 40) : null,
+    status: safeUploadStatus(row.status),
+    uploaderDisplayName:
+      safeUploaderDisplayName(relatedProfile?.full_name) ??
+      (mustForceOwnerScope(context.profile.role)
+        ? safeUploaderDisplayName(context.profile.full_name)
+        : null)
+  };
+
+  return result(
+    context,
+    "getLatestUploadAttribution",
+    { item },
+    "Se encontró la atribución autorizada de la carga más reciente.",
+    false,
+    false,
     { deterministic: true }
   );
 }

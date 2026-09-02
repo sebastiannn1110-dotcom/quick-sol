@@ -4,6 +4,7 @@ import { logAuditEvent, requireAdmin } from "@/lib/auth/context";
 import { sendEmail } from "@/lib/email/email-service";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
       <div style="font-family:Arial,sans-serif">
         <h2>Electronic Parts email alerts test</h2>
         <p>This confirms that the configured provider can process Electronic Parts alert emails.</p>
-        <p>Requested by ${context.profile.full_name} (${context.profile.email}).</p>
+        <p>Requested by ${context.profile.full_name} (${visibleEmailAddress(context.profile.email, context.profile.full_name)}).</p>
       </div>
     `
   });
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
           subject,
           status: result.status,
           error_message: result.errorMessage ?? null,
-          metadata: { provider: result.provider, requestedBy: context.profile.email },
+          metadata: { provider: result.provider, requestedBy: visibleEmailAddress(context.profile.email, context.profile.full_name) },
           sent_at: result.status === "sent" ? new Date().toISOString() : null
         })
       )

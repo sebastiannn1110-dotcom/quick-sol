@@ -7,6 +7,7 @@ import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
 import { useProfile } from "@/components/ProfileProvider";
 import { isAdmin } from "@/lib/auth/roles";
+import { isDemoOwnerIdentity, visibleEmailAddress } from "@/lib/auth/demo-login";
 
 interface EmployeeWithCounts extends Profile {
   uploadCount: number;
@@ -82,7 +83,7 @@ function EmployeesContent() {
   }
 
   const employee = detail?.employee;
-  const canEmail = isAdmin(currentUser?.role) && employee?.email;
+  const canEmail = isAdmin(currentUser?.role) && employee?.email && !isDemoOwnerIdentity(employee.email);
 
   return (
     <div className="space-y-6">
@@ -127,7 +128,7 @@ function EmployeesContent() {
                   <UserAvatar name={employee.full_name} avatarPath={employee.avatar_path} size="lg" />
                   <div>
                     <h2 className="text-2xl font-semibold text-slate-950">{employee.full_name}</h2>
-                    <p className="mt-1 text-sm text-slate-500">{employee.email}</p>
+                    <p className="mt-1 text-sm text-slate-500">{visibleEmailAddress(employee.email, employee.full_name)}</p>
                     <p className="mt-2 text-sm font-semibold text-slate-700">{employee.job_title || employee.role}</p>
                     <p className="text-sm text-slate-500">{employee.department || "Sin departamento"} - {employee.region || "Sin region"}</p>
                   </div>

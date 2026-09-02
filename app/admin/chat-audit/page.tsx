@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import UserAvatar from "@/components/chat/UserAvatar";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 interface AuditMember {
   id: string;
@@ -113,7 +114,7 @@ export default function AdminChatAuditPage() {
           <section className="rounded-md border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-4 py-3">
               <h2 className="font-semibold text-slate-950">{selected ? title(selected) : "Selecciona una conversacion"}</h2>
-              {selected ? <p className="mt-1 text-xs text-slate-500">{selected.chat_conversation_members.map((member) => member.profiles?.email ?? member.user_id).join(", ")}</p> : null}
+              {selected ? <p className="mt-1 text-xs text-slate-500">{selected.chat_conversation_members.map((member) => member.profiles ? visibleEmailAddress(member.profiles.email, member.profiles.full_name) : member.user_id).join(", ")}</p> : null}
             </div>
             <div className="max-h-[calc(100vh-300px)] space-y-3 overflow-auto bg-slate-50 p-4">
               {messages.map((message) => (

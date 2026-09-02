@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import type { TrafficAnalytics, TrafficRange } from "@/lib/traffic/analytics";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 const ranges: Array<{ value: TrafficRange; label: string }> = [
   { value: "today", label: "Hoy" },
@@ -117,7 +118,7 @@ export default function AdminTrafficPage() {
                     <thead><tr className="text-left text-slate-500"><th className="py-2">Usuario</th><th>Rol</th><th>Requests</th><th>Rutas</th><th>Uploads</th><th>Errores</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {traffic.activeUsers.map((user) => (
-                        <tr key={user.userId}><td className="py-2 font-medium text-slate-800">{user.email}</td><td>{user.role}</td><td>{user.requests}</td><td>{user.routesUsed}</td><td>{user.uploads}</td><td>{user.errors}</td></tr>
+                        <tr key={user.userId}><td className="py-2 font-medium text-slate-800">{visibleEmailAddress(user.email)}</td><td>{user.role}</td><td>{user.requests}</td><td>{user.routesUsed}</td><td>{user.uploads}</td><td>{user.errors}</td></tr>
                       ))}
                     </tbody>
                   </table>

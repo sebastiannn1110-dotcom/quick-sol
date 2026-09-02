@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from "react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { Profile } from "@/lib/types";
 import { useProfile } from "@/components/ProfileProvider";
+import { isDemoPresentationOwnerEmail } from "@/lib/profile/avatar";
+import { visibleProfileIdentifier } from "@/lib/auth/demo-login";
 
 export default function ProfilePage() {
   const { profile: sharedProfile, refreshProfile } = useProfile();
@@ -14,6 +16,7 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const hasPermanentInitial = isDemoPresentationOwnerEmail(profile?.email);
 
   useEffect(() => {
     if (!sharedProfile) return;
@@ -86,7 +89,7 @@ export default function ProfilePage() {
             <UserAvatar name={profile.full_name} avatarPath={profile.avatar_path} size="lg" />
             <div>
               <h2 className="text-lg font-semibold text-slate-950">{profile.full_name}</h2>
-              <p className="text-sm text-slate-500">{profile.email}</p>
+              <p className="text-sm text-slate-500">{visibleProfileIdentifier(profile)}</p>
               <p className="mt-1 text-xs font-semibold uppercase text-slate-500">
                 {profile.job_title || profile.role}{profile.department ? ` - ${profile.department}` : ""}
               </p>
@@ -98,15 +101,23 @@ export default function ProfilePage() {
         )}
         {message ? <p className="mt-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">{message}</p> : null}
         {error ? <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-        <form onSubmit={upload} className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]">
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Nueva foto
-            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="rounded-md border border-slate-300 p-2 text-sm font-normal" />
-            <span className="text-xs font-normal text-slate-500">JPG, PNG o WebP. Maximo 5 MB.</span>
-          </label>
-          <button disabled={!file || saving} className="self-start rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Guardando..." : "Actualizar foto"}</button>
-        </form>
-        {profile?.avatar_path ? <button type="button" disabled={saving} onClick={() => void remove()} className="mt-4 text-sm font-semibold text-red-700">Eliminar foto actual</button> : null}
+        {hasPermanentInitial ? (
+          <p className="mt-6 rounded-md bg-slate-50 p-3 text-sm text-slate-600">
+            El avatar permanente de esta cuenta demo es U.
+          </p>
+        ) : (
+          <>
+            <form onSubmit={upload} className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]">
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                Nueva foto
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="rounded-md border border-slate-300 p-2 text-sm font-normal" />
+                <span className="text-xs font-normal text-slate-500">JPG, PNG o WebP. Maximo 5 MB.</span>
+              </label>
+              <button disabled={!file || saving} className="self-start rounded-md bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Guardando..." : "Actualizar foto"}</button>
+            </form>
+            {profile?.avatar_path ? <button type="button" disabled={saving} onClick={() => void remove()} className="mt-4 text-sm font-semibold text-red-700">Eliminar foto actual</button> : null}
+          </>
+        )}
       </section>
 
       <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">

@@ -2,6 +2,7 @@
 
 import CategoryBadge from "@/components/CategoryBadge";
 import { useLanguage } from "@/components/LanguageProvider";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 import type { BusinessCategory, UploadBatch } from "@/lib/types";
 
 export type UploadWithJob = UploadBatch & {
@@ -77,7 +78,7 @@ export default function AdminUploadsTable({ uploads }: { uploads: UploadWithJob[
                   <tr key={upload.id}>
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-950">{upload.original_file_name}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-600">{upload.profiles?.full_name ?? upload.uploaded_by}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{upload.profiles?.email ?? "-"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{visibleEmailAddress(upload.profiles?.email, upload.profiles?.full_name) || "-"}</td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <CategoryBadge category={(upload.detected_category ?? "Generic") as BusinessCategory} />
                     </td>

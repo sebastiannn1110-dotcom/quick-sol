@@ -9,6 +9,7 @@ import {
   getConversationMemorySet,
   getDashboardSummary,
   getImportErrors,
+  getLatestUploadAttribution,
   getLatestUpload,
   getMissingMpnRecords,
   getOpportunitiesSummary,
@@ -39,6 +40,15 @@ import {
   type AssistantResponsePlan
 } from "@/lib/ai/response-plan";
 import type { OpportunityFinderAiMode } from "@/lib/ai/opportunity-finder-tool";
+import {
+  getClientQuoteSummary,
+  getEmployeeQuoteMetrics,
+  getQuoteSummary,
+  getSourcingLookup
+} from "@/lib/ai/commerce-tools";
+import {
+  getClientLookup
+} from "@/lib/ai/commerce-insights-tools";
 import {
   logSafeAiEvent,
   sanitizeQuestionForLogs
@@ -105,6 +115,8 @@ function entityForIntent(intent: AssistantIntentId): AssistantResponsePlan["enti
   }
   if (intent.includes("stock") || intent === "zero_stock") return "stock";
   if (intent.includes("opportunity")) return "opportunity";
+  if (intent === "employee_quote_metrics") return "employee";
+  if (intent === "client_lookup" || intent === "client_quote_summary") return "client";
   if (intent === "mpn_search" || intent.includes("mpn")) return "mpn";
   return null;
 }
@@ -285,6 +297,18 @@ async function executeDetectedIntent(input: {
   if (intent === "stock_shortage") return getStockShortageSummary(context);
   if (intent === "zero_stock") return getZeroStockSummary(context);
   if (intent === "stock_concept_help") return getStockConceptHelp(context);
+  if (intent === "quote_summary") return getQuoteSummary(context);
+  if (intent === "employee_quote_metrics") {
+    return getEmployeeQuoteMetrics(context, question, { language, history: input.history });
+  }
+  if (intent === "client_lookup") return getClientLookup(context, question);
+  if (intent === "client_quote_summary") return getClientQuoteSummary(context);
+  if (intent === "sourcing_lookup") {
+    return getSourcingLookup(context, input.mpn ?? "");
+  }
+  if (intent === "latest_upload_attribution") {
+    return getLatestUploadAttribution(context);
+  }
   if (intent === "latest_upload") return getLatestUpload(context);
   if (intent === "upload_summary" || intent === "latest_upload_columns") {
     return getUploadPresentationSummary(context, question);
@@ -353,7 +377,7 @@ export async function routeAssistantDatabaseQuery(
     };
   }
 
-  const detected = detectAssistantIntent(question, language);
+  const detected = detectAssistantIntent(question, language, history);
 
   // Keep the established security detector as a second, independent boundary.
   if (

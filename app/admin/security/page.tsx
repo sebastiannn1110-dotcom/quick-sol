@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { SecurityEvent } from "@/lib/types";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 const ALERT_EVENT_TYPES = new Set([
   "upload_failed",
@@ -90,7 +91,7 @@ export default function AdminSecurityPage() {
                     <p className="font-semibold text-slate-950">{event.event_type} - {event.severity}</p>
                     <p className="mt-1 text-slate-600">{event.route ?? t("admin.unknownRoute")}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {event.actor_email ?? event.actor_id ?? t("admin.unknownActor")} - {new Date(event.created_at).toLocaleString(locale)}
+                      {visibleEmailAddress(event.actor_email) || event.actor_id || t("admin.unknownActor")} - {new Date(event.created_at).toLocaleString(locale)}
                     </p>
                   </div>
                   {event.trace_id ? (

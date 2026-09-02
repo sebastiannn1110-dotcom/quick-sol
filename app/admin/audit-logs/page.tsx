@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AdminGuard from "@/components/AdminGuard";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { AuditLog } from "@/lib/types";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 export default function AdminAuditLogsPage() {
   const { t, locale } = useLanguage();
@@ -32,7 +33,7 @@ export default function AdminAuditLogsPage() {
             {logs.map((log) => (
               <div key={log.id} className="p-4 text-sm">
                 <p className="font-semibold text-slate-950">{log.action}</p>
-                <p className="mt-1 text-slate-600">{log.actor_email ?? log.actor_id ?? t("admin.systemActor")} · {log.entity_type ?? t("admin.entity")}</p>
+                <p className="mt-1 text-slate-600">{visibleEmailAddress(log.actor_email) || log.actor_id || t("admin.systemActor")} · {log.entity_type ?? t("admin.entity")}</p>
                 <p className="mt-1 text-xs text-slate-500">{new Date(log.created_at).toLocaleString(locale)}</p>
               </div>
             ))}

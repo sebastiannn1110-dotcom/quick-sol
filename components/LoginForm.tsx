@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { clientLogger } from "@/lib/logger/clientLogger";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import LanguageToggle from "@/components/LanguageToggle";
 import BrandMark from "@/components/BrandMark";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -16,9 +15,9 @@ export default function LoginForm() {
   const { t } = useLanguage();
   const redirect = safePostLoginRedirect(searchParams.get("redirect"));
   const setupError = searchParams.get("error");
-  const [supabase, setSupabase] = useState(() => createSupabaseBrowserClient());
+  const [configured, setConfigured] = useState(false);
   const [configLoading, setConfigLoading] = useState(true);
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -40,24 +39,13 @@ export default function LoginForm() {
       try {
         const response = await fetch("/api/auth/public-config", { cache: "no-store" });
         if (!response.ok) {
-          setSupabase(null);
+          setConfigured(false);
           return;
         }
         const config = (await response.json()) as {
           configured: boolean;
-          supabaseUrl?: string;
-          supabasePublishableKey?: string;
         };
-        if (config.configured && config.supabaseUrl && config.supabasePublishableKey) {
-          setSupabase(
-            createSupabaseBrowserClient({
-              url: config.supabaseUrl,
-              publishableKey: config.supabasePublishableKey
-            })
-          );
-        } else {
-          setSupabase(null);
-        }
+        setConfigured(config.configured);
       } finally {
         setConfigLoading(false);
       }
@@ -72,7 +60,7 @@ export default function LoginForm() {
       setError(t("auth.configLoading"));
       return;
     }
-    if (!supabase) {
+    if (!configured) {
       setError(t("auth.supabaseMissing"));
       return;
     }
@@ -81,20 +69,21 @@ export default function LoginForm() {
     setError(null);
     setMessage(null);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ identifier, password })
     });
 
     setLoading(false);
 
-    if (signInError) {
-      clientLogger.loginFailed({ email, reason: signInError.message });
+    if (!response.ok) {
+      clientLogger.loginFailed({ email: identifier, reason: `status_${response.status}` });
       setError(t("auth.invalid"));
       return;
     }
 
-    clientLogger.loginSuccess({ email });
+    clientLogger.loginSuccess({ email: identifier });
     router.replace(redirect);
     router.refresh();
   }
@@ -143,7 +132,7 @@ export default function LoginForm() {
             <LanguageToggle />
           </div>
 
-          {!supabase ? (
+          {!configured && !configLoading ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               {t("auth.notConfiguredNotice")}
             </div>
@@ -151,15 +140,15 @@ export default function LoginForm() {
 
           <form onSubmit={handleSubmit} className="mt-6 grid gap-5">
         <label className="grid gap-1 text-sm font-medium text-slate-700">
-          {t("auth.email")}
+          {t("auth.identifier")}
           <input
-            type="email"
+            type="text"
             required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
+            value={identifier}
+            onChange={(event) => setIdentifier(event.target.value)}
+            autoComplete="username"
             className="focus-ring min-h-11 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 font-normal text-slate-950 shadow-sm placeholder:text-slate-400"
-            placeholder="name@example.com"
+            placeholder="user.test.demo.com"
           />
         </label>
         <label className="grid gap-1 text-sm font-medium text-slate-700">
@@ -179,7 +168,7 @@ export default function LoginForm() {
         {error ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
 
         <button
-          disabled={loading || configLoading || !supabase}
+          disabled={loading || configLoading || !configured}
           className="focus-ring min-h-11 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           type="submit"
         >

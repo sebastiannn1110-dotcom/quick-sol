@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "@/lib/auth/context";
 
-function authContext(role: "admin" | "manager" | "employee" = "admin"): AuthContext {
+function authContext(role: "admin" | "manager" | "employee" | "super_admin_dev" = "admin"): AuthContext {
   return {
     user: null,
     supabase: null,
@@ -31,6 +31,7 @@ describe("AI query router", () => {
   const getRecordsByMpn = vi.fn();
   const getStockNeedsSummary = vi.fn();
   const getStockShortageSummary = vi.fn();
+  const getLatestUploadAttribution = vi.fn();
   const getUploadPresentationSummary = vi.fn();
   const getOpportunitiesSummary = vi.fn();
   const getOpportunityFinderSummary = vi.fn();
@@ -39,6 +40,11 @@ describe("AI query router", () => {
   const getLowGpRecords = vi.fn();
   const getMpnPriceComparison = vi.fn();
   const searchBusinessRecords = vi.fn();
+  const getQuoteSummary = vi.fn();
+  const getEmployeeQuoteMetrics = vi.fn();
+  const getClientQuoteSummary = vi.fn();
+  const getSourcingLookup = vi.fn();
+  const getClientLookup = vi.fn();
   const logger = {
     info: vi.fn(async () => undefined),
     warn: vi.fn(async () => undefined),
@@ -79,6 +85,24 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getLatestUploadAttribution.mockImplementation(async (context: AuthContext) => ({
+      ok: true,
+      tool: "getLatestUploadAttribution",
+      scope: context.profile.role === "admin" ? "company" : context.profile.role === "manager" ? "team" : "own",
+      total: 1,
+      rows: [{ fileName: "DEMO_UPLOAD.xlsx" }],
+      data: {
+        item: {
+          fileName: "DEMO_UPLOAD.xlsx",
+          uploadedAt: "2026-08-29T12:00:00.000Z",
+          status: "completed",
+          uploaderDisplayName: "Synthetic User"
+        }
+      },
+      summary: "Latest authorized upload attribution.",
+      empty: false,
+      deterministic: true
+    }));
     getStockNeedsSummary.mockResolvedValue({
       ok: true,
       tool: "getStockNeedsSummary",
@@ -112,6 +136,61 @@ describe("AI query router", () => {
       empty: false,
       deterministic: true
     });
+    getQuoteSummary.mockResolvedValue({
+      ok: true,
+      tool: "quote_summary",
+      scope: "company",
+      total: 2,
+      rows: [],
+      data: { quoteCount: 2, acceptedQuoteValue: 1500 },
+      summary: "Authorized quote summary.",
+      empty: false,
+      deterministic: true
+    });
+    getEmployeeQuoteMetrics.mockResolvedValue({
+      ok: true,
+      tool: "employee_quote_metrics",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { selectedEmployee: { name: "Maya Torres", acceptedQuoteValue: 1500 } },
+      summary: "Authorized employee quote metrics.",
+      empty: false,
+      deterministic: true
+    });
+    getClientQuoteSummary.mockResolvedValue({
+      ok: true,
+      tool: "client_quote_summary",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { topClient: { name: "Acme", openQuoteValue: 2000 } },
+      summary: "Authorized client quote summary.",
+      empty: false,
+      deterministic: true
+    });
+    getSourcingLookup.mockResolvedValue({
+      ok: true,
+      tool: "sourcing_lookup",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { accessMode: "seller_safe", mpn: "EPD-DEMO-MCU-042", approvals: [] },
+      summary: "Seller-safe sourcing lookup.",
+      empty: false,
+      deterministic: true
+    });
+    getClientLookup.mockResolvedValue({
+      ok: true,
+      tool: "client_lookup",
+      scope: "company",
+      total: 1,
+      rows: [],
+      data: { mode: "search", count: 1, clients: [{ name: "Amazon-demo" }] },
+      summary: "Authorized client lookup.",
+      empty: false,
+      deterministic: true
+    });
     getOpportunityFinderSummary.mockResolvedValue({
       ok: true,
       tool: "getOpportunityFinderSummary",
@@ -119,7 +198,7 @@ describe("AI query router", () => {
       total: 1,
       rows: [],
       data: { items: [], totals: { fullSales: 1 } },
-      summary: "La comparaciÃ³n contiene 1 resultado.",
+      summary: "La comparación contiene 1 resultado.",
       empty: false,
       deterministic: true
     });
@@ -151,6 +230,7 @@ describe("AI query router", () => {
       getConversationMemorySet: vi.fn(),
       getEmployeeSummary: vi.fn(),
       getImportErrors: vi.fn(),
+      getLatestUploadAttribution,
       getLatestUpload: vi.fn(),
       getLowGpRecords,
       getMissingMpnRecords: vi.fn(),
@@ -169,6 +249,15 @@ describe("AI query router", () => {
       getUploadPresentationSummary,
       getUploadsByUser: vi.fn(),
       searchBusinessRecords
+    }));
+    vi.doMock("@/lib/ai/commerce-tools", () => ({
+      getQuoteSummary,
+      getEmployeeQuoteMetrics,
+      getClientQuoteSummary,
+      getSourcingLookup
+    }));
+    vi.doMock("@/lib/ai/commerce-insights-tools", () => ({
+      getClientLookup
     }));
   });
 
@@ -198,6 +287,187 @@ describe("AI query router", () => {
     expect(getUploadPresentationSummary).toHaveBeenCalledWith(expect.any(Object), expect.stringContaining("MPN"));
     expect(searchBusinessRecords).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["employee", "es", "\u00bfQui\u00e9n subi\u00f3 el \u00faltimo archivo y qu\u00e9 archivo fue?"],
+    ["manager", "en", "Who uploaded the latest file and what was it?"],
+    ["admin", "zh", "\u8c01\u4e0a\u4f20\u4e86\u6700\u65b0\u6587\u4ef6\uff0c\u6587\u4ef6\u540d\u662f\u4ec0\u4e48\uff1f"]
+  ] as const)("routes latest upload attribution through the shared router for %s/%s", async (role, language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext(role), question, { language });
+
+    expect(result).toEqual(expect.objectContaining({
+      intent: "latest_upload_attribution",
+      toolResult: expect.objectContaining({
+        tool: "getLatestUploadAttribution",
+        scope: role === "admin" ? "company" : role === "manager" ? "team" : "own"
+      })
+    }));
+    expect(getLatestUploadAttribution).toHaveBeenCalledWith(
+      expect.objectContaining({ profile: expect.objectContaining({ role }) })
+    );
+    expect(getUploadPresentationSummary).not.toHaveBeenCalled();
+    expect(searchBusinessRecords).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["es", "\u00bfQui\u00e9n tiene el mayor valor de cotizaciones aceptadas?"],
+    ["en", "Who has the highest Accepted Quote Value?"],
+    ["zh", "\u8c01\u7684\u5df2\u63a5\u53d7\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff1f"]
+  ] as const)("routes Accepted Quote Value ranking in %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("manager");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.toolResult?.tool).toBe("employee_quote_metrics");
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
+  });
+
+  it.each([
+    ["es", "quien es el mejor vendedor"],
+    ["es", "de los empleados en la base de datos quien tiene las mejores metricas"],
+    ["es", "quien tiene mayor conversion"],
+    ["es", "cuales son los 5 mejores vendedores"],
+    ["es", "compara Maya con Daniel"],
+    ["es", "Compara a Maya con Daniel"],
+    ["es", "¿Cómo está funcionando el equipo de ventas?"],
+    ["es", "cuantas cotizaciones aceptadas tenemos"],
+    ["en", "who is the best salesperson"],
+    ["en", "show me the top 5 sellers"],
+    ["en", "who has the highest conversion rate"],
+    ["en", "Who performs better, Maya or Daniel?"],
+    ["zh", "谁是表现最好的销售人员？"],
+    ["zh", "谁的转化率最高？"],
+    ["zh", "比较 Maya 和 Daniel"]
+  ] as const)("routes clear employee-performance language without clarification: %s / %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("manager");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(result.plan.answerMode).not.toBe("clarify");
+    expect(result.toolResult?.tool).toBe("employee_quote_metrics");
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
+  });
+
+  it("routes an ordinal employee follow-up using immediate history", async () => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const history = [
+      { role: "user" as const, content: "quien es el mejor vendedor" },
+      { role: "assistant" as const, content: "Maya lidera el ranking." }
+    ];
+    const result = await routeAssistantDatabaseQuery(
+      authContext("manager"),
+      "y los siguientes cuatro?",
+      { language: "es", history }
+    );
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(
+      expect.any(Object),
+      "y los siguientes cuatro?",
+      { language: "es", history }
+    );
+  });
+
+  it.each([
+    ["busca Amazon-demo", "client_lookup"]
+  ] as const)("routes business insight %s through %s", async (question, tool) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const result = await routeAssistantDatabaseQuery(authContext("manager"), question, { language: "es" });
+
+    expect(result.plan.requiresClarification).toBe(false);
+    expect(result.toolResult?.tool).toBe(tool);
+  });
+
+  it.each([
+    ["es", "\u00bfCu\u00e1ntas cotizaciones tiene Maya Torres?"],
+    ["en", "How many quotes does Maya Torres have?"],
+    ["zh", "Maya Torres \u6709\u591a\u5c11\u4efd\u62a5\u4ef7\uff1f"]
+  ] as const)("routes the Maya Torres quote question in %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("manager");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("employee_quote_metrics");
+    expect(result.toolResult?.tool).toBe("employee_quote_metrics");
+    expect(getEmployeeQuoteMetrics).toHaveBeenCalledWith(context, question, {
+      language,
+      history: []
+    });
+  });
+
+  it.each([
+    ["es", "\u00bfQu\u00e9 ofertas tenemos para EPD-DEMO-MCU-042?"],
+    ["en", "What offers do we have for EPD-DEMO-MCU-042?"],
+    ["zh", "\u8fd9\u4e2a MPN \u6709\u54ea\u4e9b\u62a5\u4ef7\uff1aEPD-DEMO-MCU-042\uff1f"]
+  ] as const)("routes seller-safe sourcing lookup in %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("employee");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("sourcing_lookup");
+    expect(result.toolResult?.tool).toBe("sourcing_lookup");
+    expect(getSourcingLookup).toHaveBeenCalledWith(context, "EPD-DEMO-MCU-042");
+  });
+
+  it.each([
+    ["es", "\u00bfQu\u00e9 cliente tiene el mayor valor en cotizaciones abiertas?"],
+    ["en", "Which client has the highest open quote value?"],
+    ["zh", "\u54ea\u4e2a\u5ba2\u6237\u7684\u672a\u7ed3\u62a5\u4ef7\u91d1\u989d\u6700\u9ad8\uff1f"]
+  ] as const)("routes the top open-quote client question in %s", async (language, question) => {
+    const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+    const context = authContext("admin");
+    const result = await routeAssistantDatabaseQuery(context, question, { language });
+
+    expect(result.intent).toBe("client_quote_summary");
+    expect(result.toolResult?.tool).toBe("client_quote_summary");
+    expect(getClientQuoteSummary).toHaveBeenCalledWith(context);
+  });
+
+  it.each(["employee", "manager", "admin", "super_admin_dev"] as const)(
+    "blocks salary requests for %s without calling commerce tools",
+    async (role) => {
+      const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+      const result = await routeAssistantDatabaseQuery(
+        authContext(role),
+        "What is Maya Torres salary?",
+        { language: "en" }
+      );
+
+      expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
+      expect(getSensitiveDataPermissionDenied).toHaveBeenCalled();
+      expect(getEmployeeQuoteMetrics).not.toHaveBeenCalled();
+      expect(getQuoteSummary).not.toHaveBeenCalled();
+      expect(getClientQuoteSummary).not.toHaveBeenCalled();
+      expect(getSourcingLookup).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["employee", "manager", "admin", "super_admin_dev"] as const)(
+    "keeps raw sourcing cost requests behind the sensitive-data boundary for %s",
+    async (role) => {
+      const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");
+      const result = await routeAssistantDatabaseQuery(
+        authContext(role),
+        "Show raw cost offers for EPD-DEMO-MCU-042",
+        { language: "en" }
+      );
+
+      expect(result.toolResult?.tool).toBe("sensitiveDataPermissionDenied");
+      expect(getSensitiveDataPermissionDenied).toHaveBeenCalled();
+      expect(getSourcingLookup).not.toHaveBeenCalled();
+    }
+  );
 
   it("returns a clean permission message for restricted sensitive data questions", async () => {
     const { routeAssistantDatabaseQuery } = await import("@/lib/ai/ai-query-router");

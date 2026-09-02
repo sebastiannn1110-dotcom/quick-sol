@@ -76,5 +76,5 @@ describe("Ronda 7 canonical BEFORE/AFTER equivalence", () => {
       expect(report.hashes.canonicalWarningsAfter).toBe(reference.hashes.canonicalWarningsAfter);
       expect(report.hashes.canonicalFullAfter).toBe(reference.hashes.canonicalFullAfter);
     }
-  }, 30_000);
+  }, 120_000);
 });

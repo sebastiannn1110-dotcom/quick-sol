@@ -8,7 +8,6 @@ import LogoutButton from "@/components/LogoutButton";
 const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   refresh: vi.fn(),
-  signInWithPassword: vi.fn(),
   signOut: vi.fn(),
   loginFailed: vi.fn(),
   loginSuccess: vi.fn(),
@@ -22,7 +21,6 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/supabase/browser", () => ({
   createSupabaseBrowserClient: () => ({
     auth: {
-      signInWithPassword: mocks.signInWithPassword,
       signOut: mocks.signOut
     }
   })
@@ -42,7 +40,6 @@ vi.mock("@/components/BrandMark", () => ({ default: () => null }));
 
 describe("login, logout and session UI regression", () => {
   beforeEach(() => {
-    mocks.signInWithPassword.mockResolvedValue({ error: null });
     mocks.signOut.mockResolvedValue({ error: null });
     mocks.logout.mockResolvedValue(undefined);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
@@ -64,16 +61,22 @@ describe("login, logout and session UI regression", () => {
       (screen.getByRole("button", { name: "auth.signIn" }) as HTMLButtonElement).disabled
     ).toBe(false));
 
-    fireEvent.change(screen.getByLabelText("auth.email"), {
-      target: { value: "employee@example.test" }
+    fireEvent.change(screen.getByLabelText("auth.identifier"), {
+      target: { value: "user.test.demo.com" }
     });
     fireEvent.change(screen.getByLabelText("auth.password"), {
       target: { value: ["synthetic", "login", "value"].join("-") }
     });
     fireEvent.click(screen.getByRole("button", { name: "auth.signIn" }));
 
-    await waitFor(() => expect(mocks.signInWithPassword).toHaveBeenCalledOnce());
-    expect(mocks.replace).toHaveBeenCalledWith("/clients");
+    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/clients"));
+    expect(fetch).toHaveBeenCalledWith("/api/auth/login", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        identifier: "user.test.demo.com",
+        password: "synthetic-login-value"
+      })
+    }));
     expect(mocks.refresh).toHaveBeenCalledOnce();
   });
 

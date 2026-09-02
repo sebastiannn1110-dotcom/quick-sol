@@ -24,9 +24,10 @@ export interface AuthContext {
 
 export const DEMO_PROFILE: Profile = {
   id: "00000000-0000-4000-8000-000000000001",
-  full_name: "Demo Admin",
-  email: "admin@example.com",
+  full_name: "user.test.demo.com",
+  email: "user.test.demo.com@demo.invalid",
   role: "admin",
+  business_rank: "owner",
   department: "Operations",
   region: "Global",
   is_active: true,

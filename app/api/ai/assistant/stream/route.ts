@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { answerAssistantQuestion } from "@/lib/ai/assistantCore";
+import {
+  answerAssistantQuestion,
+  AssistantConfigError,
+  AssistantRequestError
+} from "@/lib/ai/assistantCore";
+import { AssistantToolRequestError } from "@/lib/ai/database-tools";
 import {
   appendOwnedMessage,
   loadOwnedConversation,
@@ -210,9 +215,15 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
+          const publicMessage =
+            error instanceof AssistantRequestError ||
+            error instanceof AssistantConfigError ||
+            error instanceof AssistantToolRequestError
+              ? error.message
+              : assistantMessage(language, "providerFailed");
           send("error", {
             stage: "completed",
-            error: "The assistant could not complete this request."
+            error: safePublicText(publicMessage)
           });
         }
       } finally {

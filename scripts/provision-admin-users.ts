@@ -68,6 +68,30 @@ type ExecutionDependencies = {
   supabaseUrl: string;
 };
 
+export type ProvisionedAuthUserInput = {
+  email: string;
+  password: string;
+  user_metadata: Record<string, unknown> & {
+    full_name: string;
+    quiksol_provisioning_intent_id: string;
+  };
+};
+
+/** Guarded Auth creation boundary shared by provisioning and demo seeding. */
+export async function createProvisionedAuthUser(
+  supabase: SupabaseClient,
+  input: ProvisionedAuthUserInput
+): Promise<User> {
+  const { data, error } = await supabase.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: true,
+    user_metadata: input.user_metadata
+  });
+  if (error || !data.user) throw error ?? new Error("missing created Auth user");
+  return data.user;
+}
+
 export const ADMIN_TARGETS: readonly AdminTarget[] = Object.freeze([
   Object.freeze({
     email: "admin@quiksol.local",

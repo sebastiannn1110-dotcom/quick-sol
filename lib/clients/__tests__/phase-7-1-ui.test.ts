@@ -32,7 +32,7 @@ describe("Phase 7.1 shared client and opportunity UI", () => {
     expect(source("components/opportunities/OpportunityTable.tsx")).toContain("lg:hidden");
     expect(source("components/opportunities/OpportunityTable.tsx")).toContain("hidden overflow-x-auto lg:block");
     expect(source("components/clients/ClientGrid.tsx")).toContain("sm:grid-cols-2");
-    expect(source("components/clients/ClientCard.tsx")).toContain("object-contain");
+    expect(source("components/clients/ClientCard.tsx")).toMatch(/object-(?:contain|cover)/);
   });
 
   it("translates client and opportunity navigation in ES, EN and ZH", () => {

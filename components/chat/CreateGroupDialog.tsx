@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import UserAvatar from "@/components/chat/UserAvatar";
 import type { ChatUser } from "@/components/chat/types";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 export default function CreateGroupDialog({
   users,
@@ -94,7 +95,7 @@ export default function CreateGroupDialog({
               <UserAvatar name={user.full_name} avatarPath={user.avatar_path} size="sm" />
               <span className="min-w-0">
                 <span className="block truncate font-medium text-slate-950">{user.full_name}</span>
-                <span className="block truncate text-slate-500">{user.job_title || user.email}{user.department ? ` - ${user.department}` : ""}</span>
+                <span className="block truncate text-slate-500">{user.job_title || visibleEmailAddress(user.email, user.full_name)}{user.department ? ` - ${user.department}` : ""}</span>
               </span>
             </label>
           ))}

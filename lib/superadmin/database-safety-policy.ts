@@ -37,8 +37,29 @@ function preserveTable(
   return { schema, table, category, action: "PRESERVE", reason, deleteOrder: null };
 }
 
+function preserveBusinessTable(table: string, reason: string): DatabaseSafetyTablePolicy {
+  return { schema: "public", table, category: "BUSINESS_DATA", action: "PRESERVE", reason, deleteOrder: null };
+}
+
+const DEMO_SCHEMA_PRESERVE_REASON =
+  "Demo schema preserved pending a separately authorized backup/purge policy review.";
+
 // This is an explicit allowlist. The order follows foreign-key dependencies from leaves to roots.
 export const DATABASE_SAFETY_TABLE_POLICY: readonly DatabaseSafetyTablePolicy[] = [
+  preserveBusinessTable("commerce_client_details", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_catalog_products", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_rfqs", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_rfq_items", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_quotes", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_quote_items", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_quote_events", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commerce_quote_shares", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("sourcing_requests", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("sourcing_offers", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("sourcing_offer_attachments", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("commercial_price_approvals", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("organization_members", DEMO_SCHEMA_PRESERVE_REASON),
+  preserveBusinessTable("employee_compensation", DEMO_SCHEMA_PRESERVE_REASON),
   deleteTable("import_job_staging_rows", "OPERATIONAL_DATA", 5, "Transient import staging can contain business data."),
   deleteTable("admin_email_attachments", "BUSINESS_DATA", 10, "Business email attachment metadata."),
   deleteTable("admin_email_messages", "BUSINESS_DATA", 20, "Business email messages."),
@@ -125,7 +146,7 @@ export const DATABASE_SAFETY_PROTECTED_TABLES = DATABASE_SAFETY_TABLE_POLICY
   .filter((entry) => entry.action === "PRESERVE");
 
 export const DATABASE_DESTRUCTION_PHRASE = "ELIMINAR INFORMACION DEMO";
-export const DATABASE_SAFETY_CATALOG_VERSION = "20260827180000-r83a-v1";
+export const DATABASE_SAFETY_CATALOG_VERSION = "20260829170000-demo-preserve-v1";
 export const DATABASE_BACKUP_FORMAT = "quiksol-safety-bundle-v2";
 export const DATABASE_BACKUP_MAX_AGE_MS = 30 * 60 * 1000;
 export const DATABASE_DESTRUCTION_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -139,6 +160,7 @@ export const DATABASE_SAFETY_STORAGE_POLICY = [
   { bucket: "email-attachments", action: "BUSINESS_DELETE", reason: "Business email attachments are business information." },
   { bucket: "client-assets", action: "BUSINESS_DELETE", reason: "Client assets are business information." },
   { bucket: "opportunity-finder", action: "BUSINESS_DELETE", reason: "Opportunity Finder inputs and outputs are business information." },
+  { bucket: "sourcing-private", action: "PRESERVE", reason: DEMO_SCHEMA_PRESERVE_REASON },
   { bucket: "avatars", action: "PRESERVE", reason: "Profile avatars are preserved with authentication identities." }
 ] as const satisfies readonly { bucket: string; action: DatabaseSafetyStorageAction; reason: string }[];
 

@@ -7,6 +7,7 @@ import { getEmailProvider } from "@/lib/email/email-service";
 import { sanitizeFileName } from "@/lib/excel/validators";
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { rateLimitResponse } from "@/lib/security/rateLimit";
+import { visibleEmailAddress } from "@/lib/auth/demo-login";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -129,7 +130,7 @@ export async function POST(request: Request) {
     recipients,
     subject: parsed.data.subject,
     body: parsed.data.body,
-    senderName: `${context.profile.full_name} (${context.profile.email})`,
+    senderName: `${context.profile.full_name} (${visibleEmailAddress(context.profile.email, context.profile.full_name)})`,
     attachments
   });
   const failed = results.filter(({ result }) => result.status !== "sent");

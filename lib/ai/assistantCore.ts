@@ -1,6 +1,10 @@
 import OpenAI from "openai";
 import type { AuthContext } from "@/lib/auth/context";
 import type { SafeHistoryMessage } from "@/lib/ai/conversation-memory";
+import {
+  detectExplicitBusinessIntent,
+  isEmployeePerformanceFollowUp
+} from "@/lib/ai/business-intent";
 import { routeAssistantDatabaseQuery } from "@/lib/ai/ai-query-router";
 import {
   AssistantToolRequestError,
@@ -94,7 +98,7 @@ export function buildHardenedAssistantInstructions(
   channel: AssistantChannel
 ) {
   return [
-    "You are the internal operations assistant for Electronic Parts Demo, a white-label B2B electronic components platform.",
+    "You are the internal operations assistant for Electronic Parts Demo.",
     `Respond in ${languageName(language)}.`,
     `The current response channel is ${channel}.`,
     "The server has already selected the only permitted tool. Never select, substitute, or invoke another tool.",
@@ -369,8 +373,16 @@ export async function answerAssistantQuestion({
       throw new AssistantRequestError(assistantMessage(language, "timeout"), 504, "TOOL_TIMEOUT");
     }
     if (error instanceof AssistantToolRequestError) throw error;
+    const failedBusinessIntent = detectExplicitBusinessIntent(message) ?? (
+      isEmployeePerformanceFollowUp(message, history) ? "employee_quote_metrics" : null
+    );
+    const failureMessage = failedBusinessIntent === "employee_quote_metrics"
+      ? assistantMessage(language, "metricsUnavailable")
+      : failedBusinessIntent === "client_lookup"
+          ? assistantMessage(language, "clientUnavailable")
+          : assistantMessage(language, "providerFailed");
     throw new AssistantRequestError(
-      assistantMessage(language, "providerFailed"),
+      failureMessage,
       502,
       "TOOL_FAILED"
     );

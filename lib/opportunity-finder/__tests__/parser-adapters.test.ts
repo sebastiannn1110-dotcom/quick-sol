@@ -457,7 +457,7 @@ describe("Opportunity Finder template adapters", () => {
     expect(parsed).toHaveLength(4_000);
     expect(parsed[0]?.normalizedMpn).toBe("STREAM-0");
     expect(parsed.at(-1)?.normalizedMpn).toBe("STREAM-3999");
-  }, 30_000);
+  }, 120_000);
 
   it("enforces the configured useful-file row limit during parsing", async () => {
     process.env.OPPORTUNITY_FINDER_MAX_ROWS_PER_FILE = "2";

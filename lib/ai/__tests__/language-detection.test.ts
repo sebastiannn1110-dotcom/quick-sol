@@ -11,6 +11,8 @@ describe("AI language detection", () => {
   it("detects Spanish, English and Simplified Chinese from user text", () => {
     expect(detectAssistantLanguage("Muestrame el ultimo Excel subido")).toBe("es");
     expect(detectAssistantLanguage("Find the latest supplier price")).toBe("en");
+    expect(detectAssistantLanguage("Who performs better, Maya or Daniel?")).toBe("en");
+    expect(detectAssistantLanguage("¿Cómo está funcionando el equipo de ventas?")).toBe("es");
     expect(detectAssistantLanguage("帮我查找最新供应商价格")).toBe("zh");
   });
 });

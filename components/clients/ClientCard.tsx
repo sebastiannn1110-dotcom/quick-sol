@@ -3,7 +3,9 @@
 import Link from "next/link";
 import {
   ArrowRight,
+  Factory,
   FileSpreadsheet,
+  MapPin,
   PackageSearch,
   Search,
   ShoppingCart,
@@ -13,6 +15,7 @@ import {
   Warehouse
 } from "lucide-react";
 import ClientImage from "@/components/clients/ClientImage";
+import { DemoAccountBadge } from "@/components/clients/DemoAccount";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { AccountClient } from "@/lib/clients/clients";
 
@@ -20,23 +23,33 @@ export default function ClientCard({ client }: { client: AccountClient }) {
   const { t } = useLanguage();
   const metric = (value: number | null) => value ?? "—";
   return (
-    <article className="group grid min-h-[390px] grid-rows-[104px_auto_1fr_auto] overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-soft">
+    <article className="group grid min-h-[454px] grid-rows-[168px_auto_1fr_auto] overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-brand-300 hover:shadow-md">
       <ClientImage
         logoUrl={client.logoUrl}
         authorizedIdentificationImageUrl={client.authorizedIdentificationImageUrl}
         alt={client.name}
-        className="flex items-center justify-center border-b border-slate-100 p-4"
-        imageClassName="h-16 w-full object-contain"
+        className="flex items-center justify-center border-b border-slate-100 bg-slate-100"
+        imageClassName="h-full w-full object-cover"
+        placeholderClassName="h-14 w-14 text-slate-300"
       />
       <div className="px-4 pt-4">
         <div className="flex items-start justify-between gap-3">
-          <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">
-            <Link href={`/clients/${client.id}`} className="focus-ring rounded-sm">{client.name}</Link>
-          </h2>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h2 className="break-words text-lg font-semibold text-slate-950 group-hover:text-brand-700">
+              <Link href={`/clients/${client.id}`} className="focus-ring rounded-sm">{client.name}</Link>
+            </h2>
+            <DemoAccountBadge accountName={client.name} />
+          </div>
           <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-medium ${client.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-100 text-slate-600"}`}>
             {t(client.status === "active" ? "clients.status.active" : "clients.status.archived")}
           </span>
         </div>
+        {client.industry || client.region ? (
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-slate-500">
+            {client.industry ? <span className="inline-flex items-center gap-1.5"><Factory className="h-3.5 w-3.5" aria-hidden="true" />{client.industry}</span> : null}
+            {client.region ? <span className="inline-flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" aria-hidden="true" />{client.region}</span> : null}
+          </div>
+        ) : null}
       </div>
       <div className="grid grid-cols-2 content-start gap-x-3 gap-y-3 p-4 text-sm text-slate-600">
         {client.summaryStatus !== "ready" ? (

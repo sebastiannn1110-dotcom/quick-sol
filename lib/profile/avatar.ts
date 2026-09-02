@@ -1,4 +1,8 @@
+import { isDemoOwnerIdentity } from "@/lib/auth/demo-login";
+
 export const AVATAR_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+const LOCAL_DEMO_AVATAR_PATTERN = /^\/?(demo\/people\/[a-z0-9]+(?:-[a-z0-9]+)*\.webp)$/;
 
 export function validateAvatarFile(file: File) {
   const configuredMb = Number(process.env.AVATAR_MAX_SIZE_MB || 5);
@@ -10,8 +14,41 @@ export function validateAvatarFile(file: File) {
 }
 
 export function avatarPublicUrl(path: string | null | undefined) {
+  const candidate = path?.trim();
+  if (!candidate) return null;
+
+  const localDemoAvatar = candidate.match(LOCAL_DEMO_AVATAR_PATTERN);
+  if (localDemoAvatar) return `/${localDemoAvatar[1]}`;
+
+  // Absolute and demo-prefixed values are local URL attempts. Only the
+  // allowlisted demo people directory above may bypass Supabase Storage.
+  if (candidate.startsWith("/") || candidate.startsWith("demo/")) return null;
+
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-  if (!base || !path) return null;
-  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  if (!base) return null;
+  const encodedPath = candidate.split("/").map(encodeURIComponent).join("/");
   return `${base}/storage/v1/object/public/avatars/${encodedPath}`;
+}
+
+function cleanAvatarName(name: string) {
+  return name.replace(/\s+[\u2014-]\s+DEMO$/i, "").trim();
+}
+
+export function isDemoPresentationOwnerEmail(email: string | null | undefined) {
+  return isDemoOwnerIdentity(email);
+}
+
+export function usesDemoOwnerInitialAvatar(name: string, email?: string | null) {
+  return isDemoOwnerIdentity(email) || isDemoOwnerIdentity(cleanAvatarName(name));
+}
+
+export function avatarFallbackText(name: string) {
+  const cleanName = cleanAvatarName(name);
+  if (usesDemoOwnerInitialAvatar(name)) return "U";
+  return cleanName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "EP";
 }

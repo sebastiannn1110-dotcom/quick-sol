@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BarChart3,
   Boxes,
   BriefcaseBusiness,
   Building2,
   Database,
   MessageCircle,
+  Network,
   UserCircle,
   Search,
   ShieldCheck,
@@ -21,12 +23,14 @@ import BrandMark from "@/components/BrandMark";
 import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
 import { isAdmin, roleSatisfiesAny } from "@/lib/auth/roles";
+import { canManageSourcing } from "@/lib/sourcing/permissions";
 
 interface NavItem {
   href: string;
   labelKey: TranslationKey;
   icon: LucideIcon;
   roles?: UserRole[];
+  sourcingOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -40,6 +44,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/employees", labelKey: "nav.users", icon: Users, roles: ["admin", "manager"] },
   { href: "/records", labelKey: "nav.records", icon: Database, roles: ["admin", "manager"] },
   { href: "/admin/clients", labelKey: "nav.clientsAdmin", icon: Building2, roles: ["admin", "manager"] },
+  { href: "/admin/sourcing", labelKey: "nav.sourcing", icon: BriefcaseBusiness, sourcingOnly: true },
+  { href: "/admin/employee-analytics", labelKey: "nav.employeeAnalytics", icon: BarChart3, roles: ["employee", "manager", "admin"] },
+  { href: "/admin/team-structure", labelKey: "nav.teamStructure", icon: Network, roles: ["manager", "admin"] },
   { href: "/admin", labelKey: "nav.admin", icon: ShieldCheck, roles: ["admin"] },
   { href: "/admindev", labelKey: "nav.superAdminDev", icon: ShieldPlus, roles: ["super_admin_dev"] }
 ];
@@ -48,6 +55,7 @@ export default function Sidebar({ profile }: { profile: Profile | null; isAdminA
   const pathname = usePathname();
   const { t } = useLanguage();
   const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.sourcingOnly) return canManageSourcing(profile);
     if (!item.roles) return true;
     return profile ? roleSatisfiesAny(profile.role, item.roles) : false;
   });

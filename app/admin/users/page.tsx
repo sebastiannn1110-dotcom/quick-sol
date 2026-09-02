@@ -7,6 +7,7 @@ import { useProfile } from "@/components/ProfileProvider";
 import { isSuperAdminDev } from "@/lib/auth/roles";
 import type { Profile } from "@/lib/types";
 import UserAvatar from "@/components/chat/UserAvatar";
+import { isDemoOwnerIdentity, visibleEmailAddress } from "@/lib/auth/demo-login";
 
 type UserForm = {
   id?: string;
@@ -68,7 +69,7 @@ export default function AdminUsersPage() {
   }, []);
 
   const visibleUsers = users.filter((user) =>
-    [user.full_name, user.email, user.role, user.department, user.region, user.job_title, user.bio]
+    [user.full_name, visibleEmailAddress(user.email, user.full_name), user.role, user.department, user.region, user.job_title, user.bio]
       .join(" ")
       .toLowerCase()
       .includes(search.toLowerCase())
@@ -88,7 +89,7 @@ export default function AdminUsersPage() {
     setForm({
       id: user.id,
       full_name: user.full_name,
-      email: user.email,
+      email: visibleEmailAddress(user.email, user.full_name),
       role: user.role,
       department: user.department ?? "",
       region: user.region ?? "",
@@ -121,10 +122,14 @@ export default function AdminUsersPage() {
     const operationKey = submissionMode === "create"
       ? (createOperationKeyRef.current ??= crypto.randomUUID())
       : null;
+    const storedEditingUser = submissionMode === "edit" ? users.find((user) => user.id === form.id) : null;
+    const submittedEmail = storedEditingUser && isDemoOwnerIdentity(storedEditingUser.email)
+      ? storedEditingUser.email
+      : form.email.trim();
 
     const payload = {
       full_name: form.full_name.trim(),
-      email: form.email.trim(),
+      email: submittedEmail,
       role: form.role,
       department: form.department.trim() || null,
       region: form.region.trim() || null,
@@ -248,7 +253,7 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <UserAvatar name={user.full_name} avatarPath={user.avatar_path} size="sm" />
-                        <div><p className="font-medium text-slate-950">{user.full_name}</p><p className="text-xs text-slate-500">{user.email}</p>{user.job_title ? <p className="text-xs text-slate-400">{user.job_title}</p> : null}</div>
+                        <div><p className="font-medium text-slate-950">{user.full_name}</p><p className="text-xs text-slate-500">{visibleEmailAddress(user.email, user.full_name)}</p>{user.job_title ? <p className="text-xs text-slate-400">{user.job_title}</p> : null}</div>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{user.role}</td>
@@ -304,7 +309,7 @@ export default function AdminUsersPage() {
                 </label>
                 <label className="grid gap-1 text-sm font-medium text-slate-700">
                   Email
-                  <input required type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal" />
+                  <input required type={isDemoOwnerIdentity(form.email) ? "text" : "email"} disabled={isDemoOwnerIdentity(form.email)} value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className="focus-ring rounded-md border border-slate-300 px-3 py-2.5 font-normal disabled:bg-slate-100 disabled:text-slate-600" />
                 </label>
                 <label className="grid gap-1 text-sm font-medium text-slate-700">
                   Role
