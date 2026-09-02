@@ -20,8 +20,8 @@ export async function POST(request: Request) {
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
   const result = await sendEmail({
     to: [parsed.data.email],
-    subject: "[Quiksol] Prueba del centro de correo",
-    html: adminMessageHtml({ subject: "El correo de Quiksol funciona", body: "Esta prueba confirma que el proveedor configurado puede enviar mensajes desde el centro administrativo.", senderName: context.profile.full_name })
+    subject: "[Electronic Parts] Prueba del centro de correo",
+    html: adminMessageHtml({ subject: "El correo de Electronic Parts funciona", body: "Esta prueba confirma que el proveedor configurado puede enviar mensajes desde el centro administrativo.", senderName: context.profile.full_name })
   });
   await logAuditEvent(context, "admin_email_test", "admin_email_message", null, { recipient: parsed.data.email, provider: result.provider, status: result.status });
   return NextResponse.json({ result });

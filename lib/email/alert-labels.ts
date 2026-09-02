@@ -1,6 +1,6 @@
 export const EMAIL_ALERT_EVENT_OPTIONS = [
   { value: "upload_completed", label: "Nuevo Excel procesado", example: "Avisa cuando una carga termina correctamente.", condition: "" },
-  { value: "upload_failed", label: "Carga fallida", example: "Avisa cuando Quiksol no puede procesar un archivo.", condition: "" },
+  { value: "upload_failed", label: "Carga fallida", example: "Avisa cuando Electronic Parts no puede procesar un archivo.", condition: "" },
   { value: "upload_has_many_errors", label: "Archivo con muchos errores", example: "Ejemplo: enviar si el archivo supera 200 errores.", condition: "error_count_gt" },
   { value: "low_gp_rate", label: "GP rate por debajo del limite", example: "Ejemplo: enviar si GP rate baja de 15%.", condition: "gp_rate_lt" },
   { value: "missing_mpn_threshold", label: "Demasiados registros sin MPN", example: "Ejemplo: enviar si hay mas de 20 registros sin MPN.", condition: "missing_mpn_gt" },

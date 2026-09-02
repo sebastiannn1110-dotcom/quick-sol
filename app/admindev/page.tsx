@@ -158,7 +158,7 @@ export default function AdminDevPage() {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-md rounded-md border border-slate-800 bg-slate-900 p-5 text-slate-100">
-          <p className="text-sm font-medium text-orange-300">QuikSol Super Admin Dev</p>
+          <p className="text-sm font-medium text-blue-300">Electronic Parts · Super Admin Dev</p>
           <h1 className="mt-1 text-2xl font-semibold">{initialLoading && !authError ? "Cargando panel técnico…" : "Acceso denegado"}</h1>
           {authError ? <p className="mt-4 rounded bg-red-950 p-3 text-sm text-red-200">{authError}</p> : null}
           {authError ? <a className="mt-4 inline-block text-sm font-semibold text-orange-300 underline" href="/login?redirect=/admindev">Ir al inicio de sesión</a> : null}
@@ -172,7 +172,7 @@ export default function AdminDevPage() {
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-orange-300">QuikSol Super Admin Dev</p>
+            <p className="text-sm font-medium text-blue-300">Electronic Parts · Super Admin Dev</p>
             <h1 className="text-2xl font-semibold">Centro de control técnico restringido</h1>
           </div>
           <button onClick={logout} className="rounded-md border border-slate-700 px-3 py-2 text-sm font-semibold hover:border-orange-400">Cerrar sesión</button>

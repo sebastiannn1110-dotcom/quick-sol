@@ -19,12 +19,12 @@ export default function ClientGrid({
   if (loading) return <div className="py-10 text-center text-sm text-slate-500">{t("clients.loading")}</div>;
   if (!clients.length) {
     return (
-      <div className="border-y border-slate-200 bg-white py-12 text-center">
+      <div className="rounded-xl border border-dashed border-slate-300 bg-white py-12 text-center shadow-sm">
         <p className="mx-auto max-w-xl text-sm text-slate-600">
           {t(canManage ? "clients.empty.manager" : "clients.empty.employee")}
         </p>
         {canManage ? (
-          <Link href="/admin/clients/new" className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
+          <Link href="/admin/clients/new" className="focus-ring mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
             <Plus className="h-4 w-4" aria-hidden="true" />
             {t("clients.create")}
           </Link>

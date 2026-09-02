@@ -159,7 +159,7 @@ describe("POST /api/auth/password-reset/request", () => {
     }));
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
       to: ["user@example.com"],
-      subject: "[Quiksol] Codigo de recuperacion de contrasena"
+      subject: "[Electronic Parts] Codigo de recuperacion de contrasena"
     }));
     expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ action: "password_reset_code_created" }));
   });

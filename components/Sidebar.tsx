@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
-import QuiksolIcon from "@/components/QuiksolIcon";
+import BrandMark from "@/components/BrandMark";
 import type { TranslationKey } from "@/lib/i18n";
 import type { Profile, UserRole } from "@/lib/types";
 import { isAdmin, roleSatisfiesAny } from "@/lib/auth/roles";
@@ -44,7 +44,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/admindev", labelKey: "nav.superAdminDev", icon: ShieldPlus, roles: ["super_admin_dev"] }
 ];
 
-export default function Sidebar({ profile, isAdminArea = false }: { profile: Profile | null; isAdminArea?: boolean }) {
+export default function Sidebar({ profile }: { profile: Profile | null; isAdminArea?: boolean }) {
   const pathname = usePathname();
   const { t } = useLanguage();
   const visibleItems = NAV_ITEMS.filter((item) => {
@@ -54,22 +54,23 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
 
   return (
     <aside
-      className={`w-full max-w-full overflow-hidden border-b text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r ${
-        isAdminArea ? "border-orange-900 bg-orange-950" : "border-slate-200 bg-slate-950 lg:border-slate-800"
-      }`}
+      className="w-full max-w-full overflow-hidden border-b border-slate-800 bg-[#0b1220] text-white lg:sticky lg:top-0 lg:min-h-screen lg:w-72 lg:self-start lg:border-b-0 lg:border-r"
     >
-      <div className="flex items-center justify-between px-4 py-4 lg:block lg:px-6 lg:py-6">
-        <Link href="/clients" className="flex min-h-11 items-center gap-3">
-          <QuiksolIcon size={40} className={isAdminArea ? "ring-1 ring-orange-300" : "ring-1 ring-brand-400"} />
-          <span>
-            <span className="block text-base font-semibold">Quiksol</span>
-            <span className={`block text-xs ${isAdminArea ? "text-orange-200" : "text-slate-400"}`}>
-              {isAdmin(profile?.role) ? t("app.subtitle.admin") : t("app.subtitle.employee")}
+      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-4 lg:block lg:px-6 lg:py-6">
+        <Link href="/clients" className="flex min-h-11 items-center gap-3 rounded-lg focus-ring">
+          <BrandMark size={42} label="Electronic Parts microchip mark" className="ring-1 ring-blue-300/30" />
+          <span className="min-w-0">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-base font-semibold tracking-tight">Electronic Parts</span>
+              <span className="rounded-full border border-blue-300/20 bg-blue-400/10 px-2 py-0.5 text-[9px] font-bold tracking-[0.16em] text-blue-200">DEMO</span>
+            </span>
+            <span className="mt-0.5 block text-[10px] font-semibold tracking-[0.17em] text-slate-400">
+              {isAdmin(profile?.role) ? "ADMIN PLATFORM" : "B2B PLATFORM"}
             </span>
           </span>
         </Link>
       </div>
-      <nav className="flex min-w-0 max-w-full gap-2 overflow-x-auto px-4 pb-4 lg:block lg:space-y-1 lg:overflow-visible lg:px-4">
+      <nav aria-label="Primary navigation" className="flex min-w-0 max-w-full gap-2 overflow-x-auto px-4 py-3 lg:block lg:space-y-1 lg:overflow-visible lg:px-4 lg:py-5">
         {visibleItems.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
@@ -77,23 +78,16 @@ export default function Sidebar({ profile, isAdminArea = false }: { profile: Pro
             <Link
               key={item.href}
               href={item.href}
-              className={`flex min-w-fit items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition ${
+              className={`focus-ring flex min-w-fit items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${
                 active
-                  ? "bg-white text-slate-950"
-                  : isAdminArea
-                    ? "text-orange-100 hover:bg-orange-900 hover:text-white"
-                    : "text-slate-300 hover:bg-slate-900 hover:text-white"
+                  ? "bg-brand-600 text-white shadow-sm"
+                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
               }`}
+              aria-current={active ? "page" : undefined}
             >
               <span
                 className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-bold ${
-                  active
-                    ? isAdminArea
-                      ? "bg-orange-100 text-orange-700"
-                      : "bg-brand-100 text-brand-700"
-                    : isAdminArea
-                      ? "bg-orange-900 text-orange-100"
-                      : "bg-slate-900 text-slate-300"
+                  active ? "bg-white/15 text-white" : "bg-slate-800 text-slate-300"
                 }`}
               >
                 <Icon aria-hidden="true" className="h-4 w-4" />

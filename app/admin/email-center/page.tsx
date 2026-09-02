@@ -183,7 +183,7 @@ export default function AdminEmailCenterPage() {
               ))}
               {!loading && !filtered.length ? <p className="py-6 text-center text-sm text-slate-500">No hay perfiles que coincidan.</p> : null}
             </div>
-            </> : <p className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-600">Quiksol resolvera los destinatarios activos en el servidor al momento de enviar.</p>}
+            </> : <p className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-slate-600">Electronic Parts resolvera los destinatarios activos en el servidor al momento de enviar.</p>}
           </section>
 
           <section className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">

@@ -37,16 +37,6 @@ import {
 import { checkPersistentRateLimit } from "@/lib/security/persistent-rate-limit";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
-export {
-  buildOpportunityCsv,
-  buildOpportunityExportWorkbook,
-  classifyOpportunityForExport,
-  exportHeaders,
-  exportRow,
-  OPPORTUNITY_EXPORT_SHEET_NAMES,
-  safeSpreadsheetValue
-} from "@/lib/opportunity-finder/export";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

@@ -6,7 +6,7 @@
       "department": "Sales",
       "region": "APAC",
       "role": "Account Manager",
-      "email": "maya.chen@quiksol.example",
+      "email": "maya.chen@example.com",
       "createdAt": "2026-06-01T12:00:00.000Z"
     },
     {
@@ -15,7 +15,7 @@
       "department": "Operations",
       "region": "LATAM",
       "role": "Logistics Lead",
-      "email": "daniel.ruiz@quiksol.example",
+      "email": "daniel.ruiz@example.com",
       "createdAt": "2026-06-01T12:05:00.000Z"
     },
     {
@@ -24,7 +24,7 @@
       "department": "Finance",
       "region": "EMEA",
       "role": "Margin Analyst",
-      "email": "priya.shah@quiksol.example",
+      "email": "priya.shah@example.com",
       "createdAt": "2026-06-01T12:10:00.000Z"
     }
   ],

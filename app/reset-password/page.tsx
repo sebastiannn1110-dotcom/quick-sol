@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import QuiksolIcon from "@/components/QuiksolIcon";
+import BrandMark from "@/components/BrandMark";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
@@ -61,9 +61,10 @@ function ResetPasswordForm() {
   }
 
   return (
-    <div className="w-full max-w-md rounded-md border border-slate-200 bg-white p-6 shadow-soft">
-      <QuiksolIcon size={44} className="mb-4 ring-1 ring-brand-100" />
-      <h1 className="text-2xl font-semibold text-slate-950">Restablecer contrasena</h1>
+    <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
+      <BrandMark size={44} label="Electronic Parts microchip mark" className="mb-5 ring-1 ring-brand-100" />
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">Electronic Parts · Demo</p>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">Restablecer contrasena</h1>
       {success ? (
         <div className="mt-5 space-y-4">
           <p className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">Tu contrasena fue actualizada. Ya puedes iniciar sesion.</p>
@@ -92,5 +93,5 @@ function ResetPasswordForm() {
 }
 
 export default function ResetPasswordPage() {
-  return <div className="flex min-h-screen items-center justify-center px-4 py-10"><Suspense fallback={<p>Cargando...</p>}><ResetPasswordForm /></Suspense></div>;
+  return <div className="technical-grid flex min-h-screen items-center justify-center bg-[#f3f6fa] px-4 py-10"><Suspense fallback={<p>Cargando...</p>}><ResetPasswordForm /></Suspense></div>;
 }

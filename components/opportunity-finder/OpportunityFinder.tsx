@@ -216,41 +216,41 @@ const MODE_COPY = {
   es: {
     question: "¿Cómo quieres buscar?",
     singleTitle: "Buscar con 1 archivo",
-    singleDescription: "Sube un archivo de necesidades, inventario, exceso u ofertas y QuikSol buscará oportunidades contra la información autorizada existente.",
+    singleDescription: "Sube un archivo de necesidades, inventario, exceso u ofertas y Electronic Parts buscará oportunidades contra la información autorizada existente.",
     singleButton: "Usar un archivo",
     twoTitle: "Comparar 2 archivos",
     twoDescription: "Compara directamente un archivo de necesidades contra un archivo de disponibilidad.",
     twoButton: "Comparar dos archivos",
     oneFile: "Archivo para analizar",
     change: "Cambiar modo",
-    lowConfidence: "QuikSol no está completamente seguro del tipo de archivo. Confirma qué contiene.",
-    snapshot: "Consultando la base QuikSol autorizada…"
+    lowConfidence: "Electronic Parts no está completamente seguro del tipo de archivo. Confirma qué contiene.",
+    snapshot: "Consultando la base autorizada de Electronic Parts…"
   },
   en: {
     question: "How do you want to search?",
     singleTitle: "Search with 1 file",
-    singleDescription: "Upload a demand, inventory, excess, or offer file and QuikSol will search the authorized existing information.",
+    singleDescription: "Upload a demand, inventory, excess, or offer file and Electronic Parts will search the authorized existing information.",
     singleButton: "Use one file",
     twoTitle: "Compare 2 files",
     twoDescription: "Directly compare a demand file against an availability file.",
     twoButton: "Compare two files",
     oneFile: "File to analyze",
     change: "Change mode",
-    lowConfidence: "QuikSol is not completely sure about the file type. Confirm what it contains.",
-    snapshot: "Querying the authorized QuikSol dataset…"
+    lowConfidence: "Electronic Parts is not completely sure about the file type. Confirm what it contains.",
+    snapshot: "Querying the authorized Electronic Parts dataset…"
   },
   zh: {
     question: "您希望如何搜索？",
     singleTitle: "使用 1 个文件搜索",
-    singleDescription: "上传需求、库存、过剩库存或报价文件，QuikSol 将在您有权访问的现有信息中查找机会。",
+    singleDescription: "上传需求、库存、过剩库存或报价文件，Electronic Parts 将在您有权访问的现有信息中查找机会。",
     singleButton: "使用一个文件",
     twoTitle: "比较 2 个文件",
     twoDescription: "直接比较需求文件和可用库存文件。",
     twoButton: "比较两个文件",
     oneFile: "要分析的文件",
     change: "更改模式",
-    lowConfidence: "QuikSol 无法完全确定文件类型，请确认文件内容。",
-    snapshot: "正在查询获授权的 QuikSol 数据…"
+    lowConfidence: "Electronic Parts 无法完全确定文件类型，请确认文件内容。",
+    snapshot: "正在查询获授权的 Electronic Parts 数据…"
   }
 } as const;
 

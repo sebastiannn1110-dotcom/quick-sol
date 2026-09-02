@@ -181,7 +181,7 @@ function adminMutationErrorResponse(error: { code?: string | null } | null, fall
 }
 
 function temporaryPassword() {
-  return `Quiksol-${crypto.randomUUID().slice(0, 8)}-${Math.floor(1000 + Math.random() * 9000)}`;
+  return `Demo-${crypto.randomUUID().slice(0, 8)}-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 export async function GET(request: Request) {

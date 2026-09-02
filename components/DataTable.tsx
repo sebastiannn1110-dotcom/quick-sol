@@ -146,7 +146,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
   }
 
   return (
-    <section className="rounded-md border border-slate-200 bg-white shadow-sm">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold text-slate-950">{t("table.title")}</h2>
@@ -157,7 +157,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
-          <thead className="bg-slate-50">
+          <thead className="bg-slate-50/90 text-xs uppercase tracking-wide">
             <tr>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.primary")}</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">{t("table.category")}</th>
@@ -173,7 +173,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
               const source = sourceOf(record);
               const status = statusValue(record);
               return (
-                <tr key={record.id} className="hover:bg-slate-50">
+                <tr key={record.id} className="transition-colors hover:bg-blue-50/40">
                   <td className="max-w-xs px-4 py-3">
                     <p className="truncate font-medium text-slate-950">{primaryValue(record)}</p>
                     <p className="truncate text-xs text-slate-500">{record.id}</p>
@@ -215,7 +215,7 @@ export default function DataTable({ records }: { records: RecordLike[] }) {
 
       {selectedRecord ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-4 sm:items-center">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-md bg-white shadow-soft">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-xl bg-white shadow-soft">
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-950">{t("table.recordDetails")}</h2>

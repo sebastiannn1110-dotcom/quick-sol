@@ -38,7 +38,7 @@ vi.mock("@/components/LanguageProvider", () => ({
   useLanguage: () => ({ t: (key: string) => key })
 }));
 vi.mock("@/components/LanguageToggle", () => ({ default: () => null }));
-vi.mock("@/components/QuiksolIcon", () => ({ default: () => null }));
+vi.mock("@/components/BrandMark", () => ({ default: () => null }));
 
 describe("login, logout and session UI regression", () => {
   beforeEach(() => {

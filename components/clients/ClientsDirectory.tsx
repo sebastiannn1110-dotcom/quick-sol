@@ -16,6 +16,8 @@ import {
 } from "@/lib/performance/summary-readiness";
 import { isExpectedAbort } from "@/lib/request-lifecycle";
 import { canManageClients } from "@/lib/security/permissions";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
 
 export default function ClientsDirectory({ adminMode = false }: { adminMode?: boolean }) {
   const { t } = useLanguage();
@@ -122,20 +124,21 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
   }
 
   const canManage = profile ? canManageClients(profile.role) : false;
+  const createAction = canManage ? (
+    <Link href="/admin/clients/new" className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm hover:bg-slate-800">
+      <Plus className="h-4 w-4" aria-hidden="true" />
+      {t("clients.create")}
+    </Link>
+  ) : null;
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-brand-700">{t("clients.eyebrow")}</p>
-          <h1 className="text-2xl font-semibold text-slate-950">{t("clients.title")}</h1>
-        </div>
-        {canManage ? (
-          <Link href="/admin/clients/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
-            <Plus className="h-4 w-4" />
-            {t("clients.create")}
-          </Link>
-        ) : null}
-      </div>
+    <div className="space-y-7">
+      <PageHeader
+        eyebrow={adminMode ? t("clients.eyebrow") : t("dashboard.eyebrow")}
+        title={adminMode ? t("clients.title") : t("dashboard.title")}
+        description={adminMode ? undefined : t("dashboard.description")}
+        actions={createAction}
+      />
       {error ? (
         <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           <p>{error}</p>
@@ -143,10 +146,10 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
         </div>
       ) : null}
       {!adminMode ? (
-        <section className="space-y-4 border-y border-slate-200 py-5">
+        <section className="space-y-5 rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold text-slate-950">{t("clients.opportunitiesTitle")}</h2>
-            <Link href="/opportunities" className="inline-flex min-h-11 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800">
+            <Link href="/opportunities" className="focus-ring inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
               {t("clients.viewAllOpportunities")}
             </Link>
           </div>
@@ -157,12 +160,7 @@ export default function ClientsDirectory({ adminMode = false }: { adminMode?: bo
               [t("opportunities.metrics.partial"), opportunities?.totals.partialSale ?? null],
               [t("opportunities.metrics.sourcing"), opportunities?.totals.sourcingNeeded ?? null]
             ].map(([label, value]) => (
-              <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
-                <p className="mt-2 text-xl font-semibold text-slate-950">
-                  {opportunitiesLoading ? <span className="inline-block h-6 w-12 animate-pulse rounded bg-slate-200" aria-label={t("summary.loading")} /> : value ?? "—"}
-                </p>
-              </div>
+              <StatCard key={label} label={String(label)} value={value} loading={opportunitiesLoading} />
             ))}
           </div>
           {opportunitySummaryUnavailable ? (

@@ -36,11 +36,11 @@ function resetConsoleLog(level: "info" | "warn" | "error", action: string, metad
 function resetEmailHtml(code: string, expiresAt: Date) {
   return `
     <div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.6;max-width:560px">
-      <h2 style="margin-bottom:8px">Recuperacion de contrasena de Quiksol</h2>
+      <h2 style="margin-bottom:8px">Recuperacion de contrasena de Electronic Parts</h2>
       <p>Usa este codigo para continuar:</p>
       <p style="font-size:28px;font-weight:700;letter-spacing:4px;background:#f1f5f9;padding:14px 18px;display:inline-block">${code}</p>
       <p>El codigo vence a las ${expiresAt.toISOString()} y solo puede utilizarse una vez.</p>
-      <p><strong>No compartas este codigo.</strong> El equipo de Quiksol nunca te lo pedira.</p>
+      <p><strong>No compartas este codigo.</strong> El equipo de soporte nunca te lo pedira.</p>
       <p style="font-size:12px;color:#64748b">Si no solicitaste este cambio, ignora este correo y avisa a tu administrador.</p>
     </div>
   `;
@@ -325,7 +325,7 @@ export async function POST(request: Request) {
       });
       const result = await sendEmail({
         to: [profile.email],
-        subject: "[Quiksol] Codigo de recuperacion de contrasena",
+        subject: "[Electronic Parts] Codigo de recuperacion de contrasena",
         html: resetEmailHtml(code, expiresAt)
       });
       resetConsoleLog(result.status === "sent" ? "info" : "error", result.status === "sent" ? "password_reset_email_sent" : "password_reset_email_failed", {

@@ -485,7 +485,7 @@ function addSummarySheet(
   styleHeader(sheet, metadataStart);
   addSafeRow(sheet, ["Job", options.jobId ?? results[0]?.jobId ?? null, ""]);
   addSafeRow(sheet, ["Versión de pipeline", options.pipelineVersion ?? null, ""]);
-  addSafeRow(sheet, ["Modo de comparación", options.comparisonMode === "single_file" ? "Un archivo vs Base QuikSol" : "Dos archivos", ""]);
+  addSafeRow(sheet, ["Modo de comparación", options.comparisonMode === "single_file" ? "Un archivo vs Base Electronic Parts" : "Dos archivos", ""]);
   addSafeRow(sheet, ["Rol detectado", options.uploadedRole ?? null, ""]);
   addSafeRow(sheet, ["Entidades existentes consideradas", options.existingEntityCount ?? 0, ""]);
   addSafeRow(sheet, ["Snapshot / versión", options.datasetVersion ?? null, ""]);
@@ -812,7 +812,7 @@ export function buildOpportunityExportWorkbook(
     includeFinancials: options.includeFinancials === true
   };
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Quiksol Opportunity Finder";
+  workbook.creator = "Electronic Parts Demo";
   workbook.created = options.generatedAt instanceof Date ? options.generatedAt : new Date();
 
   addSummarySheet(workbook, results, normalizedOptions);
@@ -986,7 +986,7 @@ export class OpportunityStreamingExportWriter {
       useStyles: true,
       zip: { zlib: { level: 6 } }
     });
-    this.workbook.creator = "Quiksol Opportunity Finder";
+    this.workbook.creator = "Electronic Parts Demo";
     this.workbook.created = options.generatedAt instanceof Date ? options.generatedAt : new Date();
 
     // Creation order is intentional and is the contractual workbook order.
@@ -1230,7 +1230,7 @@ export class OpportunityStreamingExportWriter {
     addCommittedSafeRow(this.summarySheet, ["Metadato", "Valor", ""], "header");
     addCommittedSafeRow(this.summarySheet, ["Job", this.options.jobId ?? null, ""]);
     addCommittedSafeRow(this.summarySheet, ["Versión de pipeline", this.options.pipelineVersion ?? null, ""]);
-    addCommittedSafeRow(this.summarySheet, ["Modo de comparación", this.options.comparisonMode === "single_file" ? "Un archivo vs Base QuikSol" : "Dos archivos", ""]);
+    addCommittedSafeRow(this.summarySheet, ["Modo de comparación", this.options.comparisonMode === "single_file" ? "Un archivo vs Base Electronic Parts" : "Dos archivos", ""]);
     addCommittedSafeRow(this.summarySheet, ["Rol detectado", this.options.uploadedRole ?? null, ""]);
     addCommittedSafeRow(this.summarySheet, ["Entidades existentes consideradas", this.options.existingEntityCount ?? 0, ""]);
     addCommittedSafeRow(this.summarySheet, ["Snapshot / versión", this.options.datasetVersion ?? null, ""]);

@@ -43,7 +43,7 @@ export default function EmailAlertRulesTable({
     const response = await fetch("/api/admin/email-alerts/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recipients: rule.recipients, subject: `[Quiksol] Prueba: ${rule.name}` })
+      body: JSON.stringify({ recipients: rule.recipients, subject: `[Electronic Parts] Prueba: ${rule.name}` })
     });
     const payload = await response.json().catch(() => null);
     setBusyId("");

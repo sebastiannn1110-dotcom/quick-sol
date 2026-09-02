@@ -9,7 +9,7 @@ import {
   exportHeaders,
   exportRow,
   OPPORTUNITY_EXPORT_SHEET_NAMES
-} from "@/app/api/opportunity-finder/jobs/[id]/export/route";
+} from "@/lib/opportunity-finder/export";
 import {
   getOpportunityFinderAiSummary,
   type OpportunityFinderAiMetrics
