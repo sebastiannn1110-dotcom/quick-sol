@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
-import { listClientSummaries } from "@/lib/clients/data-source";
+import { listClientSummaries, resolveClientLogoUrl } from "@/lib/clients/data-source";
 
 const CLIENT_ID = "7e9093e5-6881-40f3-9aee-7a9b495b301c";
 
@@ -64,6 +64,11 @@ function createSupabaseFixture() {
 }
 
 describe("client summary images", () => {
+  it("renders a local demo company logo_path as its public asset URL", () => {
+    expect(resolveClientLogoUrl(CLIENT_ID, "demo/companies/nova-circuit.webp"))
+      .toBe("/demo/companies/nova-circuit.webp");
+  });
+
   it("does not query or return private identification for employees", async () => {
     const fixture = createSupabaseFixture();
     const [client] = await listClientSummaries(fixture.supabase, "employee");
