@@ -94,7 +94,7 @@ export function buildHardenedAssistantInstructions(
   channel: AssistantChannel
 ) {
   return [
-    "You are the internal operations assistant for Quiksol Excel Intelligence System.",
+    "You are the internal operations assistant for Electronic Parts Demo, a white-label B2B electronic components platform.",
     `Respond in ${languageName(language)}.`,
     `The current response channel is ${channel}.`,
     "The server has already selected the only permitted tool. Never select, substitute, or invoke another tool.",

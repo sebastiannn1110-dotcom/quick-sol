@@ -113,7 +113,7 @@ describe("AIAssistantWidget streaming experience", () => {
 
     renderWidget();
     fireEvent.click(screen.getByRole("button", { name: "Abrir asistente IA" }));
-    expect(screen.getByRole("dialog", { name: "Asistente Quiksol" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Asistente de Electronic Parts" })).toBeTruthy();
     expect(screen.getByText(/Consentimiento de voz: el audio se env/)).toBeTruthy();
     const input = screen.getByLabelText("Mensaje para el asistente de IA");
     fireEvent.change(input, { target: { value: "¿Qué MPN sintéticos tienen stock?" } });

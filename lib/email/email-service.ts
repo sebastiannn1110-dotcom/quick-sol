@@ -50,7 +50,7 @@ export function getEmailProvider(): EmailProvider {
 }
 
 export function getEmailFromAddress() {
-  return process.env.EMAIL_FROM || process.env.SMTP_FROM || "Quiksol Alerts <alerts@quiksol.local>";
+  return process.env.EMAIL_FROM || process.env.SMTP_FROM || "Electronic Parts <onboarding@resend.dev>";
 }
 
 export function getEmailProviderDiagnostics(): EmailProviderDiagnostics {

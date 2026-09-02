@@ -98,7 +98,7 @@ function timestampForFile(now: Date) {
 }
 
 export function databaseBackupFileName(now = new Date()) {
-  return `backup-respaldo-seguridad-quiksol-${timestampForFile(now)}.tar`;
+  return `backup-respaldo-seguridad-electronic-parts-${timestampForFile(now)}.tar`;
 }
 
 function databaseDumpFileName(now = new Date()) {

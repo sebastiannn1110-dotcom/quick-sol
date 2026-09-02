@@ -71,15 +71,15 @@ export function shouldSendAlert(rule: Pick<EmailAlertRule, "event_type" | "condi
 }
 
 function subjectForRule(rule: EmailAlertRule, event: EmailAlertEvent) {
-  if (event.eventType === "upload_completed") return `[Quiksol] Nuevo Excel subido${event.actorName ? ` por ${event.actorName}` : ""}`;
-  if (event.eventType === "upload_failed") return "[Quiksol] Upload fallido";
-  if (event.eventType === "upload_has_many_errors") return `[Quiksol] Alerta: archivo con ${event.errorCount ?? 0} errores`;
-  if (event.eventType === "low_gp_rate") return "[Quiksol] GP rate bajo detectado";
-  if (event.eventType === "missing_mpn_threshold") return "[Quiksol] Registros sin MPN superan el limite";
-  if (event.eventType === "import_quality_below_threshold") return "[Quiksol] Calidad de importacion baja";
-  if (event.eventType === "weekly_report") return "[Quiksol] Reporte semanal de calidad de datos";
-  if (event.eventType === "new_dataset_published") return "[Quiksol] Nuevo dataset publicado";
-  return `[Quiksol] ${rule.name}`;
+  if (event.eventType === "upload_completed") return `[Electronic Parts] Nuevo Excel subido${event.actorName ? ` por ${event.actorName}` : ""}`;
+  if (event.eventType === "upload_failed") return "[Electronic Parts] Upload fallido";
+  if (event.eventType === "upload_has_many_errors") return `[Electronic Parts] Alerta: archivo con ${event.errorCount ?? 0} errores`;
+  if (event.eventType === "low_gp_rate") return "[Electronic Parts] GP rate bajo detectado";
+  if (event.eventType === "missing_mpn_threshold") return "[Electronic Parts] Registros sin MPN superan el limite";
+  if (event.eventType === "import_quality_below_threshold") return "[Electronic Parts] Calidad de importacion baja";
+  if (event.eventType === "weekly_report") return "[Electronic Parts] Reporte semanal de calidad de datos";
+  if (event.eventType === "new_dataset_published") return "[Electronic Parts] Nuevo dataset publicado";
+  return `[Electronic Parts] ${rule.name}`;
 }
 
 function bodyForRule(rule: EmailAlertRule, event: EmailAlertEvent) {
@@ -101,15 +101,15 @@ function bodyForRule(rule: EmailAlertRule, event: EmailAlertEvent) {
   const table = rows
     .map(([label, value]) => `<tr><td style="padding:6px 10px;font-weight:600">${label}</td><td style="padding:6px 10px">${value}</td></tr>`)
     .join("");
-  const link = event.dashboardUrl ? `<p><a href="${event.dashboardUrl}">Abrir en Quiksol</a></p>` : "";
+  const link = event.dashboardUrl ? `<p><a href="${event.dashboardUrl}">Abrir en Electronic Parts</a></p>` : "";
 
   return `
     <div style="font-family:Arial,sans-serif;color:#0f172a">
       <h2>${subjectForRule(rule, event)}</h2>
-      <p>Resumen automatico del evento detectado por Quiksol.</p>
+      <p>Resumen automatico del evento detectado por Electronic Parts.</p>
       <table style="border-collapse:collapse;border:1px solid #e2e8f0">${table}</table>
       ${link}
-      <p style="font-size:12px;color:#64748b">Esta es una notificacion automatica. No respondas directamente a este correo.</p>
+      <p style="font-size:12px;color:#64748b">Esta es una notificacion automatica. No respondas directamente a este correo.<br>Electronic Parts · Demo Environment</p>
     </div>
   `;
 }

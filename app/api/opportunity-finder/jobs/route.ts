@@ -214,7 +214,7 @@ export async function POST(request: Request) {
     ? [...uploadedFiles, {
       id: virtualFileId!,
       side: "B" as const,
-      originalFileName: "Base QuikSol autorizada",
+      originalFileName: "Base autorizada de Electronic Parts",
       mimeType: "application/json",
       sizeBytes: 1,
       contentSha256: datasetVersion!,

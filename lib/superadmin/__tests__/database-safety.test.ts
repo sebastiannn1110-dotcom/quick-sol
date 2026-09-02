@@ -76,7 +76,7 @@ afterEach(async () => {
 
 describe("database backup safety", () => {
   it("generates the exact deterministic local-download filename", () => {
-    expect(databaseBackupFileName(new Date("2026-08-16T13:15:00.000Z"))).toBe("backup-respaldo-seguridad-quiksol-2026-08-16-131500.tar");
+    expect(databaseBackupFileName(new Date("2026-08-16T13:15:00.000Z"))).toBe("backup-respaldo-seguridad-electronic-parts-2026-08-16-131500.tar");
   });
 
   it("creates a secret-free manifest with SHA-256 metadata", async () => {

@@ -14,7 +14,7 @@ export async function getDemoPlatformData() {
   const profiles: Profile[] = database.employees.map((employee) => ({
     id: employee.id,
     full_name: employee.name,
-    email: employee.email ?? `${employee.id.toLowerCase()}@quiksol.local`,
+    email: employee.email ?? `${employee.id.toLowerCase()}@example.com`,
     role: employee.id === "EMP-1001" ? "admin" : "employee",
     department: employee.department,
     region: employee.region,
@@ -45,7 +45,7 @@ export async function getDemoPlatformData() {
     archived_at: null,
     profiles: {
       full_name: upload.employeeName,
-      email: `${upload.employeeId.toLowerCase()}@quiksol.local`,
+      email: `${upload.employeeId.toLowerCase()}@example.com`,
       department: upload.department,
       region: upload.region,
       role: upload.employeeId === "EMP-1001" ? "admin" : "employee"
@@ -103,7 +103,7 @@ export async function getDemoPlatformData() {
       comments: String(normalized.comments ?? normalized.notes ?? "") || null,
       profiles: {
         full_name: record.employeeName,
-        email: `${record.employeeId.toLowerCase()}@quiksol.local`,
+        email: `${record.employeeId.toLowerCase()}@example.com`,
         department: record.department,
         region: record.region,
         role: record.employeeId === "EMP-1001" ? "admin" : "employee"

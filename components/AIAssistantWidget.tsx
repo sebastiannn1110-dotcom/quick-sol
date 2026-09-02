@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import {
   FormEvent,
   KeyboardEvent,
@@ -20,6 +19,7 @@ import {
   X
 } from "lucide-react";
 import AiAudioPlayer from "@/components/ai/AiAudioPlayer";
+import BrandMark from "@/components/BrandMark";
 import AiVoiceRecorder, { type AiVoiceResult } from "@/components/ai/AiVoiceRecorder";
 import { useLanguage } from "@/components/LanguageProvider";
 import type { Profile } from "@/lib/types";
@@ -508,7 +508,7 @@ export default function AIAssistantWidget({
         >
           <div className="flex items-center justify-between gap-1 border-b border-slate-200 bg-slate-950 px-3 py-3 text-white">
             <div className="mr-auto flex min-w-0 items-center gap-3">
-              <Image src="/logo-ia.png" alt="" width={32} height={32} className="rounded-md bg-white object-cover" />
+              <BrandMark size={32} label="Electronic Parts Assistant" className="ring-1 ring-white/20" />
               <div className="min-w-0">
                 <p id="ai-assistant-dialog-title" className="truncate text-sm font-semibold">
                   {t("assistant.title")}
@@ -689,11 +689,11 @@ export default function AIAssistantWidget({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="focus-ring flex h-14 w-14 items-center justify-center rounded-full border border-slate-200 bg-white p-1 shadow-xl transition hover:scale-105"
+        className="focus-ring flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-200 bg-white p-1 shadow-xl transition hover:-translate-y-0.5"
         aria-label={t("assistant.open")}
         aria-expanded={open}
       >
-        <Image src="/logo-ia.png" alt="" width={46} height={46} className="rounded-full object-cover" />
+        <BrandMark size={46} label="Electronic Parts Assistant" className="rounded-xl" />
       </button>
     </div>
   );

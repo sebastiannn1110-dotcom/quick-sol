@@ -454,10 +454,10 @@ export async function getOpportunityFinderAiSummary(
   const existingEntityCount = safeNumber(loaded.job.existing_entity_count);
   const baseSummary = COPY[language].result(total, MODE_LABELS[language][mode]);
   const metadataSummary = language === "en"
-    ? ` Comparison mode: ${comparisonMode === "single_file" ? "one file against the authorized QuikSol dataset" : "two files"}. Uploaded role: ${uploadedRole ?? "not applicable"}. Existing entities considered: ${existingEntityCount}.`
+    ? ` Comparison mode: ${comparisonMode === "single_file" ? "one file against the authorized Electronic Parts dataset" : "two files"}. Uploaded role: ${uploadedRole ?? "not applicable"}. Existing entities considered: ${existingEntityCount}.`
     : language === "zh"
-      ? ` 比较模式：${comparisonMode === "single_file" ? "一个文件与获授权的 QuikSol 数据库" : "两个文件"}。上传角色：${uploadedRole ?? "不适用"}。已考虑的现有实体：${existingEntityCount}。`
-      : ` Modo de comparación: ${comparisonMode === "single_file" ? "un archivo contra la base QuikSol autorizada" : "dos archivos"}. Rol subido: ${uploadedRole ?? "no aplica"}. Entidades existentes consideradas: ${existingEntityCount}.`;
+      ? ` 比较模式：${comparisonMode === "single_file" ? "一个文件与获授权的 Electronic Parts 数据库" : "两个文件"}。上传角色：${uploadedRole ?? "不适用"}。已考虑的现有实体：${existingEntityCount}。`
+      : ` Modo de comparación: ${comparisonMode === "single_file" ? "un archivo contra la base autorizada de Electronic Parts" : "dos archivos"}. Rol subido: ${uploadedRole ?? "no aplica"}. Entidades existentes consideradas: ${existingEntityCount}.`;
   return {
     ok: true,
     status: "ok",

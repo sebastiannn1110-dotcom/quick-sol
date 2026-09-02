@@ -25,7 +25,7 @@ export interface AuthContext {
 export const DEMO_PROFILE: Profile = {
   id: "00000000-0000-4000-8000-000000000001",
   full_name: "Demo Admin",
-  email: "admin@quiksol.local",
+  email: "admin@example.com",
   role: "admin",
   department: "Operations",
   region: "Global",

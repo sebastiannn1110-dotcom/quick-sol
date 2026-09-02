@@ -20,7 +20,7 @@ export default function ClientCard({ client }: { client: AccountClient }) {
   const { t } = useLanguage();
   const metric = (value: number | null) => value ?? "—";
   return (
-    <article className="group grid min-h-[390px] grid-rows-[104px_auto_1fr_auto] overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm transition hover:border-brand-300 hover:shadow-md">
+    <article className="group grid min-h-[390px] grid-rows-[104px_auto_1fr_auto] overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-soft">
       <ClientImage
         logoUrl={client.logoUrl}
         authorizedIdentificationImageUrl={client.authorizedIdentificationImageUrl}

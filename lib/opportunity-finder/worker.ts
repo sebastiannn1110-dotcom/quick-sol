@@ -571,7 +571,7 @@ async function insertSingleFileSnapshotRows(
         templateType: "generic",
         mappingVersion: "platform-summary-v1",
         sourceColumns: {
-          origin: "Base QuikSol autorizada",
+          origin: "Base Electronic Parts autorizada",
           datasetVersion: job.dataset_version ?? "",
           sourceKey
         },

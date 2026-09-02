@@ -273,14 +273,14 @@ export function StockNeedsDashboard({
   return (
     <div className="space-y-6">
         <div>
-          <p className={`text-sm font-medium ${adminMode ? "text-orange-700" : "text-brand-700"}`}>{adminMode ? copy.adminEyebrow : copy.eyebrow}</p>
-          <h1 className="text-2xl font-semibold text-slate-950">{copy.title}</h1>
-          <p className="text-sm text-slate-500">{copy.description}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">{adminMode ? copy.adminEyebrow : copy.eyebrow}</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{copy.title}</h1>
+          <p className="mt-2 text-sm text-slate-600">{copy.description}</p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
           {summaryCards.map(([label, value]) => (
-            <div key={label} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+            <div key={label} className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
               <p className="text-xs font-medium uppercase text-slate-500">{label}</p>
               <p className="mt-2 text-xl font-semibold text-slate-950">
                 {loading ? <span className="inline-block h-6 w-12 animate-pulse rounded bg-slate-200" aria-label={copy.loading} /> : value ?? "—"}
@@ -290,7 +290,7 @@ export function StockNeedsDashboard({
         </div>
 
         <form
-          className="grid gap-3 rounded-md border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto]"
+          className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto]"
           onSubmit={(event) => {
             event.preventDefault();
             void loadData();
@@ -349,7 +349,7 @@ export function StockNeedsDashboard({
           </div>
         ) : null}
 
-        <div className="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">

@@ -21,7 +21,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
 
   if (isPublicPage) {
     return (
-      <main className="min-h-screen bg-slate-50">
+      <main className="min-h-screen bg-[#f3f6fa]">
         <PageViewLogger />
         {children}
       </main>
@@ -29,12 +29,12 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 lg:flex">
+    <div className="min-h-screen bg-[#f6f8fb] lg:flex">
       <PageViewLogger />
       <Sidebar profile={profile} isAdminArea={isAdminArea} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Navbar profile={profile} isAdminArea={isAdminArea} />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 sm:px-6 lg:px-8">
+        <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           {children}
         </main>
       </div>

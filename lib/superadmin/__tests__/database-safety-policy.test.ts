@@ -168,7 +168,7 @@ describe("Database Safety Center policy", () => {
     expect(DATABASE_SAFETY_PROTECTED_TABLES.map((entry) => entry.table)).toEqual(expect.arrayContaining([
       "opportunity_finder_tenants", "opportunity_finder_tenant_memberships"
     ]));
-    expect(DATABASE_DESTRUCTION_PHRASE).toBe("ELIMINAR INFORMACION QUIKSOL");
+    expect(DATABASE_DESTRUCTION_PHRASE).toBe("ELIMINAR INFORMACION DEMO");
   });
 
   it("keeps provisioning dry by default and accepts secrets only through private env variables", () => {

@@ -195,7 +195,7 @@ export default function DatabaseSafetyCenter() {
       const handle = browser.showSaveFilePicker
         ? await browser.showSaveFilePicker({
           suggestedName: backup.file_name,
-          types: [{ description: "QuikSol Safety Bundle", accept: { "application/x-tar": [".tar"] } }]
+          types: [{ description: "Electronic Parts Safety Bundle", accept: { "application/x-tar": [".tar"] } }]
         })
         : null;
       if (!browser.showSaveFilePicker && backup.size_bytes > SAFE_BLOB_FALLBACK_MAX_BYTES) {
@@ -354,7 +354,7 @@ export default function DatabaseSafetyCenter() {
         </div>
 
         {armed ? <div role="dialog" aria-modal="true" className="mt-4 rounded border border-red-500 bg-slate-950 p-4">
-          <p className="font-semibold">Esta acción eliminará datos empresariales de QuikSol.</p>
+          <p className="font-semibold">Esta acción eliminará datos empresariales de Electronic Parts.</p>
           <p className="mt-2 text-sm">Backup: {backup?.file_name}</p><p className="break-all text-sm">SHA-256: {backup?.sha256}</p>
           <p className="mt-2 text-sm">Escribiste correctamente: {DATABASE_DESTRUCTION_PHRASE}</p>
           {seconds && seconds > 0 ? <p className="mt-3 text-lg font-bold text-amber-300">La eliminación comenzará en {seconds} segundos.</p> : <p className="mt-3 text-lg font-bold text-red-300">Countdown terminado. Revisa todo antes de ejecutar.</p>}

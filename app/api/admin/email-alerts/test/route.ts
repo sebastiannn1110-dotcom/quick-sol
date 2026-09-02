@@ -22,14 +22,14 @@ export async function POST(request: Request) {
   const rate = await checkPersistentRateLimit({ action: "email_alert_test", identifier: context.profile.id, limit: 12, windowSeconds: 60 * 60 });
   if (!rate.allowed) return rateLimitResponse(rate.resetAt);
 
-  const subject = parsed.data.subject || "[Quiksol] Email alerts test";
+  const subject = parsed.data.subject || "[Electronic Parts] Email alerts test";
   const result = await sendEmail({
     to: parsed.data.recipients,
     subject,
     html: `
       <div style="font-family:Arial,sans-serif">
-        <h2>Quiksol email alerts test</h2>
-        <p>This confirms that the configured provider can process Quiksol alert emails.</p>
+        <h2>Electronic Parts email alerts test</h2>
+        <p>This confirms that the configured provider can process Electronic Parts alert emails.</p>
         <p>Requested by ${context.profile.full_name} (${context.profile.email}).</p>
       </div>
     `
