@@ -584,6 +584,23 @@ describe("DEMO seed source boundary", () => {
     );
   });
 
+  it("uses the existing internal source contract for all 19 demo RFQs", () => {
+    const businessSeed = source.slice(
+      source.indexOf("async function seedBusinessData"),
+      source.indexOf("export async function applyDemoSeed")
+    );
+    const commerceRfqStart = businessSeed.indexOf('"commerce_rfqs"');
+    const commerceRfqSeed = businessSeed.slice(
+      commerceRfqStart,
+      businessSeed.indexOf('"sourcing_requests"', commerceRfqStart)
+    );
+
+    expect(DEMO_DATA_MANIFEST.rfqs).toHaveLength(19);
+    expect(new Set(DEMO_DATA_MANIFEST.rfqs.map((rfq) => rfq.id)).size).toBe(19);
+    expect(commerceRfqSeed.match(/source:\s*"internal"/g)).toHaveLength(2);
+    expect(commerceRfqSeed).not.toContain("internal-demo");
+  });
+
   it("returns from dry-run before loading environment files or creating Supabase", () => {
     const dryRunReturn = source.indexOf("console.log(JSON.stringify(buildDemoDryRunPlan(), null, 2));");
     const environmentLoad = source.indexOf('loadEnvFile(".env.local")');

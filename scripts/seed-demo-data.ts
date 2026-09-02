@@ -1464,7 +1464,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
       },
       assigned_salesperson_id: maya,
       status: "quoted",
-      source: "internal-demo",
+      source: "internal",
       created_at: fixedTimestamp
     },
     "id"
@@ -1510,7 +1510,7 @@ async function seedBusinessData(supabase: SupabaseClient, personIds: PersonIds) 
         },
         assigned_salesperson_id: sellerId,
         status: "quoted",
-        source: "internal-demo",
+        source: "internal",
         created_at: fixedTimestamp
       },
       "id"
