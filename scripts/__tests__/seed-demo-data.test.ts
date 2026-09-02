@@ -447,6 +447,34 @@ describe("DEMO seed R8 provisioning flow", () => {
     expect(calls.verifyOwnership).toHaveLength(7);
   });
 
+  it("resumes an Olivia plus presentation-owner partial apply without duplicates", async () => {
+    const presentationOwner = team.find((person) => person.key === "demoOwner");
+    if (!presentationOwner) throw new Error("TEST_DEMO_OWNER_MISSING");
+    const { calls, gateway, users } = fakeUserGateway([olivia, presentationOwner]);
+
+    const personIds = await ensureDemoUsersWithGateway(
+      gateway,
+      strongPassword,
+      ownerPassword
+    );
+
+    expect(calls.cli).toHaveLength(0);
+    expect(calls.admin).toHaveLength(26);
+    expect(calls.create).toHaveLength(26);
+    expect(calls.create.some(({ person }) => person.key === "olivia")).toBe(false);
+    expect(calls.create.some(({ person }) => person.key === "demoOwner")).toBe(false);
+    expect(calls.verifyOwnership).toHaveLength(2);
+    expect(calls.verifyOwner).toEqual([
+      {
+        person: presentationOwner,
+        password: ownerPassword,
+        expectedUserId: personIds.demoOwner
+      }
+    ]);
+    expect(calls.profiles).toHaveLength(28);
+    expect(users.size).toBe(28);
+  });
+
   it("is a no-create no-begin operation on the second run, including mixed-case presentation owner email", async () => {
     const { calls, gateway, users } = fakeUserGateway([olivia]);
     const firstIds = await ensureDemoUsersWithGateway(gateway, strongPassword, ownerPassword);
