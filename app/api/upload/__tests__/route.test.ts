@@ -24,7 +24,7 @@ const profile = {
   updated_at: "2026-06-25T00:00:00.000Z"
 };
 
-describe("POST /api/upload", () => {
+describe("/api/upload", () => {
   const logger = createLoggerMock();
   const getAuthContext = vi.fn();
 
@@ -62,5 +62,34 @@ describe("POST /api/upload", () => {
     expect(response.status).toBe(409);
     expect(payload.message).toContain("/api/upload/initiate");
     expect(formData).not.toHaveBeenCalled();
+  });
+
+  it("keeps the demo upload history aligned to the three source-visible users", async () => {
+    getAuthContext.mockResolvedValue({
+      user: null,
+      profile,
+      supabase: null,
+      isDemoMode: true,
+      requestMeta: {
+        ipAddress: "127.0.0.1",
+        userAgent: "vitest",
+        route: "/api/upload",
+        traceId: "trace-id",
+        requestId: "request-id"
+      }
+    });
+
+    const { GET } = await import("../route");
+    const response = await GET(new Request("https://app.test/api/upload"));
+    const payload = await response.json() as {
+      uploads: Array<{ profiles?: { full_name?: string } | null; uploaded_by: string }>;
+    };
+    const visibleUsers = [...new Set(payload.uploads.map((upload) =>
+      upload.profiles?.full_name ?? upload.uploaded_by
+    ))].sort();
+
+    expect(response.status).toBe(200);
+    expect(visibleUsers).toEqual(["Daniel Ruiz", "Maya Chen", "Priya Shah"]);
+    expect(visibleUsers).not.toContain("Jason");
   });
 });

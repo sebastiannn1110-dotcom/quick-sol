@@ -304,6 +304,35 @@ describe("DEMO data manifest", () => {
     )).toBe(true);
   });
 
+  it("keeps the exact source company key, id, and logo_path mapping", () => {
+    expect(DEMO_DATA_MANIFEST.clients.map((target) => [
+      target.name,
+      target.key,
+      target.id,
+      target.media.localPath
+    ])).toEqual([
+      ["Amazon-demo", "novaCircuit", "d0000000-0000-4000-8000-000000000001", "demo/companies/nova-circuit.webp"],
+      ["Google-demo", "atlasRobotics", "d3000000-0000-4000-8000-000000000002", "demo/companies/atlas-robotics.webp"],
+      ["Microsoft-demo", "andinaControls", "d3000000-0000-4000-8000-000000000003", "demo/companies/andina-controls.webp"],
+      ["Apple-demo", "northStarDevices", "d3000000-0000-4000-8000-000000000004", "demo/companies/north-star-devices.webp"],
+      ["Nvidia-demo", "pacificaEnergy", "d3000000-0000-4000-8000-000000000005", "demo/companies/pacifica-energy.webp"],
+      ["Intel-demo", "mapleGrid", "d3000000-0000-4000-8000-000000000006", "demo/companies/maple-grid.webp"],
+      ["Samsung-demo", "blueMesa", "d3000000-0000-4000-8000-000000000007", "demo/companies/blue-mesa.webp"],
+      ["Sony-demo", "libertyMotion", "d3000000-0000-4000-8000-000000000008", "demo/companies/liberty-motion.webp"],
+      ["Dell-demo", "lionCity", "d3000000-0000-4000-8000-000000000009", "demo/companies/lion-city.webp"],
+      ["HP-demo", "pearlRiver", "d3000000-0000-4000-8000-000000000010", "demo/companies/pearl-river.webp"],
+      ["IBM-demo", "meridianSemi", "d3000000-0000-4000-8000-000000000011", "demo/companies/meridian-semi.webp"],
+      ["Cisco-demo", "rheinWerk", "d3000000-0000-4000-8000-000000000012", "demo/companies/rhein-werk.webp"],
+      ["Oracle-demo", "hexagon", "d3000000-0000-4000-8000-000000000013", "demo/companies/hexagon.webp"],
+      ["Qualcomm-demo", "euroNova", "d3000000-0000-4000-8000-000000000014", "demo/companies/euro-nova.webp"],
+      ["Siemens-demo", "azteca", "d3000000-0000-4000-8000-000000000015", "demo/companies/azteca.webp"],
+      ["Bosch-demo", "sakura", "d3000000-0000-4000-8000-000000000016", "demo/companies/sakura.webp"],
+      ["Panasonic-demo", "britannia", "d3000000-0000-4000-8000-000000000017", "demo/companies/britannia.webp"],
+      ["Meta-demo", "iberia", "d3000000-0000-4000-8000-000000000018", "demo/companies/iberia.webp"],
+      ["Tesla-demo", "southernCross", "d3000000-0000-4000-8000-000000000019", "demo/companies/southern-cross.webp"]
+    ]);
+  });
+
   it("keeps the original commercial row and expanded metrics deterministic", () => {
     expect(DEMO_DATA_MANIFEST.quote).toMatchObject({
       number: "EPD-DEMO-0001",
