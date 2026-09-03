@@ -76,9 +76,9 @@ function completeDemoDirectory(): OrganizationDirectory {
       canEditGlobal: false,
       canReadCompensation: false
     },
-    members: DEMO_DATA_MANIFEST.people.map((person) => ({
+    members: DEMO_DATA_MANIFEST.visibleEmployees.map((person) => ({
       profileId: person.key,
-      managerId: person.managerKey,
+      managerId: person.managerKey === "demoOwner" ? null : person.managerKey,
       name: person.fullName,
       email: person.email,
       businessTitle: person.title,
@@ -123,7 +123,7 @@ afterEach(() => {
 });
 
 describe("Team Structure filters and compensation", () => {
-  it("renders 27 employee photos while the demo owner uses only U", async () => {
+  it("renders exactly 19 employee photos without an owner card or fallback", async () => {
     vi.stubGlobal("fetch", baseFetch(completeDemoDirectory()));
     render(<TeamStructure />);
 
@@ -131,11 +131,11 @@ describe("Team Structure filters and compensation", () => {
     const treePhotos = within(treeHeading.closest("section")!).getAllByRole("img");
     const sources = treePhotos.map((photo) => photo.getAttribute("src"));
 
-    expect(treePhotos).toHaveLength(27);
-    expect(new Set(sources).size).toBe(27);
+    expect(treePhotos).toHaveLength(19);
+    expect(new Set(sources).size).toBe(19);
     const treeSection = treeHeading.closest("section")!;
-    const ownerInitials = within(treeSection).getByLabelText(/user\.test\.demo\.com.* initials/);
-    expect(ownerInitials.textContent).toBe("U");
+    expect(within(treeSection).queryByText("user.test.demo.com")).toBeNull();
+    expect(treeSection.querySelector("[data-avatar-state='initials']")).toBeNull();
   });
 
   it("shows the owner's compact and xl avatars as U without an image", async () => {

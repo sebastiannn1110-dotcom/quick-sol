@@ -8,6 +8,8 @@ import type {
   AnalyticsQuote,
   AnalyticsQuoteEvent
 } from "@/lib/employee-analytics/contracts";
+import { DEMO_DATA_MANIFEST } from "@/scripts/demo-data-manifest";
+import { buildDemoQuoteEventSeeds } from "@/scripts/seed-demo-data";
 
 const employees: AnalyticsEmployee[] = [
   { employeeId: "a", managerId: null, name: "Maya Torres", businessTitle: "Sales Representative", businessRank: "individual_contributor", department: "Sales", country: "Colombia", region: "Americas", avatarPath: null },
@@ -210,5 +212,55 @@ describe("employee analytics combined filters", () => {
       "greta", "jordan", "maya"
     ]);
     expect(result.metrics.map((metric) => metric.employeeId)).toEqual(["europe", "greta"]);
+  });
+});
+
+describe("Electronic Parts Demo employee analytics", () => {
+  it("keeps all 19 retained employees in general analytics and all 9 active sellers functional", () => {
+    const result = buildEmployeeAnalytics({
+      scope: "global",
+      employees: DEMO_DATA_MANIFEST.visibleEmployees.map((person) => ({
+        employeeId: person.key,
+        managerId: person.managerKey === "demoOwner" ? null : person.managerKey,
+        name: person.fullName,
+        businessTitle: person.title,
+        businessRank: person.organizationRank,
+        department: person.department,
+        country: person.country,
+        region: person.region,
+        avatarPath: person.avatarPath
+      })),
+      quotes: DEMO_DATA_MANIFEST.quotes.map((quote) => ({
+        id: quote.id,
+        sellerId: quote.sellerKey,
+        clientId: quote.clientKey,
+        status: quote.status,
+        total: quote.total,
+        createdAt: quote.createdAt,
+        sentAt: quote.sentAt
+      })),
+      items: DEMO_DATA_MANIFEST.quotes.map((quote) => ({ quoteId: quote.id })),
+      events: buildDemoQuoteEventSeeds().map((event) => ({
+        quoteId: event.quoteId,
+        eventType: event.eventType
+      }))
+    });
+
+    expect(result.metrics).toHaveLength(19);
+    expect(result.metrics.every((employee) => employee.avatarPath)).toBe(true);
+    expect(result.ranking).toHaveLength(9);
+    expect(result.filterOptions.sellers).toHaveLength(14);
+    expect(result.filterOptions.countries).toHaveLength(14);
+    expect(result.filterOptions.departments).toEqual(["Executive", "Sales", "Sourcing"]);
+    expect(result.totals).toMatchObject({
+      quotesCreated: 45,
+      quotesSent: 39,
+      quotesAccepted: 22,
+      quotesRejected: 8,
+      quoteConversionRate: 56.41,
+      acceptedQuoteValue: 495121.1,
+      customersServed: 19
+    });
+    expect(result.definitions.ranking).toBe("Accepted Quote Value");
   });
 });

@@ -185,9 +185,15 @@ export function buildDemoDryRunPlan() {
       technicalRole,
       profileBusinessRank
     })),
+    ownerAdmin: {
+      email: manifest.ownerAdmin.email,
+      technicalRole: manifest.ownerAdmin.technicalRole,
+      profileBusinessRank: manifest.ownerAdmin.profileBusinessRank,
+      avatar: "U"
+    },
     records: {
-      employees: manifest.people.length,
-      employeePhotos: manifest.people.filter((person) => Boolean(person.avatarPath)).length,
+      visibleEmployees: manifest.visibleEmployees.length,
+      employeePhotos: manifest.visibleEmployees.filter((person) => Boolean(person.avatarPath)).length,
       clients: manifest.clients.length,
       companyPhotos: manifest.clients.filter((target) => Boolean(target.media.localPath)).length,
       rfqs: manifest.rfqs.length,
@@ -1910,8 +1916,10 @@ export async function applyDemoSeed(
   const legacyOwnerRetired = await retireLegacyDemoOwner(service, personIds.demoOwner);
   return {
     marker: DEMO_SEED_MARKER,
-    users: DEMO_DATA_MANIFEST.people.length,
-    employeePhotos: DEMO_DATA_MANIFEST.people.filter((person) => Boolean(person.avatarPath)).length,
+    authUsers: DEMO_DATA_MANIFEST.people.length,
+    visibleEmployees: DEMO_DATA_MANIFEST.visibleEmployees.length,
+    ownerAdmin: DEMO_DATA_MANIFEST.ownerAdmin.email,
+    employeePhotos: DEMO_DATA_MANIFEST.visibleEmployees.filter((person) => Boolean(person.avatarPath)).length,
     clients: DEMO_DATA_MANIFEST.clients.length,
     companyPhotos: DEMO_DATA_MANIFEST.clients.length,
     rfqs: DEMO_DATA_MANIFEST.rfqs.length,

@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import {
+  ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS,
+  ELECTRONIC_PARTS_DEMO_RETIRED_EMPLOYEE_EMAILS
+} from "@/lib/demo/employee-scope";
+import {
   DEMO_DATA_MANIFEST,
   DEMO_SEED_MARKER,
   validateDemoManifest,
@@ -234,13 +238,20 @@ function fakeBusinessSupabase() {
 describe("DEMO data manifest", () => {
   it("is internally consistent and uses the presentation owner technical email only in seed data", () => {
     expect(validateDemoManifest()).toBe(DEMO_DATA_MANIFEST);
-    expect(DEMO_DATA_MANIFEST.people).toHaveLength(28);
+    expect(DEMO_DATA_MANIFEST.people).toHaveLength(20);
+    expect(DEMO_DATA_MANIFEST.visibleEmployees).toHaveLength(19);
     expect(DEMO_DATA_MANIFEST.people.find((person) => person.key === "demoOwner")).toEqual(
       expect.objectContaining({ email: "user.test.demo.com@demo.invalid", fullName: "user.test.demo.com" })
     );
     expect(DEMO_DATA_MANIFEST.people.every((person) => person.key === "demoOwner"
       ? person.email === "user.test.demo.com@demo.invalid"
       : person.email.endsWith("@quiksol.demo.invalid"))).toBe(true);
+    expect(DEMO_DATA_MANIFEST.ownerAdmin.email).toBe("user.test.demo.com@demo.invalid");
+    expect(DEMO_DATA_MANIFEST.visibleEmployees.some((person) =>
+      ELECTRONIC_PARTS_DEMO_RETIRED_EMPLOYEE_EMAILS.includes(
+        person.email as typeof ELECTRONIC_PARTS_DEMO_RETIRED_EMPLOYEE_EMAILS[number]
+      )
+    )).toBe(false);
     expect(DEMO_DATA_MANIFEST.clients).toHaveLength(19);
     expect(DEMO_DATA_MANIFEST.clients.every((target) => target.contactEmail.endsWith(".demo.invalid"))).toBe(true);
   });
@@ -255,18 +266,18 @@ describe("DEMO data manifest", () => {
     expect(DEMO_DATA_MANIFEST.clients.every((target) => target.name.endsWith("-demo"))).toBe(true);
   });
 
-  it("keeps historical employee media but assigns photos to only the other 27 employees", () => {
+  it("keeps exactly 19 source-backed employee photos and a separate initial-only owner", () => {
     const employeeMedia = DEMO_DATA_MANIFEST.people.flatMap((person) => person.media ? [person.media] : []);
     const companyMedia = DEMO_DATA_MANIFEST.clients.map((target) => target.media);
     const allMedia = [...employeeMedia, ...companyMedia];
 
-    expect(employeeMedia).toHaveLength(27);
+    expect(employeeMedia).toHaveLength(19);
     expect(companyMedia).toHaveLength(19);
-    expect(new Set(employeeMedia.map((asset) => asset.localPath)).size).toBe(27);
-    expect(new Set(employeeMedia.map((asset) => asset.sha256)).size).toBe(27);
-    expect(new Set(allMedia.map((asset) => asset.localPath)).size).toBe(46);
-    expect(new Set(allMedia.map((asset) => asset.sourcePageUrl)).size).toBe(46);
-    expect(new Set(allMedia.map((asset) => asset.sha256)).size).toBe(46);
+    expect(new Set(employeeMedia.map((asset) => asset.localPath)).size).toBe(19);
+    expect(new Set(employeeMedia.map((asset) => asset.sha256)).size).toBe(19);
+    expect(new Set(allMedia.map((asset) => asset.localPath)).size).toBe(38);
+    expect(new Set(allMedia.map((asset) => asset.sourcePageUrl)).size).toBe(38);
+    expect(new Set(allMedia.map((asset) => asset.sha256)).size).toBe(38);
     expect(allMedia.every((asset) =>
       asset.assetType === "conventional-stock-photo" &&
       asset.aiGenerated === false &&
@@ -283,7 +294,10 @@ describe("DEMO data manifest", () => {
 
     const demoOwner = DEMO_DATA_MANIFEST.people.find((person) => person.key === "demoOwner");
     expect(demoOwner?.avatarPath).toBeNull();
-    expect(DEMO_DATA_MANIFEST.people.filter((person) => person.avatarPath)).toHaveLength(27);
+    expect(DEMO_DATA_MANIFEST.visibleEmployees.every((person) => person.avatarPath)).toBe(true);
+    expect(DEMO_DATA_MANIFEST.visibleEmployees.map((person) => person.email)).toEqual(
+      ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS
+    );
     expect(DEMO_DATA_MANIFEST.people
       .filter((person) => person.key !== "demoOwner")
       .every((person) => person.avatarPath === person.media?.localPath)).toBe(true);
@@ -344,7 +358,9 @@ describe("DEMO data manifest", () => {
     expect(DEMO_DATA_MANIFEST.rfqs).toHaveLength(19);
     expect(DEMO_DATA_MANIFEST.quotes).toHaveLength(45);
     expect(DEMO_DATA_MANIFEST.expectedMetrics).toMatchObject({
-      employees: 28,
+      visibleEmployees: 19,
+      employeePhotos: 19,
+      ownerAdmins: 1,
       clients: 19,
       rfqs: 19,
       createdQuotes: 45,
@@ -360,7 +376,7 @@ describe("DEMO data manifest", () => {
       conversionRatePercent: 56.41,
       quotedValueUsd: 954365.1,
       acceptedQuoteValueUsd: 495121.1,
-      compensationRows: 28
+      compensationRows: 19
     });
   });
 
@@ -386,11 +402,12 @@ describe("DEMO data manifest", () => {
   });
 
   it("covers multiple countries and all requested departments with current compensation", () => {
-    expect(new Set(DEMO_DATA_MANIFEST.people.map((person) => person.country)).size).toBe(17);
-    expect(new Set(DEMO_DATA_MANIFEST.people.map((person) => person.department))).toEqual(
-      new Set(["Executive", "Sales", "Sourcing", "Operations", "Customer Success"])
+    expect(new Set(DEMO_DATA_MANIFEST.visibleEmployees.map((person) => person.country)).size).toBe(14);
+    expect(new Set(DEMO_DATA_MANIFEST.visibleEmployees.map((person) => person.department))).toEqual(
+      new Set(["Executive", "Sales", "Sourcing"])
     );
-    expect(DEMO_DATA_MANIFEST.compensations).toHaveLength(28);
+    expect(DEMO_DATA_MANIFEST.compensations).toHaveLength(19);
+    expect(DEMO_DATA_MANIFEST.compensations.some((row) => row.personKey === "demoOwner")).toBe(false);
     expect(DEMO_DATA_MANIFEST.compensations.every((row) => row.currency === "USD" && row.periodicity === "annual")).toBe(true);
     expect(new Set(DEMO_DATA_MANIFEST.quotes.map((quote) => quote.sellerKey)).size).toBe(9);
   });
@@ -620,9 +637,10 @@ describe("DEMO fixed-ID ownership and partial-apply recovery", () => {
       quoteEvents: 117
     });
     expect(database.insertedRows.count).toBe(insertedAfterFirstRun);
-    expect(DEMO_DATA_MANIFEST.people).toHaveLength(28);
-    expect(DEMO_DATA_MANIFEST.people.filter((person) => person.avatarPath)).toHaveLength(27);
-    expect(DEMO_DATA_MANIFEST.compensations).toHaveLength(28);
+    expect(DEMO_DATA_MANIFEST.people).toHaveLength(20);
+    expect(DEMO_DATA_MANIFEST.visibleEmployees).toHaveLength(19);
+    expect(DEMO_DATA_MANIFEST.visibleEmployees.every((person) => person.avatarPath)).toBe(true);
+    expect(DEMO_DATA_MANIFEST.compensations).toHaveLength(19);
   });
 });
 
@@ -634,13 +652,19 @@ describe("DEMO seed CLI safety", () => {
       networkAccess: false,
       writes: false,
       marker: DEMO_SEED_MARKER,
+      ownerAdmin: {
+        email: "user.test.demo.com@demo.invalid",
+        technicalRole: "admin",
+        profileBusinessRank: "owner",
+        avatar: "U"
+      },
       records: {
-        employees: 28,
-        employeePhotos: 27,
+        visibleEmployees: 19,
+        employeePhotos: 19,
         clients: 19,
         companyPhotos: 19,
         rfqs: 19,
-        compensations: 28,
+        compensations: 19,
         quotes: 45
       },
       legacyOwnerReconciliation: {
@@ -720,7 +744,7 @@ describe("DEMO seed CLI safety", () => {
 
 describe("DEMO seed R8 provisioning flow", () => {
   const [olivia, ...team] = DEMO_DATA_MANIFEST.people;
-  const originalKeys = new Set(["olivia", "daniel", "maya", "jordan", "lin", "aya", "chen"]);
+  const originalKeys = new Set(["olivia", "daniel", "maya", "jordan", "lin"]);
 
   it("bootstraps only Olivia through CLI and provisions all others through her admin session", async () => {
     const { calls, gateway, users } = fakeUserGateway();
@@ -730,27 +754,27 @@ describe("DEMO seed R8 provisioning flow", () => {
     expect(calls.admin.find((person) => person.key === "demoOwner")?.technicalRole).toBe("admin");
     expect(calls.create.map(({ person }) => person.key)).toEqual(DEMO_DATA_MANIFEST.people.map((person) => person.key));
     expect(calls.create.find(({ person }) => person.key === "demoOwner")?.password).toBe(ownerPassword);
-    expect(calls.create.filter(({ person, password }) => person.key !== "demoOwner" && password === strongPassword)).toHaveLength(27);
+    expect(calls.create.filter(({ person, password }) => person.key !== "demoOwner" && password === strongPassword)).toHaveLength(19);
     expect(calls.authenticate).toEqual([{ person: olivia, expectedUserId: personIds.olivia }]);
     expect(calls.verifyOwner).toEqual([{ person: team.find((person) => person.key === "demoOwner"), password: ownerPassword, expectedUserId: personIds.demoOwner }]);
     expect(calls.sequence.indexOf("authenticate:olivia")).toBeLessThan(calls.sequence.indexOf("verify-owner:demoOwner"));
     expect(calls.sequence.indexOf("verify-owner:demoOwner")).toBeLessThan(calls.sequence.indexOf("profile:olivia"));
     expect(calls.release).toBe(1);
-    expect(users.size).toBe(28);
+    expect(users.size).toBe(20);
     expect(calls.create.some(({ person }) => String(person.technicalRole) === "super_admin_dev")).toBe(false);
   });
 
-  it("reuses the seven original users and creates only the 21 additions", async () => {
+  it("reuses the five retained original users and creates only the 15 additions", async () => {
     const initial = DEMO_DATA_MANIFEST.people.filter((person) => originalKeys.has(person.key));
     const { calls, gateway, users } = fakeUserGateway(initial);
     await ensureDemoUsersWithGateway(gateway, strongPassword, ownerPassword);
     expect(calls.cli).toHaveLength(0);
-    expect(calls.create).toHaveLength(21);
+    expect(calls.create).toHaveLength(15);
     expect(calls.create.map(({ person }) => person.key)).toEqual(
       DEMO_DATA_MANIFEST.people.filter((person) => !originalKeys.has(person.key)).map((person) => person.key)
     );
-    expect(users.size).toBe(28);
-    expect(calls.verifyOwnership).toHaveLength(7);
+    expect(users.size).toBe(20);
+    expect(calls.verifyOwnership).toHaveLength(5);
   });
 
   it("resumes an Olivia plus presentation-owner partial apply without duplicates", async () => {
@@ -765,8 +789,8 @@ describe("DEMO seed R8 provisioning flow", () => {
     );
 
     expect(calls.cli).toHaveLength(0);
-    expect(calls.admin).toHaveLength(26);
-    expect(calls.create).toHaveLength(26);
+    expect(calls.admin).toHaveLength(18);
+    expect(calls.create).toHaveLength(18);
     expect(calls.create.some(({ person }) => person.key === "olivia")).toBe(false);
     expect(calls.create.some(({ person }) => person.key === "demoOwner")).toBe(false);
     expect(calls.verifyOwnership).toHaveLength(2);
@@ -777,8 +801,8 @@ describe("DEMO seed R8 provisioning flow", () => {
         expectedUserId: personIds.demoOwner
       }
     ]);
-    expect(calls.profiles).toHaveLength(28);
-    expect(users.size).toBe(28);
+    expect(calls.profiles).toHaveLength(20);
+    expect(users.size).toBe(20);
   });
 
   it("is a no-create no-begin operation on the second run, including mixed-case presentation owner email", async () => {
@@ -787,10 +811,10 @@ describe("DEMO seed R8 provisioning flow", () => {
     const counts = { cli: calls.cli.length, admin: calls.admin.length, create: calls.create.length, authenticate: calls.authenticate.length, release: calls.release };
     const secondIds = await ensureDemoUsersWithGateway(gateway, strongPassword, ownerPassword);
     expect(secondIds).toEqual(firstIds);
-    expect(users.size).toBe(28);
+    expect(users.size).toBe(20);
     expect({ cli: calls.cli.length, admin: calls.admin.length, create: calls.create.length, authenticate: calls.authenticate.length, release: calls.release }).toEqual(counts);
     expect(calls.verifyOwner).toHaveLength(2);
-    expect(calls.verifyOwnership).toHaveLength(29);
+    expect(calls.verifyOwnership).toHaveLength(21);
   });
 
   it("fails closed for a non-seed Olivia before opening an admin session", async () => {
@@ -849,6 +873,27 @@ describe("DEMO seed R8 provisioning flow", () => {
 describe("DEMO seed source boundary", () => {
   const testDirectory = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(path.resolve(testDirectory, "../seed-demo-data.ts"), "utf8");
+  const cleanupSql = fs.readFileSync(path.resolve(testDirectory, "../cleanup-demo-employees.sql"), "utf8");
+
+  it("keeps the remote cleanup prepared, exact, and fail-closed", () => {
+    expect(cleanupSql).toContain("PREPARED ONLY. DO NOT RUN");
+    expect(cleanupSql).toContain("profile.bio = 'QUIKSOL_DEMO_DATA_V1'");
+    expect(cleanupSql).toContain("DEMO_EMPLOYEE_CLEANUP_UNEXPECTED_SEED_PROFILE");
+    expect(cleanupSql).toContain("DEMO_EMPLOYEE_CLEANUP_UNREVIEWED_FK");
+    expect(cleanupSql).toContain("'auth.users'::regclass");
+    expect(cleanupSql).toContain("DEMO_EMPLOYEE_CLEANUP_AUTH_IDENTITY_DRIFT");
+    expect(cleanupSql).toContain("DEMO_EMPLOYEE_CLEANUP_PROVISIONING_INTENT_DRIFT");
+    expect(cleanupSql).toContain("user.test.demo.com@demo.invalid");
+    expect(cleanupSql).toContain("DEMO_EMPLOYEE_CLEANUP_OWNER_NOT_PRESERVED");
+    for (const email of ELECTRONIC_PARTS_DEMO_RETIRED_EMPLOYEE_EMAILS) {
+      expect(cleanupSql).toContain(email);
+    }
+    expect(cleanupSql).not.toMatch(/delete\s+from\s+public\.clients/i);
+    expect(cleanupSql).not.toMatch(/delete\s+from\s+public\.commerce_quotes/i);
+    expect(cleanupSql).not.toMatch(/delete\s+from\s+public\.commerce_rfqs/i);
+    expect(cleanupSql).toMatch(/delete\s+from\s+public\.user_provisioning_intents/i);
+    expect(cleanupSql).not.toMatch(/set\s+auth_user_id\s*=\s*null/i);
+  });
 
   it("never rotates existing Auth users or grants super-admin roles", () => {
     expect(source).not.toContain("updateUserById");

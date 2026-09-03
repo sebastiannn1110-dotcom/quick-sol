@@ -82,15 +82,7 @@ export const DEMO_PERSON_MEDIA = Object.freeze({
   camille: person("camille", "4342352", "confident-businesswoman-4342352", "Edmond Dantès", "b9b24f3c3c70bbf87d1a3abcd83c6cb361e8908dfee60e7e694be167ed2e9ec8"),
   oliver: person("oliver", "3865599", "senior-confident-businessman-sitting-in-computer-chair-during-job-with-colleagues-in-daytime-3865599", "Andrea Piacquadio", "8f9742183775c4eeaeaabaf16c39e9b0d4f20e87b9ed5c8da23805e991c5da08"),
   lucia: person("lucia", "3747435", "portrait-of-woman-in-office-3747435", "Polina Zimmerman", "d91e4f8ba4bd5e8a496e1f6d6072e9ae6be22366830f102c321acf8da6f28829"),
-  lin: person("lin", "31880922", "professional-portrait-of-a-businessman-in-suit-31880922", "Wasin Pirom", "72880e64f90a9afd90f290a6a40b8f00801d5eb1c7d2975b9ae37a7151bb8c01"),
-  aya: person("aya", "8101981", "portrait-of-a-woman-smiling-8101981", "Mikhail Nilov", "dc5b665ad7fef8c3481272968e5039cd9e2de7187e7521fada8340277d02bc19"),
-  chen: person("chen", "36733303", "confident-businessman-in-modern-office-setting-36733303", "Vitaly Gariev", "3a2c28bca0439c73e660d1ecbaa35de6bbd7751eea0aaa4fe84295c33bc184b8"),
-  weiMing: person("wei-ming", "4872062", "portrait-of-man-standing-in-office-4872062", "Gustavo Fring", "7bdebb08c69937b0895e6f8500faab5f4b77e8307fbd340825bef31147dd3927"),
-  zhaoLian: person("zhao-lian", "4975655", "portrait-of-a-man-working-at-the-desk-4975655", "Gustavo Fring", "39ba95d6428fd7c25cb56d61577d77ed76a122c92e7232e6d23649e87e0669e2"),
-  meiChen: person("mei-chen", "1181690", "woman-wearing-white-shirt-1181690", "Christina Morillo", "477ffe37b978be4311304f6132c3415c28753c431cde68a9de7aca2a1066afed"),
-  yuki: person("yuki", "9304680", "portrait-of-a-businesswoman-with-curly-hair-9304680", "Mikhail Nilov", "b7609b268f5e256a5e86c784339bb7df7c41880b2e753d4c5834bfca182eda6c"),
-  noah: person("noah", "3931608", "cheerful-mature-male-employee-holding-documents-against-window-in-workspace-3931608", "Andrea Piacquadio", "9134ecb2426b431fd6a647bec7260b2970350fa78ddf86335983271d6549b7af"),
-  isabella: person("isabella", "8872694", "portrait-of-a-woman-with-a-black-wristwatch-8872694", "Mikhail Nilov", "e5ec7d6335901557f8fab3b17d772cc41a74d0f74979710afaf3348238016ec6")
+  lin: person("lin", "31880922", "professional-portrait-of-a-businessman-in-suit-31880922", "Wasin Pirom", "72880e64f90a9afd90f290a6a40b8f00801d5eb1c7d2975b9ae37a7151bb8c01")
 });
 
 function company(

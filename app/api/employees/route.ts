@@ -4,6 +4,7 @@ import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { isAdmin } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/types";
 import { businessRecordReadContract } from "@/lib/security/business-records";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,12 @@ interface DirectoryProfile {
 async function loadDirectory(context: Awaited<ReturnType<typeof getAuthContext>>, search: string | null) {
   if (context instanceof NextResponse || context.isDemoMode || !context.supabase) return { employees: [], error: null };
   const result = await context.supabase.rpc("list_employee_directory", { search_text: search });
-  if (!result.error) return { employees: result.data ?? [], error: null };
+  if (!result.error) {
+    return {
+      employees: scopeElectronicPartsDemoEmployees((result.data ?? []) as DirectoryProfile[]),
+      error: null
+    };
+  }
 
   const safeSearch = search?.replace(/[%,()]/g, " ").trim();
   const query = context.supabase
@@ -41,7 +47,10 @@ async function loadDirectory(context: Awaited<ReturnType<typeof getAuthContext>>
   const fallback = safeSearch
     ? await query.or(`full_name.ilike.%${safeSearch}%,email.ilike.%${safeSearch}%,department.ilike.%${safeSearch}%,region.ilike.%${safeSearch}%,job_title.ilike.%${safeSearch}%`)
     : await query;
-  return { employees: fallback.data ?? [], error: fallback.error };
+  return {
+    employees: scopeElectronicPartsDemoEmployees((fallback.data ?? []) as DirectoryProfile[]),
+    error: fallback.error
+  };
 }
 
 export async function GET(request: Request) {
@@ -56,7 +65,7 @@ export async function GET(request: Request) {
   if (context.isDemoMode) {
     const data = await getDemoPlatformData();
     const activeRecords = data.records.filter((record) => record.archived_at === null);
-    const profiles = data.profiles.map((profile) => ({
+    const profiles = scopeElectronicPartsDemoEmployees(data.profiles).map((profile) => ({
       ...profile,
       uploadCount: data.uploads.filter((upload) => upload.uploaded_by === profile.id).length,
       recordCount: activeRecords.filter((record) => record.uploaded_by === profile.id).length,

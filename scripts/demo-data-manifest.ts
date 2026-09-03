@@ -2,13 +2,18 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS,
+  ELECTRONIC_PARTS_DEMO_OWNER_EMAIL,
+  ELECTRONIC_PARTS_DEMO_SEED_MARKER
+} from "../lib/demo/employee-scope";
+import {
   DEMO_COMPANY_MEDIA,
   DEMO_MEDIA_ASSETS,
   DEMO_PERSON_MEDIA,
   type DemoMediaAsset
 } from "./demo-media-manifest";
 
-export const DEMO_SEED_MARKER = "QUIKSOL_DEMO_DATA_V1";
+export const DEMO_SEED_MARKER = ELECTRONIC_PARTS_DEMO_SEED_MARKER;
 export const DEMO_APPLY_CONFIRMATION = "QUIKSOL_DEMO_DATA_ONLY";
 
 export type DemoTechnicalRole = "admin" | "manager" | "employee";
@@ -24,8 +29,7 @@ export type DemoOrganizationRank = DemoProfileBusinessRank;
 export type DemoPersonKey =
   | "olivia" | "demoOwner" | "daniel" | "maya" | "jordan" | "sofia" | "lucas" | "emma"
   | "priya" | "ethan" | "liNa" | "haruto" | "minJun" | "chloe" | "lukas" | "hannah"
-  | "camille" | "oliver" | "lucia" | "lin" | "aya" | "chen" | "weiMing" | "zhaoLian"
-  | "meiChen" | "yuki" | "noah" | "isabella";
+  | "camille" | "oliver" | "lucia" | "lin";
 
 export type DemoPerson = {
   key: DemoPersonKey;
@@ -167,15 +171,7 @@ const people = [
   demoPerson("camille", 20, "camille.laurent@demo.invalid", "Camille Laurent", "employee", "salesperson", "Sales Representative France", "Sales", "Europe", "France", "Paris", "lukas", 78000),
   demoPerson("oliver", 21, "oliver.bennett@demo.invalid", "Oliver Bennett", "employee", "salesperson", "Account Executive United Kingdom", "Sales", "Europe", "United Kingdom", "London", "lukas", 96000),
   demoPerson("lucia", 22, "lucia.garcia@demo.invalid", "Lucia Garcia", "employee", "salesperson", "Sales Representative Spain", "Sales", "Europe", "Spain", "Madrid", "lukas", 77000),
-  demoPerson("lin", 5, "lin.wei@demo.invalid", "Lin Wei", "manager", "sourcing_manager", "Sourcing Manager Asia", "Sourcing", "APAC", "Singapore", "Singapore", "olivia", 132000),
-  demoPerson("aya", 6, "aya.nakamura@demo.invalid", "Aya Nakamura", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 82000),
-  demoPerson("chen", 7, "chen.rui@demo.invalid", "Chen Rui", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 76000),
-  demoPerson("weiMing", 23, "wei.ming@demo.invalid", "Wei Ming", "employee", "sourcing_specialist", "Sourcing Specialist Singapore", "Sourcing", "APAC", "Singapore", "Singapore", "lin", 84000),
-  demoPerson("zhaoLian", 24, "zhao.lian@demo.invalid", "Zhao Lian", "employee", "sourcing_specialist", "Sourcing Specialist China", "Sourcing", "APAC", "China", "Shanghai", "lin", 79000),
-  demoPerson("meiChen", 25, "mei.chen@demo.invalid", "Mei Chen", "employee", "sourcing_specialist", "Sourcing Specialist Taiwan", "Sourcing", "APAC", "Taiwan", "Taipei", "lin", 81000),
-  demoPerson("yuki", 26, "yuki.tanaka@demo.invalid", "Yuki Tanaka", "employee", "sourcing_specialist", "Sourcing Specialist Japan", "Sourcing", "APAC", "Japan", "Osaka", "lin", 86000),
-  demoPerson("noah", 27, "noah.williams@demo.invalid", "Noah Williams", "employee", "individual_contributor", "Operations Lead", "Operations", "Global", "Netherlands", "Rotterdam", "olivia", 98000),
-  demoPerson("isabella", 28, "isabella.rossi@demo.invalid", "Isabella Rossi", "employee", "individual_contributor", "Customer Success Lead", "Customer Success", "Global", "Italy", "Milan", "olivia", 102000)
+  demoPerson("lin", 5, "lin.wei@demo.invalid", "Lin Wei", "manager", "sourcing_manager", "Sourcing Manager Asia", "Sourcing", "APAC", "Singapore", "Singapore", "olivia", 132000)
 ] as const satisfies readonly DemoPerson[];
 
 const originalIds = Object.freeze({
@@ -343,9 +339,11 @@ const quotes = rawQuotes.map(([sellerKey, clientKey, status, subtotal], zeroInde
 });
 
 const expectedMetrics = Object.freeze({
-  employees: 28,
-  countries: 17,
-  departments: 5,
+  visibleEmployees: 19,
+  employeePhotos: 19,
+  ownerAdmins: 1,
+  countries: 14,
+  departments: 3,
   clients: 19,
   rfqs: 19,
   createdQuotes: 45,
@@ -363,8 +361,11 @@ const expectedMetrics = Object.freeze({
   acceptedQuoteValueUsd: 495121.1,
   customersServed: 19,
   newCustomers: 19,
-  compensationRows: 28
+  compensationRows: 19
 });
+
+const ownerAdmin = people.find((person) => person.key === "demoOwner")!;
+const visibleEmployees = people.filter((person) => person.key !== "demoOwner");
 
 export const DEMO_DATA_MANIFEST = Object.freeze({
   marker: DEMO_SEED_MARKER,
@@ -372,13 +373,15 @@ export const DEMO_DATA_MANIFEST = Object.freeze({
   validUntil: "2099-12-31T23:59:59.000Z",
   quoteValidUntil: "2099-12-31",
   people,
+  visibleEmployees,
+  ownerAdmin,
   clients,
   customer: clients[0],
   rfqs,
   rfq: rfqs[0],
   quotes,
   quote: quotes[0],
-  compensations: people.map((person) => Object.freeze({ personKey: person.key, amount: person.compensationAnnualUsd, currency: "USD" as const, periodicity: "annual" as const })),
+  compensations: visibleEmployees.map((person) => Object.freeze({ personKey: person.key, amount: person.compensationAnnualUsd, currency: "USD" as const, periodicity: "annual" as const })),
   ids: originalIds,
   product,
   supplierOffer: Object.freeze({
@@ -401,12 +404,12 @@ function validateDemoMediaAssets() {
     ...Object.values(DEMO_COMPANY_MEDIA).map((asset) => asset.localPath)
   ]);
   if (
-    Object.keys(DEMO_PERSON_MEDIA).length !== 27 ||
+    Object.keys(DEMO_PERSON_MEDIA).length !== 19 ||
     Object.keys(DEMO_COMPANY_MEDIA).length !== 19 ||
-    DEMO_MEDIA_ASSETS.length !== 46 ||
-    expectedPaths.size !== 46 ||
-    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sha256)).size !== 46 ||
-    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sourcePageUrl)).size !== 46
+    DEMO_MEDIA_ASSETS.length !== 38 ||
+    expectedPaths.size !== 38 ||
+    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sha256)).size !== 38 ||
+    new Set(DEMO_MEDIA_ASSETS.map((asset) => asset.sourcePageUrl)).size !== 38
   ) {
     throw new Error("DEMO_MANIFEST_MEDIA_CARDINALITY_INVALID");
   }
@@ -457,11 +460,11 @@ export function validateDemoManifest() {
 
   const personKeys = new Set(manifest.people.map((person) => person.key));
   const emails = manifest.people.map((person) => person.email.trim().toLowerCase());
-  if (manifest.people.length !== 28 || personKeys.size !== manifest.people.length || new Set(emails).size !== emails.length) {
+  if (manifest.people.length !== 20 || personKeys.size !== manifest.people.length || new Set(emails).size !== emails.length) {
     throw new Error("DEMO_MANIFEST_DUPLICATE_PERSON");
   }
   if (manifest.people.some((person) => person.key === "demoOwner"
-    ? person.email.trim().toLowerCase() !== "user.test.demo.com@demo.invalid"
+    ? person.email.trim().toLowerCase() !== ELECTRONIC_PARTS_DEMO_OWNER_EMAIL
     : !person.email.endsWith("@quiksol.demo.invalid"))) {
     throw new Error("DEMO_MANIFEST_EMAIL_DOMAIN_REQUIRED");
   }
@@ -490,6 +493,15 @@ export function validateDemoManifest() {
   if (manifest.people.some((person) => person.key !== "demoOwner" && person.avatarPath !== person.media?.localPath)) {
     throw new Error("DEMO_MANIFEST_EMPLOYEE_AVATAR_INVALID");
   }
+  if (
+    manifest.visibleEmployees.length !== 19 ||
+    manifest.visibleEmployees.some((person) => !person.avatarPath || !person.media) ||
+    new Set(manifest.visibleEmployees.map((person) => person.email)).size !== 19 ||
+    manifest.visibleEmployees.some((person) => !ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.includes(person.email as typeof ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS[number])) ||
+    ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.some((email) => !manifest.visibleEmployees.some((person) => person.email === email))
+  ) {
+    throw new Error("DEMO_MANIFEST_VISIBLE_EMPLOYEES_INVALID");
+  }
   const olivia = byPersonKey.get("olivia");
   if (!olivia || olivia.managerKey !== "demoOwner" || olivia.technicalRole !== "admin" || olivia.organizationRank !== "executive") {
     throw new Error("DEMO_MANIFEST_OLIVIA_EXECUTIVE_INVALID");
@@ -505,7 +517,8 @@ export function validateDemoManifest() {
     if (current?.key !== "demoOwner") throw new Error("DEMO_MANIFEST_ORGANIZATION_DISCONNECTED");
   }
 
-  if (manifest.compensations.length !== 28 || new Set(manifest.compensations.map((row) => row.personKey)).size !== 28 ||
+  if (manifest.compensations.length !== 19 || new Set(manifest.compensations.map((row) => row.personKey)).size !== 19 ||
+      manifest.compensations.some((row) => row.personKey === "demoOwner") ||
       manifest.compensations.some((row) => row.currency !== "USD" || row.periodicity !== "annual" || row.amount < 60000 || row.amount > 220000)) {
     throw new Error("DEMO_MANIFEST_COMPENSATION_INVALID");
   }

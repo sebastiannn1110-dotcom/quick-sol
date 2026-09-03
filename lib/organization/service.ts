@@ -12,6 +12,7 @@ import {
   type OrganizationDirectory,
   type OrganizationMember
 } from "./contracts";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 const ORGANIZATION_SELECT =
   "profile_id,manager_id,business_title,business_rank,department,country,location,responsibilities,version,updated_at";
@@ -65,7 +66,9 @@ export async function loadOrganizationDirectory(
   if (profilesResult.error) throw profilesResult.error;
 
   const rows = (organizationResult.data ?? []) as OrganizationRow[];
-  const profiles = (profilesResult.data ?? []) as ProfileRow[];
+  const profiles = scopeElectronicPartsDemoEmployees(
+    (profilesResult.data ?? []) as ProfileRow[]
+  );
   const profileById = new Map(profiles.map((profile) => [String(profile.id), profile]));
   const actorRow = rows.find((row) => row.profile_id === context.profile.id);
   const actorRank = actorRow?.business_rank as BusinessRank | undefined;
@@ -92,7 +95,12 @@ export async function loadOrganizationDirectory(
     ));
   }
 
-  return { actor, members };
+  const visibleIds = new Set(members.map((member) => member.profileId));
+  const visibleMembers = members.map((member) => member.managerId && !visibleIds.has(member.managerId)
+    ? { ...member, managerId: null }
+    : member);
+
+  return { actor, members: visibleMembers };
 }
 
 export async function loadEmployeeCompensation(
@@ -106,6 +114,7 @@ export async function loadEmployeeCompensation(
     throw error;
   }
   if (!context.supabase) return null;
+  if (!directory.members.some((member) => member.profileId === employeeId)) return null;
 
   const { data, error } = await context.supabase
     .from("employee_compensation")
