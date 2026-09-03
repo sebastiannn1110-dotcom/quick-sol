@@ -113,6 +113,13 @@ export const ADMIN_TARGETS: readonly AdminTarget[] = Object.freeze([
     department: "Engineering",
     region: "Global",
     role: "super_admin_dev" as const
+  }),
+  Object.freeze({
+    email: "user1.test.demo.com@demo.invalid",
+    fullName: "user1.test.demo.com",
+    department: "Administration",
+    region: "Global",
+    role: "super_admin_dev" as const
   })
 ]);
 

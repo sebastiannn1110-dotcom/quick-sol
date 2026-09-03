@@ -6,6 +6,7 @@ import {
   clearTemporaryProvisioningSecrets,
   executeProvisioning,
   parseProvisioningArgs,
+  resolveAdminTarget,
   sanitizeProviderError,
   type BeginProvisioningResult,
   type ProvisioningGateway,
@@ -93,6 +94,14 @@ function dependencies(
 }
 
 describe("safe admin provisioning", () => {
+  it("allowlists the full-access demo identity with the maximum technical role", () => {
+    expect(resolveAdminTarget("USER1.TEST.DEMO.COM@DEMO.INVALID")).toMatchObject({
+      email: "user1.test.demo.com@demo.invalid",
+      fullName: "user1.test.demo.com",
+      role: "super_admin_dev"
+    });
+  });
+
   it("is a non-mutating dry-run with no arguments", () => {
     expect(parseProvisioningArgs([])).toEqual({
       mode: "dry-run",
