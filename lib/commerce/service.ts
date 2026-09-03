@@ -9,6 +9,7 @@ import type {
   CommerceRfqStatus
 } from "@/lib/commerce/contracts";
 import { RFQ_STATUSES } from "@/lib/commerce/contracts";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 const PRODUCT_SELECT = [
   "id", "mpn", "manufacturer", "description", "category", "image_url",
@@ -647,14 +648,29 @@ export async function getCommerceRfq(
   ]);
   if (pricingResult.error) throw pricingResult.error;
   if (sellersResult.error) throw sellersResult.error;
+  const assignableRows = Array.isArray(sellersResult.data)
+    ? sellersResult.data as unknown as Record<string, unknown>[]
+    : [];
+  let scopedAssignableRows: Record<string, unknown>[] = [];
+  if (assignableRows.length) {
+    const sellerIds = assignableRows.map((seller) => String(seller.id));
+    const sellerProfilesResult = await supabase
+      .from("profiles")
+      .select("id,email,bio,is_active")
+      .in("id", sellerIds);
+    if (sellerProfilesResult.error) throw sellerProfilesResult.error;
+    const visibleSellerIds = new Set(
+      scopeElectronicPartsDemoEmployees(sellerProfilesResult.data ?? [])
+        .map((seller) => String(seller.id))
+    );
+    scopedAssignableRows = assignableRows.filter((seller) => visibleSellerIds.has(String(seller.id)));
+  }
 
   return rfqDetailPayload(
     row,
     profile,
     Array.isArray(pricingResult.data) ? pricingResult.data as RfqPricingPreview[] : [],
-    Array.isArray(sellersResult.data)
-      ? sellersResult.data as unknown as Record<string, unknown>[]
-      : []
+    scopedAssignableRows
   );
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
 import { BUSINESS_RECORDS_COMMERCIAL_VIEW, IMPORT_ERRORS_SAFE_VIEW } from "@/lib/security/business-records";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
       .limit(20),
     context.supabase!
       .from("profiles")
-      .select("id, full_name, email, role, department, region, is_active")
+      .select("id, full_name, email, role, department, region, bio, avatar_path, is_active")
       .or(`full_name.ilike.${pattern},email.ilike.${pattern},department.ilike.${pattern},region.ilike.${pattern}`)
       .limit(20),
     context.supabase!
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     records: records.data ?? [],
     uploads: uploads.data ?? [],
-    employees: employees.data ?? [],
+    employees: scopeElectronicPartsDemoEmployees(employees.data ?? []),
     errors: errors.data ?? []
   }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
 }

@@ -17,7 +17,7 @@ import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 const ORGANIZATION_SELECT =
   "profile_id,manager_id,business_title,business_rank,department,country,location,responsibilities,version,updated_at";
 const PROFILE_SELECT =
-  "id,full_name,email,role,department,region,avatar_path,is_active";
+  "id,full_name,email,role,department,region,avatar_path,bio,is_active";
 
 type OrganizationRow = Record<string, unknown>;
 type ProfileRow = Record<string, unknown>;

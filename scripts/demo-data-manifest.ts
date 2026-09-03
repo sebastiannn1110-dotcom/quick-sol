@@ -123,7 +123,7 @@ function demoPerson(
   compensationAnnualUsd: number
 ): DemoPerson {
   const media = key === "demoOwner" ? null : DEMO_PERSON_MEDIA[key];
-  // Preserve the 27 established Auth identities; UI helpers mask this legacy
+  // Preserve the 19 retained employee Auth identities; UI helpers mask this legacy
   // technical domain so the rebranded application never presents it.
   const authEmail = key === "demoOwner"
     ? email

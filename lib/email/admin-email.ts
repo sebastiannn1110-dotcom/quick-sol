@@ -4,6 +4,7 @@ import { adminMessageHtml } from "@/lib/email/content";
 import { sendEmail, type SendEmailResult } from "@/lib/email/email-service";
 import type { EmailAttachmentPayload } from "@/lib/email/attachments";
 import type { UserRole } from "@/lib/types";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 export const adminEmailSendSchema = z.preprocess((value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -58,7 +59,7 @@ export async function resolveAdminEmailRecipients(
 
   let query = supabase
     .from("profiles")
-    .select("id, full_name, email, role, department, region")
+    .select("id, full_name, email, role, department, region, bio, is_active")
     .eq("is_active", true)
     .order("full_name")
     .limit(250);
@@ -73,7 +74,17 @@ export async function resolveAdminEmailRecipients(
 
   const { data, error } = await query;
   if (error) throw error;
-  const profileRecipients = ((data ?? []).filter((profile) => Boolean(profile.email)) as AdminEmailRecipient[]).map((recipient) => ({ ...recipient, source: "profile" as const }));
+  const profileRecipients = scopeElectronicPartsDemoEmployees(data ?? [])
+    .filter((profile) => Boolean(profile.email))
+    .map((profile): AdminEmailRecipient => ({
+      id: profile.id,
+      full_name: profile.full_name,
+      email: profile.email,
+      role: profile.role as UserRole,
+      department: profile.department,
+      region: profile.region,
+      source: "profile"
+    }));
   const byEmail = new Map<string, AdminEmailRecipient>();
   for (const recipient of [...profileRecipients, ...manualRecipients]) byEmail.set(recipient.email.toLowerCase(), recipient);
   return Array.from(byEmail.values());

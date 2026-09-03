@@ -6,6 +6,7 @@ import type {
   Profile,
   UploadBatch
 } from "@/lib/types";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 function numberValue(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -77,7 +78,7 @@ export function buildPlatformAnalytics(input: {
   const records = input.records.filter((record) => record.archived_at === null);
   const { uploads, profiles } = input;
   const completedUploads = uploads.filter((upload) => upload.status !== "archived");
-  const activeEmployees = profiles.filter((profile) => profile.is_active);
+  const activeEmployees = scopeElectronicPartsDemoEmployees(profiles);
   const categories = new Set(records.map((record) => record.category ?? "Generic"));
   const recordsMissingMpn = records.filter((record) => !mpnValue(record)).length;
   const incompleteRecords = records.filter((record) => {

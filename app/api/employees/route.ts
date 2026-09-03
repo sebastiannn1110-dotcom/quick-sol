@@ -4,10 +4,26 @@ import { getDemoPlatformData } from "@/lib/platform/demoRepository";
 import { isAdmin } from "@/lib/auth/roles";
 import type { UserRole } from "@/lib/types";
 import { businessRecordReadContract } from "@/lib/security/business-records";
-import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
+import {
+  ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS,
+  scopeElectronicPartsDemoEmployees
+} from "@/lib/demo/employee-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const DEMO_EMPLOYEE_COUNT = ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.length;
+const DEMO_EMPLOYEE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0",
+  "X-Electronic-Parts-Employee-Scope": String(DEMO_EMPLOYEE_COUNT)
+};
+
+function employeeJson(body: unknown, init: ResponseInit = {}) {
+  return NextResponse.json(body, {
+    ...init,
+    headers: { ...DEMO_EMPLOYEE_HEADERS, ...init.headers }
+  });
+}
 
 interface DirectoryProfile {
   id: string;
@@ -75,22 +91,29 @@ export async function GET(request: Request) {
       const employee = profiles.find((profile) => profile.id === employeeId) ?? null;
       const uploads = data.uploads.filter((upload) => upload.uploaded_by === employeeId);
       const records = activeRecords.filter((record) => record.uploaded_by === employeeId);
-      return NextResponse.json({ employee, uploads, records, summary: { uploadCount: uploads.length, recordCount: records.length, lastUpload: uploads[0]?.created_at ?? null } });
+      return employeeJson({ employee, uploads, records, summary: { uploadCount: uploads.length, recordCount: records.length, lastUpload: uploads[0]?.created_at ?? null } });
     }
-    return NextResponse.json({ employees: profiles });
+    return employeeJson({ employees: profiles });
   }
 
   const directory = await loadDirectory(context, search);
-  if (directory.error) return NextResponse.json({ error: "Unable to load employees." }, { status: 500 });
+  if (directory.error) return employeeJson({ error: "Unable to load employees." }, { status: 500 });
   const employees = directory.employees as DirectoryProfile[];
+
+  if (!employeeId && !search && employees.length !== DEMO_EMPLOYEE_COUNT) {
+    return employeeJson(
+      { error: "Demo employee scope is incomplete.", code: "DEMO_EMPLOYEE_SCOPE_INCOMPLETE" },
+      { status: 500 }
+    );
+  }
 
   if (employeeId) {
     const employee = employees.find((profile) => profile.id === employeeId) ?? null;
-    if (!employee) return NextResponse.json({ employee: null, uploads: [], records: [] }, { status: 404 });
+    if (!employee) return employeeJson({ employee: null, uploads: [], records: [] }, { status: 404 });
 
     const canViewActivity = hasAdminAccess || employeeId === context.profile.id;
     if (!canViewActivity) {
-      return NextResponse.json({ employee, uploads: [], records: [], privateActivity: true });
+      return employeeJson({ employee, uploads: [], records: [], privateActivity: true });
     }
 
     const recordContract = businessRecordReadContract(context.profile.role);
@@ -110,7 +133,7 @@ export async function GET(request: Request) {
     ]);
 
     const safeRecords = (records ?? []) as unknown as Array<Record<string, unknown> & { category?: string | null }>;
-    return NextResponse.json({
+    return employeeJson({
       employee,
       uploads: uploads ?? [],
       records: safeRecords,
@@ -134,13 +157,13 @@ export async function GET(request: Request) {
           lastUpload: profile.last_upload ?? null
         }
       ]));
-      return NextResponse.json({
+      return employeeJson({
         employees: employees.map((employee) => ({ ...employee, ...(counts.get(employee.id) ?? { uploadCount: 0, recordCount: 0, lastUpload: null }) }))
       });
     }
   }
 
-  return NextResponse.json({
+  return employeeJson({
     employees: employees.map((employee) => ({ ...employee, uploadCount: 0, recordCount: 0, lastUpload: null }))
   });
 }

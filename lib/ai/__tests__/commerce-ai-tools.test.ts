@@ -6,6 +6,7 @@ import type {
   EmployeeQuoteMetrics
 } from "@/lib/employee-analytics/contracts";
 import type { OrganizationDirectory, OrganizationMember } from "@/lib/organization/contracts";
+import { ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS } from "@/lib/demo/employee-scope";
 
 const serviceMocks = vi.hoisted(() => ({
   loadEmployeeAnalytics: vi.fn(),
@@ -425,6 +426,36 @@ describe("read-only commerce AI tools", () => {
       }
     }
   );
+
+  it("uses exactly the canonical 19-person universe for demo ranking candidates", async () => {
+    const metrics = ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.map((email, index) => ({
+      ...metric(`demo-${index}`, email.split("@")[0], 19 - index),
+      quotesCreated: 1,
+      quotesSent: 1,
+      quotesAccepted: 1
+    }));
+    serviceMocks.loadEmployeeAnalytics.mockResolvedValueOnce({
+      ...analyticsFor("admin"),
+      metrics,
+      ranking: metrics,
+      totals: {
+        ...analyticsFor("admin").totals,
+        quotesCreated: 19,
+        quotesSent: 19,
+        quotesAccepted: 19
+      }
+    });
+
+    const output = await getEmployeeQuoteMetrics(
+      contextFor("admin"),
+      "quienes son los 5 mejores vendedores"
+    );
+    const data = output.data as { activeSellerCount: number; ranking: unknown[] };
+
+    expect(data.activeSellerCount).toBe(19);
+    expect(data.ranking).toHaveLength(5);
+    expect(JSON.stringify(data)).not.toMatch(/user\.test\.demo\.com|jason|aya\.nakamura|historical/i);
+  });
 
   it.each(["employee", "manager"] as const)(
     "does not reveal an out-of-scope employee to %s",

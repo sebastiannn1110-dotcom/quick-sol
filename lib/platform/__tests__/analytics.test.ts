@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildPlatformAnalytics } from "@/lib/platform/analytics";
 import type { PlatformRecord, Profile, UploadBatch } from "@/lib/types";
+import {
+  ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS,
+  ELECTRONIC_PARTS_DEMO_OWNER_EMAIL,
+  ELECTRONIC_PARTS_DEMO_SEED_MARKER
+} from "@/lib/demo/employee-scope";
 
 function record(id: string, mpn: string | null): PlatformRecord {
   return {
@@ -27,11 +32,13 @@ function record(id: string, mpn: string | null): PlatformRecord {
 
 const profile: Profile = {
   id: "00000000-0000-4000-8000-000000000001",
-  full_name: "Quiksol Admin",
-  email: "admin@quiksol.local",
+  full_name: "Olivia Mercer — DEMO",
+  email: ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS[0],
   role: "admin",
-  department: "Operations",
+  department: "Executive",
   region: "Global",
+  bio: ELECTRONIC_PARTS_DEMO_SEED_MARKER,
+  avatar_path: "demo/people/olivia.webp",
   is_active: true,
   created_at: "2026-06-25T00:00:00.000Z",
   updated_at: "2026-06-25T00:00:00.000Z"
@@ -86,5 +93,37 @@ describe("buildPlatformAnalytics", () => {
 
     expect(analytics.totals.totalRecords).toBe(1);
     expect(analytics.topMpns).toEqual([{ label: "ACTIVE-MPN", value: 1, percent: 100 }]);
+  });
+
+  it("reduces a 127-profile historical database to the canonical 19-person demo count", () => {
+    const retained = ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.map((email, index): Profile => ({
+      ...profile,
+      id: `retained-${index}`,
+      full_name: `Retained ${index}`,
+      email,
+      role: "employee",
+      avatar_path: `demo/people/${index}.webp`
+    }));
+    const historical = Array.from({ length: 107 }, (_, index): Profile => ({
+      ...profile,
+      id: `historical-${index}`,
+      full_name: `Historical ${index}`,
+      email: `historical-${index}@example.com`,
+      bio: null
+    }));
+    const owner: Profile = {
+      ...profile,
+      id: "owner",
+      full_name: "user.test.demo.com",
+      email: ELECTRONIC_PARTS_DEMO_OWNER_EMAIL,
+      avatar_path: null
+    };
+    const profiles = [...retained, ...historical, owner];
+    expect(profiles).toHaveLength(127);
+
+    const analytics = buildPlatformAnalytics({ records: [], uploads: [], profiles });
+
+    expect(analytics.totals.totalEmployeesActive).toBe(19);
+    expect(analytics.employeesByRole).toEqual([{ label: "employee", value: 19, percent: 100 }]);
   });
 });

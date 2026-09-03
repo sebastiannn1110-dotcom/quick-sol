@@ -34,7 +34,11 @@ export const ELECTRONIC_PARTS_DEMO_RETIRED_EMPLOYEE_EMAILS = Object.freeze([
   "isabella.rossi@quiksol.demo.invalid"
 ] as const);
 
-type ProfileIdentity = Readonly<{ email?: unknown }>;
+type ProfileIdentity = Readonly<{
+  email?: unknown;
+  bio?: unknown;
+  is_active?: unknown;
+}>;
 
 const visibleEmployeeEmails = new Set<string>(ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS);
 
@@ -43,7 +47,9 @@ function normalizedEmail(profile: ProfileIdentity) {
 }
 
 export function isElectronicPartsDemoEmployee(profile: ProfileIdentity) {
-  return visibleEmployeeEmails.has(normalizedEmail(profile));
+  return profile.is_active === true
+    && profile.bio === ELECTRONIC_PARTS_DEMO_SEED_MARKER
+    && visibleEmployeeEmails.has(normalizedEmail(profile));
 }
 
 export function scopeElectronicPartsDemoEmployees<T extends ProfileIdentity>(profiles: readonly T[]) {

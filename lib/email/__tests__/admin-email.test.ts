@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { adminEmailSendSchema } from "@/lib/email/admin-email";
+import { describe, expect, it, vi } from "vitest";
+import { adminEmailSendSchema, resolveAdminEmailRecipients } from "@/lib/email/admin-email";
 import { validateAdminEmailAttachment } from "@/lib/email/attachments";
 import { adminMessageHtml, escapeHtml } from "@/lib/email/content";
+import {
+  ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS,
+  ELECTRONIC_PARTS_DEMO_OWNER_EMAIL,
+  ELECTRONIC_PARTS_DEMO_SEED_MARKER
+} from "@/lib/demo/employee-scope";
 
 describe("admin email center", () => {
   it("requires a server-resolved recipient selector", () => {
@@ -44,5 +49,53 @@ describe("admin email center", () => {
   it("escapes administrator supplied HTML", () => {
     expect(escapeHtml("<script>alert(1)</script>")).not.toContain("<script>");
     expect(adminMessageHtml({ subject: "<b>Title</b>", body: "Hello <img>", senderName: "Admin" })).not.toContain("<img>");
+  });
+
+  it("resolves profile recipients only from the canonical 19-person demo scope", async () => {
+    const retained = ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS.map((email, index) => ({
+      id: `retained-${index}`,
+      full_name: `Retained ${index}`,
+      email,
+      role: "employee",
+      department: "Sales",
+      region: "Global",
+      bio: ELECTRONIC_PARTS_DEMO_SEED_MARKER,
+      is_active: true
+    }));
+    const rows = [
+      ...retained,
+      ...Array.from({ length: 107 }, (_, index) => ({
+        ...retained[0],
+        id: `historical-${index}`,
+        email: `historical-${index}@example.com`,
+        bio: null
+      })),
+      { ...retained[0], id: "owner", full_name: "user.test.demo.com", email: ELECTRONIC_PARTS_DEMO_OWNER_EMAIL }
+    ];
+    expect(rows).toHaveLength(127);
+
+    const query = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      in: vi.fn(),
+      order: vi.fn(),
+      limit: vi.fn(),
+      then: (resolve: (value: { data: typeof rows; error: null }) => unknown) => Promise.resolve({ data: rows, error: null }).then(resolve)
+    };
+    query.select.mockReturnValue(query);
+    query.eq.mockReturnValue(query);
+    query.in.mockReturnValue(query);
+    query.order.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    const supabase = { from: vi.fn(() => query) };
+
+    const recipients = await resolveAdminEmailRecipients(
+      supabase as never,
+      { userIds: [], manualEmails: [], allEmployees: true, roles: [], department: null, region: null }
+    );
+
+    expect(recipients).toHaveLength(19);
+    expect(recipients.map((recipient) => recipient.email)).toEqual(ELECTRONIC_PARTS_DEMO_EMPLOYEE_EMAILS);
+    expect(recipients.some((recipient) => recipient.email === ELECTRONIC_PARTS_DEMO_OWNER_EMAIL)).toBe(false);
   });
 });

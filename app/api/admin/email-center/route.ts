@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/context";
 import { getEmailProvider } from "@/lib/email/email-service";
 import { EMAIL_TEMPLATES } from "@/lib/email/content";
+import { scopeElectronicPartsDemoEmployees } from "@/lib/demo/employee-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
   const [profilesResult, historyResult] = await Promise.all([
     context.supabase
       .from("profiles")
-      .select("id, full_name, email, role, department, region, avatar_path")
+      .select("id, full_name, email, role, department, region, avatar_path, bio, is_active")
       .eq("is_active", true)
       .order("full_name")
       .limit(500),
@@ -30,10 +31,11 @@ export async function GET(request: Request) {
       .order("created_at", { ascending: false })
       .limit(50)
   ]);
+  const employees = scopeElectronicPartsDemoEmployees(profilesResult.data ?? []);
 
   if (missingTable(historyResult.error)) {
     return NextResponse.json({
-      employees: profilesResult.data ?? [],
+      employees,
       history: [],
       provider: getEmailProvider(),
       templates: EMAIL_TEMPLATES,
@@ -44,7 +46,7 @@ export async function GET(request: Request) {
   if (profilesResult.error || historyResult.error) return NextResponse.json({ error: "No se pudo cargar el centro de correo." }, { status: 500 });
 
   return NextResponse.json({
-    employees: profilesResult.data ?? [],
+    employees,
     history: historyResult.data ?? [],
     provider: getEmailProvider(),
     templates: EMAIL_TEMPLATES
